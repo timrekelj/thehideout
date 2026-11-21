@@ -4,7 +4,7 @@
 //!
 //! Selected: the highlight is its own element (`matched`), so when the selection moves the
 //! highlight travels to the new row on `motion::REFLOW` instead of fading in place. Rows that
-//! share a list share a `.highlight_group(..)`. Every icon is the fill weight, so selection is the
+//! share a list share a `.highlight_group(..)`. Chrome icons are the regular weight and selection is the
 //! highlight, stronger text and an `accent_text` icon (a channel's own tint wins).
 
 use rune::{El, Icon, Transition, el, icon, row, text};
@@ -16,6 +16,10 @@ use crate::icons::HASH;
 use crate::theme_of;
 use crate::tokens::color::Tone;
 use crate::tokens::{icon as size, motion, radius, type_};
+
+/// The width of the leading glyph column of a sidebar row (an icon, an emoji or a 20pt avatar, centred in it);
+/// a section header's chevron sits in the same column.
+pub const GLYPH_W: f32 = 20.0;
 
 struct Row {
     label: String,
@@ -100,7 +104,7 @@ impl Row {
             .center_y()
             .radius(radius::MD)
             .focusable(true)
-            .focus_ring(2.0, 0.0, k.c.border_focus)
+            .focus_ring(crate::space::RING_WIDTH, crate::space::RING_INSET, k.c.border_focus)
             .token_motion(motion::CONTROL);
         // A button carries no selected state on every platform, so the selection is its value
         // ("general, selected, button") and unread or mentions its description.
@@ -135,7 +139,8 @@ impl Row {
         } else if self.state == State::Rest {
             e = e.hover(t.hover.color()).press(t.pressed.color());
         }
-        e = e.child(match (&self.avatar, self.art.take()) {
+        // Icons, emoji and avatars share one 20pt column, so labels start at one x whatever leads.
+        let lead = match (&self.avatar, self.art.take()) {
             (_, Some(art)) => row().key("icon").size(size::SM, size::SM).center().child(art),
             (Some(id), None) => Avatar::new(id.clone(), self.label.clone())
                 .size(20)
@@ -146,7 +151,8 @@ impl Row {
                 .key("icon")
                 .color(icon_ink.color())
                 .a11y_hidden(),
-        });
+        };
+        e = e.child(row().w(GLYPH_W).center().child(lead));
         e = e.child(
             text(self.label)
                 .key("label")

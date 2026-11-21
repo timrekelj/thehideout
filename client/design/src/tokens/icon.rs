@@ -1,4 +1,4 @@
-//! Icon sizes. Every icon is Phosphor fill weight, drawn on a 256 grid.
+//! Icon sizes. Chrome icons are Phosphor regular weight (user-chosen ones fill), drawn on a 256 grid.
 
 /// Inside 24pt controls; the smallest size we draw.
 pub const XS: f32 = 14.0;

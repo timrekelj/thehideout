@@ -210,7 +210,9 @@ pub fn page(a: &App, k: &Kit, ss: &ServerSettings) -> El {
             }
         });
 
-    let mut rows = col().key("emoji-list").w_full();
+    // The rows' hover boxes overhang the column by their padding (a row grows past the column
+    // by the margins), so the emoji and the buttons line up with the text above.
+    let mut rows = col().key("emoji-list").grow(1.0).min_w(0.0).mx(-8.0);
     for e in list {
         rows = rows.child(emoji_row(a, k, ss, e.id, editable));
     }
@@ -222,6 +224,7 @@ pub fn page(a: &App, k: &Kit, ss: &ServerSettings) -> El {
                 .color(t.text_muted.color())
                 .wrap()
                 .w_full()
+                .px(8.0)
                 .py(8.0),
         );
     }
@@ -237,7 +240,7 @@ pub fn page(a: &App, k: &Kit, ss: &ServerSettings) -> El {
             k,
             "Custom emojis",
             "Type :name: in a message to use one.",
-            rows,
+            row().w_full().child(rows),
         ))
 }
 
@@ -286,7 +289,7 @@ fn emoji_row(a: &App, k: &Kit, ss: &ServerSettings, id: u64, editable: bool) -> 
         .h(48.0)
         .gap(12.0)
         .center_y()
-        .px(4.0)
+        .px(8.0)
         .radius(radius::MD)
         .hover_group()
         .hover(t.hover.color())
@@ -340,5 +343,5 @@ fn emoji_row(a: &App, k: &Kit, ss: &ServerSettings, id: u64, editable: bool) -> 
                     .key(format!("emoji-delete-{id}")),
             ),
     };
-    r.child(actions)
+    r.child(actions.mr(-4.0))
 }

@@ -1,13 +1,15 @@
-//! The auth screen: a centred card with the wordmark, a "Sign in" / "I have an invite" switch and
-//! the step's fields, one primary button and quiet links to the other ways in (an emailed code, a
-//! passkey, a password reset). A second step (the code, the second factor, the invite's account)
-//! replaces the switch with a way back. Errors land under the field they belong to and never say
-//! whether an account exists. The button says what it is doing while it waits (no spinner).
+//! The auth screen: a centred card with the wordmark, the step's fields, one primary button and
+//! quiet muted links to the other ways in (an emailed code, a passkey, a password reset). The two
+//! top-level steps end with one quiet line to the other ("Have an invite? Join with a code" /
+//! "Already have an account? Sign in"); a second step (the code, the second factor, the invite's
+//! account) has a way back instead. Errors land under the field they belong to, a form-wide one
+//! right above the button, and neither says whether an account exists. The server line sits small
+//! under the card. The button says what it is doing while it waits (no spinner).
 
 use rune::{col, el, icon, row, text, El, TextEdit};
 use rune_kit::Kit;
-use thehideout_design::components::{Button, Checkbox, CodeInput, Segmented, TextInput, Variant};
-use thehideout_design::icons::{catalog, ARROW_LEFT};
+use thehideout_design::components::{Button, Checkbox, CodeInput, TextInput, Variant};
+use thehideout_design::icons::{ARROW_LEFT};
 use thehideout_design::{radius, theme_of, type_};
 
 use crate::app::App;
@@ -94,13 +96,28 @@ fn labelled(
     }
 }
 
-/// A quiet text link in the accent ink.
+/// A text link in the accent ink.
 fn link(k: &Kit, key: &str, label: &str, f: impl Fn(&mut App) + 'static) -> El {
+    link_in(k, key, label, theme_of(k).accent_text.color(), f)
+}
+
+/// A text link in the muted ink, for the ways in that are not the main one.
+fn quiet_link(k: &Kit, key: &str, label: &str, f: impl Fn(&mut App) + 'static) -> El {
+    link_in(k, key, label, theme_of(k).text_muted.color(), f)
+}
+
+fn link_in(
+    k: &Kit,
+    key: &str,
+    label: &str,
+    color: rune::Color,
+    f: impl Fn(&mut App) + 'static,
+) -> El {
     let t = theme_of(k);
     text(label.to_owned())
         .key(key.to_owned())
         .font(type_::at(k, type_::CONTROL))
-        .color(t.accent_text.color())
+        .color(color)
         .role("button")
         .label(label.to_owned())
         .focusable(true)
@@ -225,47 +242,68 @@ pub fn build(a: &App, k: &Kit) -> El {
                     .w_full(),
             ),
     );
-    if top_level {
-        let mode = Segmented::new(
-            &["Sign in", "I have an invite"],
-            usize::from(auth.mode == AuthMode::Invite),
-        )
-        .label("Sign in or use an invite")
-        .on_pick(|a: &mut App, i| {
-            a.act(|s| {
-                s.set_auth_mode(if i == 0 {
-                    AuthMode::Login
-                } else {
-                    AuthMode::Invite
-                })
-            })
-        })
-        .build(k);
-        card = card.child(col().key("auth-mode").w_full().child(mode));
-    }
     for part in step(a, k) {
         card = card.child(part);
     }
-    if let Some(msg) = auth.error_for(AuthField::Form) {
-        card = card.child(
-            row().key("auth-form-error").w_full().child(
-                text(msg.to_owned())
-                    .font(type_::at(k, type_::CONTROL))
-                    .color(t.danger.color())
-                    .wrap()
-                    .w_full(),
-            ),
-        );
+    if top_level {
+        card = card.child(switch_line(k, auth.mode));
     }
-    card = card.child(server_line(a, k));
 
     col()
         .key("auth")
         .w_full()
         .h_full()
         .center()
+        .gap(16.0)
         .fill(t.bg.color())
         .child(card)
+        .child(server_line(a, k))
+}
+
+/// The form-wide error, which sits right above the step's button.
+fn form_error(a: &App, k: &Kit) -> Option<El> {
+    let msg = a.state.auth.error_for(AuthField::Form)?;
+    Some(
+        row().key("auth-form-error").w_full().child(
+            text(msg.to_owned())
+                .font(type_::at(k, type_::CONTROL))
+                .color(theme_of(k).danger.color())
+                .wrap()
+                .w_full(),
+        ),
+    )
+}
+
+/// The quiet line at the bottom of a top-level step, to the other one.
+fn switch_line(k: &Kit, mode: AuthMode) -> El {
+    let (lead, key, label, to) = match mode {
+        AuthMode::Login => (
+            "Have an invite?",
+            "auth-link-invite",
+            "Join with a code",
+            AuthMode::Invite,
+        ),
+        AuthMode::Invite => (
+            "Already have an account?",
+            "auth-link-signin",
+            "Sign in",
+            AuthMode::Login,
+        ),
+    };
+    row()
+        .key("auth-switch")
+        .w_full()
+        .gap(4.0)
+        .center()
+        .flex_wrap()
+        .child(
+            text(lead)
+                .font(type_::at(k, type_::CONTROL))
+                .color(theme_of(k).text_muted.color()),
+        )
+        .child(link(k, key, label, move |a: &mut App| {
+            a.act(|s| s.set_auth_mode(to))
+        }))
 }
 
 /// The step's heading, fields, button and links.
@@ -293,11 +331,9 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
         AuthStep::Password => {
             out.extend(notice);
             let username = TextInput::new(&auth.username)
-                .placeholder("Username or email")
                 .on_edit(username_edit)
                 .on_submit(submit);
             let password = TextInput::new(&auth.password)
-                .placeholder("Password")
                 .secure()
                 .on_edit(password_edit)
                 .on_submit(submit);
@@ -325,6 +361,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     .build(k),
                 error,
             ));
+            out.extend(form_error(a, k));
             out.push(primary(
                 k,
                 if busy {
@@ -341,10 +378,10 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     .gap(8.0)
                     .center()
                     .flex_wrap()
-                    .child(link(
+                    .child(quiet_link(
                         k,
                         "auth-link-code",
-                        "Email me a code instead",
+                        "Email me a code",
                         |a: &mut App| a.act(|s| s.auth_go(AuthStep::EmailCode { sent: false })),
                     ))
                     .child(
@@ -352,7 +389,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                             .font(type_::at(k, type_::CONTROL))
                             .color(t.text_faint.color()),
                     )
-                    .child(link(
+                    .child(quiet_link(
                         k,
                         "auth-link-passkey",
                         "Use a passkey",
@@ -387,6 +424,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                 email,
                 auth.error_for(AuthField::Email),
             ));
+            out.extend(form_error(a, k));
             out.push(primary(
                 k,
                 if busy { "Sending\u{2026}" } else { "Send code" },
@@ -425,6 +463,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     auth.error_for(AuthField::Password),
                 ));
             }
+            out.extend(form_error(a, k));
             out.push(primary(
                 k,
                 match (busy, reset) {
@@ -456,7 +495,6 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                 "Your browser opens to confirm it with your fingerprint, face or security key.",
             ));
             let username = TextInput::new(&auth.username)
-                .placeholder("Username")
                 .on_edit(username_edit)
                 .on_submit(submit);
             out.push(field(
@@ -466,6 +504,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                 username,
                 auth.error_for(AuthField::Username),
             ));
+            out.extend(form_error(a, k));
             out.push(primary(
                 k,
                 if busy {
@@ -477,7 +516,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             ));
         }
         AuthStep::Passkey { waiting: true } => {
-            let glyph = catalog::by_name("fingerprint").unwrap_or(&thehideout_design::icons::LOCK);
+            let glyph = &thehideout_design::icons::FINGERPRINT;
             out.push(
                 col()
                     .key("auth-passkey-waiting")
@@ -497,6 +536,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     )
                     .child(text("Waiting\u{2026}").key("auth-waiting").font(type_::at(k, type_::CAPTION)).color(t.text_faint.color())),
             );
+            out.extend(form_error(a, k));
             out.push(
                 Button::new("Cancel")
                     .variant(Variant::Secondary)
@@ -507,7 +547,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             );
         }
         AuthStep::SecondFactor { passkey: true, .. } => {
-            let glyph = catalog::by_name("fingerprint").unwrap_or(&thehideout_design::icons::LOCK);
+            let glyph = &thehideout_design::icons::FINGERPRINT;
             out.push(
                 col()
                     .key("auth-2fa-passkey-waiting")
@@ -527,6 +567,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     )
                     .child(text("Waiting\u{2026}").key("auth-waiting").font(type_::at(k, type_::CAPTION)).color(t.text_faint.color())),
             );
+            out.extend(form_error(a, k));
             out.push(
                 Button::new("Cancel")
                     .variant(Variant::Secondary)
@@ -554,6 +595,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     "Two-factor authentication",
                     "This sign-in was stopped. Start again to get a new one.",
                 ));
+                out.extend(form_error(a, k));
                 out.push(
                     Button::new("Start again")
                         .on_press(to_sign_in)
@@ -574,6 +616,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     input,
                     auth.error_for(AuthField::Code),
                 ));
+                out.extend(form_error(a, k));
                 out.push(primary(
                     k,
                     if busy { "Checking\u{2026}" } else { "Sign in" },
@@ -586,6 +629,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                     "Enter the 6-digit code from your authenticator app.",
                 ));
                 out.push(code_cells(a, k, "Authenticator code"));
+                out.extend(form_error(a, k));
                 out.push(primary(
                     k,
                     if busy { "Checking\u{2026}" } else { "Sign in" },
@@ -594,7 +638,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             }
             if !*locked {
                 let has_passkey = methods.contains(&thehideout_api::SecondFactorMethod::Passkey);
-                let toggle = link(
+                let toggle = quiet_link(
                     k,
                     "auth-toggle-recovery",
                     if *recovery {
@@ -613,7 +657,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                                 .font(type_::at(k, type_::CONTROL))
                                 .color(t.text_faint.color()),
                         )
-                        .child(link(k, "auth-2fa-passkey", "Use a passkey", |a: &mut App| {
+                        .child(quiet_link(k, "auth-2fa-passkey", "Use a passkey", |a: &mut App| {
                             a.act(|s| s.second_factor_passkey())
                         }));
                 }
@@ -622,7 +666,6 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
         }
         AuthStep::InviteCode => {
             let input = TextInput::new(&auth.invite)
-                .placeholder("XXXX-XXXX or the link")
                 .on_edit(invite_edit)
                 .on_submit(submit);
             let error = auth.error_for(AuthField::Invite);
@@ -634,11 +677,11 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                         .width(None)
                         .large()
                         .invalid(error.is_some())
-                        .label("Invite code or link")
+                        .label("Invite code")
                         .build(k),
                 )
                 .child(
-                    text("The code is in your invite email; its link works here too.")
+                    text("It's in your invite email.")
                         .font(type_::at(k, type_::CAPTION))
                         .color(t.text_muted.color())
                         .wrap()
@@ -647,11 +690,12 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             out.push(labelled(
                 k,
                 "auth-invite",
-                "Invite code or link",
+                "Invite code",
                 None,
                 control,
                 error,
             ));
+            out.extend(form_error(a, k));
             out.push(primary(
                 k,
                 if busy { "Checking\u{2026}" } else { "Continue" },
@@ -745,6 +789,7 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                             .a11y_hidden(),
                     ),
             );
+            out.extend(form_error(a, k));
             out.push(primary(
                 k,
                 if busy {
@@ -777,11 +822,11 @@ fn server_line(a: &App, k: &Kit) -> El {
         .focusable(true)
         .hover(t.hover.color())
         .on_press(|a: &mut App| a.state.auth.server_open = !a.state.auth.server_open);
-    let mut c = col().w_full().gap(8.0).child(
+    let mut c = col().w(400.0).gap(8.0).child(
         row()
             .w_full()
             .gap(4.0)
-            .center_y()
+            .center()
             .child(faint(format!("Server: {}", a.state.server_url())))
             .child(faint("\u{00b7}".into()))
             .child(toggle),

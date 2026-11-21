@@ -27,7 +27,10 @@ use super::emoji::{
     EmojiImage, EmojiSet, Pick, ServerEmoji, Suggestion, RECENT_MAX,
 };
 use crate::components::util::over;
-use crate::icons::{catalog, SEARCH, SMILEY};
+use crate::icons::{
+    AIRPLANE, CLOCK, FLAG, FORK_KNIFE, HAND_WAVING, HEART, LIGHTBULB, PAW_PRINT, SEARCH, SMILEY,
+    SOCCER_BALL, STAR,
+};
 use crate::theme_of;
 use crate::tokens::{icon as size, radius, type_};
 
@@ -117,24 +120,19 @@ pub struct Layout {
     total: usize,
 }
 
-fn named(name: &str) -> &'static rune::Icon {
-    catalog::by_name(name).unwrap_or(&SMILEY)
-}
-
 fn group_glyph(g: emojis::Group) -> &'static rune::Icon {
     use emojis::Group::*;
-    let name = match g {
-        SmileysAndEmotion => "smiley",
-        PeopleAndBody => "hand-waving",
-        AnimalsAndNature => "paw-print",
-        FoodAndDrink => "fork-knife",
-        TravelAndPlaces => "airplane",
-        Activities => "soccer-ball",
-        Objects => "lightbulb",
-        Symbols => "heart",
-        Flags => "flag",
-    };
-    catalog::by_name(name).unwrap_or(&SMILEY)
+    match g {
+        SmileysAndEmotion => &SMILEY,
+        PeopleAndBody => &HAND_WAVING,
+        AnimalsAndNature => &PAW_PRINT,
+        FoodAndDrink => &FORK_KNIFE,
+        TravelAndPlaces => &AIRPLANE,
+        Activities => &SOCCER_BALL,
+        Objects => &LIGHTBULB,
+        Symbols => &HEART,
+        Flags => &FLAG,
+    }
 }
 
 impl Layout {
@@ -166,14 +164,14 @@ impl Layout {
             if !recent.is_empty() {
                 sections.push(Section {
                     title: "Recent".into(),
-                    glyph: named("clock"),
+                    glyph: &CLOCK,
                     cells: recent,
                 });
             }
             if want_server && !server_vec.is_empty() {
                 sections.push(Section {
                     title: "This server".into(),
-                    glyph: named("star"),
+                    glyph: &STAR,
                     cells: (0..server_vec.len()).map(Cell::Server).collect(),
                 });
             }
@@ -196,7 +194,7 @@ impl Layout {
                 if !hits.is_empty() {
                     sections.push(Section {
                         title: "This server".into(),
-                        glyph: named("star"),
+                        glyph: &STAR,
                         cells: hits,
                     });
                 }

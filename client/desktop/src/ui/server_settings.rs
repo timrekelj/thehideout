@@ -15,7 +15,7 @@ use thehideout_design::components::{
 use thehideout_design::icons::{
     self, ARROW_DOWN, ARROW_UP, IMAGE, LOCK, PLUS, SEARCH, SHIELD, TRASH, USERS, X,
 };
-use thehideout_design::{icon as isize, palette_color, palette_text, radius, theme_of, type_};
+use thehideout_design::{icon as isize, palette_color, palette_text, radius, space, theme_of, type_};
 
 use super::settings::{frame, header, nav_shell, setting, PAGE_W};
 use crate::app::App;
@@ -472,7 +472,7 @@ fn role_row(
         .center_y()
         .radius(radius::MD)
         .focusable(true)
-        .focus_ring(2.0, 0.0, k.c.border_focus)
+        .focus_ring(space::RING_WIDTH, space::RING_INSET, k.c.border_focus)
         .on_press(move |a: &mut App| a.act(|s| s.select_role(id)))
         .child(role_dot(k, r.color, 12.0))
         .child(
@@ -848,7 +848,7 @@ fn chip(k: &Kit, role: &Role, removable: bool, guild: u64, user: u64) -> El {
                 .center()
                 .radius(radius::SM)
                 .focusable(true)
-                .focus_ring(2.0, 0.0, k.c.border_focus)
+                .focus_ring(space::RING_WIDTH, space::RING_OFFSET, k.c.border_focus)
                 .hover(t.hover.color())
                 .press(t.pressed.color())
                 .on_press(move |a: &mut App| a.act(|s| s.set_member_role(guild, user, rid, false)))

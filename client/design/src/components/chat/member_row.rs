@@ -93,7 +93,7 @@ impl MemberRow {
             .center_y()
             .radius(radius::MD)
             .focusable(true)
-            .focus_ring(2.0, 0.0, k.c.border_focus);
+            .focus_ring(crate::space::RING_WIDTH, crate::space::RING_INSET, k.c.border_focus);
         e = if self.state == State::Hover {
             e.fill(over(t.hover.color(), rune::Color::TRANSPARENT))
         } else {

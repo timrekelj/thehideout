@@ -87,10 +87,13 @@ fn entry_of(k: &Kit) -> (&'static Theme, Metrics) {
     (t, m)
 }
 
+/// A `spread`-wide stroke just inside the box, so a field's edge sits where a button's border does
+/// and (unlike an outer shadow) never grows past it into a clipping parent.
 fn ring(color: Color, spread: f32) -> Shadow {
     Shadow {
         spread,
         color,
+        inset: true,
         ..Shadow::default()
     }
 }
@@ -181,7 +184,7 @@ fn build(t: &Theme, m: Metrics) -> Kit {
     p.std_icon_strong = c(t.text);
     p.std_text = c(t.text);
 
-    // Flat: borders separate, shadows only float. Inputs take a 1px `control_border` ring at rest.
+    // Flat: borders separate, shadows only float. Inputs take a 1px `control_border` ring at rest, inside the box (focus and invalid draw theirs there too).
     k.ring = None;
     let flat = || Vec::<Shadow>::new();
     let pop = shadows(Level::Popover, dark);

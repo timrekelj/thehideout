@@ -1,4 +1,4 @@
-//! The `icons` page: our Phosphor catalog (fill weight throughout), how a selected icon is shown, the
+//! The `icons` page: our Phosphor icons (regular for chrome, fill for user-chosen), how a selected icon is shown, the
 //! size tokens, and the icons in context (sidebar nav, channel list, composer).
 
 use rune::{El, Icon, col, el, icon, row, text};
@@ -16,12 +16,12 @@ pub fn page(k: &Kit) -> El {
         .child(page_title(
             k,
             "Icons",
-            "Phosphor (MIT), fill weight everywhere. There is no weight setting and no regular twin.",
+            "Phosphor (MIT). The app's own icons are regular (outline); only icons users choose, like channel icons, are fill.",
         ))
         .child(section(
             k,
             "Catalog",
-            "Fill weight at 16pt (icon::SM) in text_muted. Add one in tools/gen_icons.py.",
+            "Regular weight at 16pt (icon::SM) in text_muted. Add one in tools/gen_icons.py.",
             catalog(k),
         ))
         .child(

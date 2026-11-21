@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Generates src/icons/curated.rs and the catalog from Phosphor Icons (@phosphor-icons/core, MIT), FILL weight.
+"""Generates src/icons/curated.rs (REGULAR weight) and the catalog (FILL weight) from Phosphor Icons (@phosphor-icons/core, MIT).
 
     python3 -I tools/gen_icons.py --phosphor /tmp/icon-src/phosphor/package --out src/icons
 
 `--phosphor` is an unpacked npm package directory (read as data, never executed). Run from
 client/design. To add an icon: append `("our-name", "phosphor-file-stem")` to ICONS and rerun;
-the whole UI uses the fill weight (see README). The full fill catalog (every Phosphor icon,
-with its search tags) is also written to src/icons/catalog/part_N.rs; `icons::catalog` looks it up.
+the app's own chrome uses the regular (outline) weight (see README). The full fill catalog (every
+Phosphor icon, with its search tags) is also written to src/icons/catalog/part_N.rs; `icons::catalog`
+looks it up, and only icons the user picks (channel icons, the icon picker) come from it.
 Run `rustfmt --edition 2024` over src/icons afterwards (the repo keeps generated files formatted).
 """
 
@@ -89,6 +90,28 @@ ICONS = [
     ("reddit-logo", "reddit-logo"),
     ("expand", "arrows-out-simple"),
     ("retry", "arrow-clockwise"),
+    ("envelope-simple", "envelope-simple"),
+    ("fingerprint", "fingerprint"),
+    ("desktop", "desktop"),
+    ("device-mobile", "device-mobile"),
+    ("shield-check", "shield-check"),
+    ("gear-six", "gear-six"),
+    ("user-circle", "user-circle"),
+    ("folder-simple", "folder-simple"),
+    ("chart-bar", "chart-bar"),
+    ("hard-drives", "hard-drives"),
+    ("files", "files"),
+    ("clipboard-text", "clipboard-text"),
+    ("plugs", "plugs"),
+    ("paw-print", "paw-print"),
+    ("fork-knife", "fork-knife"),
+    ("airplane", "airplane"),
+    ("soccer-ball", "soccer-ball"),
+    ("lightbulb", "lightbulb"),
+    ("heart", "heart"),
+    ("flag", "flag"),
+    ("clock", "clock"),
+    ("star", "star"),
 ]
 
 HEADER = """\
@@ -140,7 +163,7 @@ def emit(path, weight, version, items):
             f'pub static {ident(name)}: Icon = Icon {{ name: "{name}", view: {view:.1f}, body: r##"{body}"## }};'
         )
     lines.append("")
-    lines.append("/// Every icon in this weight, in catalog order.")
+    lines.append("/// Every icon in this weight, in curated order.")
     lines.append(f"pub static ALL: [&Icon; {len(items)}] = [")
     for name, _, _ in items:
         lines.append(f"    &{ident(name)},")
@@ -174,6 +197,10 @@ def read_tags(index_mjs):
 
 def fill_path(phosphor, stem):
     return phosphor / "assets" / "fill" / f"{stem}-fill.svg"
+
+
+def regular_path(phosphor, stem):
+    return phosphor / "assets" / "regular" / f"{stem}.svg"
 
 
 def emit_catalog(out, phosphor, version):
@@ -217,16 +244,16 @@ def main():
 
     names = [n for n, _ in ICONS]
     assert len(set(names)) == len(names), "duplicate icon name"
-    fill = []
+    regular = []
     for ours, stem in ICONS:
-        v, b = read_svg(fill_path(a.phosphor, stem))
-        fill.append((ours, v, clean_body(b)))
+        v, b = read_svg(regular_path(a.phosphor, stem))
+        regular.append((ours, v, clean_body(b)))
     for old in ("regular.rs", "fill.rs"):
         (a.out / old).unlink(missing_ok=True)
-    emit(a.out / "curated.rs", "fill", version, fill)
+    emit(a.out / "curated.rs", "regular", version, regular)
     total = emit_catalog(a.out, a.phosphor, version)
     print(
-        f"wrote {len(ICONS)} fill icons and a {total}-icon catalog to {a.out} (phosphor {version})"
+        f"wrote {len(ICONS)} regular icons and a {total}-icon catalog to {a.out} (phosphor {version})"
     )
 
 

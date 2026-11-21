@@ -1,7 +1,21 @@
 //! Small helpers shared by the controls.
 
-use rune::{Color, El};
+use rune::{Color, El, el};
 use rune_kit::{Kit, State};
+
+/// A panel's outline drawn over its children. `El::border` takes no layout space and paints under
+/// the box's own children, so a filled child at the edge (a highlighted message row, a selected
+/// table row) would hide it; add this as the panel's last child instead of `.border(..)`. It is
+/// inert and hidden from assistive technology.
+pub fn frame_over(width: f32, color: Color, radius: f32) -> El {
+    el().absolute(0.0, 0.0)
+        .w_full()
+        .h_full()
+        .radius(radius)
+        .border(width, color)
+        .inert()
+        .a11y_hidden()
+}
 
 /// `top` over `bottom` (straight alpha), mixed in sRGB as Rune's windows blend by default.
 /// Used to paint forced hover/pressed states, which live states get from the runtime.

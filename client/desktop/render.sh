@@ -33,3 +33,34 @@ done
 for scene in emoji-picker-ocean channel-settings-ocean main-compact main-compact-light main-text-125 main-text-125-light main-ocean-cool main-coral-paper-light main-graphite-deep; do
   $BIN --scene "$scene" --size 1280x800 --at 1 --snap "$OUT/$scene.png" "$@"
 done
+# Keyboard-focus review: a scene can't ask for a keyboard ring, but a rune `--script` can press keys.
+# `focus SCENE KEYS NAME [SIZE]`: KEYS is words, each `N` (Tab N times), `-N` (Shift+Tab N times),
+# `@key` (click the element with that key) or a key name (`Home`), so the ring sits on a control
+# against a clipping edge. To pick N, dump the
+# scene (`$BIN --scene S --tree t.json --at 1`) and count the nodes whose "actions" include "focus"
+# in document order (a roving group such as a grid counts every cell, though Tab visits one).
+SCRIPT="$(mktemp)"
+trap 'rm -f "$SCRIPT"' EXIT
+FLAGS="$*"
+focus() {
+  echo "$2" | awk '{
+    t = 0.1; printf "[";
+    for (w = 1; w <= NF; w++) {
+      if ($w ~ /^@/) { printf "%s{\"t\":%.3f,\"type\":\"tap\",\"key\":\"%s\"}", (t > 0.1 ? "," : ""), t, substr($w, 2); t += 0.2; continue }
+      if ($w ~ /^-?[0-9]+$/) { n = ($w < 0 ? -$w : $w); name = "Tab"; shift = ($w < 0) } else { n = 1; name = $w; shift = 0 }
+      for (i = 0; i < n; i++) { printf "%s{\"t\":%.3f,\"type\":\"key\",\"name\":\"%s\",\"shift\":%s}", (t > 0.1 ? "," : ""), t, name, (shift ? "true" : "false"); t += 0.002 }
+    }
+    print "]" }' > "$SCRIPT"
+  $BIN --scene "$1" --size "${4:-1280x800}" --script "$SCRIPT" --at 1 --snap "$OUT/$3.png" $FLAGS
+}
+for mode in "" "-light"; do
+  focus "main$mode" 2 "focus-rail$mode"
+  focus "main$mode" 5 "focus-rail-add$mode"
+  focus "main$mode" 6 "focus-sidebar-header$mode"
+  focus "main$mode" 7 "focus-sidebar-row$mode"
+  focus "channel-settings$mode" 4 "focus-dialog$mode"
+  focus "channel-settings$mode" 10 "focus-icon-grid$mode"
+  focus "channel-settings$mode" "@swatch-blue Home" "focus-dialog-swatch$mode"
+  focus "server-settings-roles$mode" 7 "focus-roles$mode"
+  focus "admin-servers$mode" 9 "focus-admin-row$mode"
+done

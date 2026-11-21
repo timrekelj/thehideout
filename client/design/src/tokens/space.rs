@@ -12,6 +12,16 @@ pub const S10: f32 = 40.0;
 pub const S12: f32 = 48.0;
 pub const S16: f32 = 64.0;
 
+/// A focus ring drawn outside its control: 2pt wide, 1pt clear of the edge. Rings on controls that
+/// can sit against a clipping edge (scroll views, dialogs, panels) all use this, so `RING` of room
+/// is enough for every one of them.
+pub const RING_WIDTH: f32 = 2.0;
+pub const RING_OFFSET: f32 = 1.0;
+/// How far an outward ring reaches past its control: what a clipping parent must leave free.
+pub const RING: f32 = RING_WIDTH + RING_OFFSET;
+/// A ring just inside the box (full-width rows, which have no room outside).
+pub const RING_INSET: f32 = -RING_WIDTH;
+
 /// Every step, named, for docs and the gallery.
 pub const SCALE: [(&str, f32); 11] = [
     ("space-0.5", S0_5),

@@ -11,7 +11,7 @@ use thehideout_design::components::{
     dialog_field, Badge, BadgeVariant, Button, Checkbox, CodeInput, Dialog, IconButton, QrCode,
     Size, TextInput, ToastKind, Variant,
 };
-use thehideout_design::icons::{catalog, COPY, DOWNLOAD, PENCIL, TRASH};
+use thehideout_design::icons::{COPY, DOWNLOAD, PENCIL, TRASH};
 use thehideout_design::{metrics_of, radius, theme_of, type_};
 
 use super::settings::{header, labels, setting, PAGE_W};
@@ -302,7 +302,7 @@ fn passkey_row(a: &App, k: &Kit, p: &Passkey) -> El {
         |at| format!("last used {}", when(s, at)),
     );
     let detail = format!("Added {} \u{00b7} {used}", when(s, p.created_at));
-    let glyph = catalog::by_name("fingerprint").unwrap_or(&thehideout_design::icons::LOCK);
+    let glyph = &thehideout_design::icons::FINGERPRINT;
     let title = text(p.name.clone())
         .font(type_::at(k, type_::CONTROL_STRONG))
         .color(t.text.color())
@@ -340,11 +340,10 @@ fn session_row(a: &App, k: &Kit, d: &DeviceSession) -> El {
         .iter()
         .any(|w| lower.contains(w))
     {
-        "device-mobile"
+        &thehideout_design::icons::DEVICE_MOBILE
     } else {
-        "desktop"
+        &thehideout_design::icons::DESKTOP
     };
-    let glyph = catalog::by_name(glyph).unwrap_or(&thehideout_design::icons::GLOBE);
     let seen = d.last_seen_at.map_or_else(String::new, |at| {
         format!(" \u{00b7} active {}", when(s, at))
     });
@@ -841,7 +840,7 @@ pub fn dialogs(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
             )
         }
         SecKind::AddPasskey { waiting: true } => {
-            let glyph = catalog::by_name("fingerprint").unwrap_or(&thehideout_design::icons::LOCK);
+            let glyph = &thehideout_design::icons::FINGERPRINT;
             let body = col()
                 .key("sec-body")
                 .w_full()
@@ -908,7 +907,7 @@ pub fn dialogs(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
         }
         SecKind::Welcome => {
             let glyph =
-                catalog::by_name("shield-check").unwrap_or(&thehideout_design::icons::SHIELD);
+                &thehideout_design::icons::SHIELD_CHECK;
             let body = row()
                 .key("sec-body")
                 .w_full()

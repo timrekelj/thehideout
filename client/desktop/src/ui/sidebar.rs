@@ -123,7 +123,7 @@ fn header(a: &App, k: &Kit, layer: &mut Vec<El>, width: f32) -> El {
     if a.state.can_invite(id) {
         menu = menu.item(
             MenuItem::new("Invite people by email\u{2026}")
-                .icon(thehideout_design::icons::catalog::by_name("envelope-simple").unwrap_or(&USER_PLUS))
+                .icon(&thehideout_design::icons::ENVELOPE_SIMPLE)
                 .on_select(move |a: &mut App| {
                     a.act(|s| s.open_dialog(DialogKind::InviteByEmail { guild: id }))
                 }),
@@ -148,7 +148,7 @@ fn header(a: &App, k: &Kit, layer: &mut Vec<El>, width: f32) -> El {
         )
         .item(
             MenuItem::new("Server settings\u{2026}")
-                .icon(thehideout_design::icons::catalog::by_name("gear-six").unwrap_or(&GEAR))
+                .icon(&thehideout_design::icons::GEAR_SIX)
                 .disabled(!a.state.can_open_server_settings(id))
                 .on_select(move |a: &mut App| a.act(|s| s.open_server_settings(id))),
         )
@@ -238,7 +238,7 @@ fn user_strip(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         .trigger(gear)
         .item(
             MenuItem::new("Profile\u{2026}")
-                .icon(thehideout_design::icons::catalog::by_name("user-circle").unwrap_or(&GEAR))
+                .icon(&thehideout_design::icons::USER_CIRCLE)
                 .on_select(|a: &mut App| a.act(|s| s.open_profile())),
         )
         .item(

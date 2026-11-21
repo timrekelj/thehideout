@@ -117,13 +117,22 @@ pub struct InvitesUi {
     pub busy: HashSet<u64>,
 }
 
-/// The code inside a pasted invite: the token at the end of a link (`…/invite/<token>`,
-/// `thehideout://invite/<token>`), else the text itself.
+/// The invite code as typed or pasted (the server ignores case and the dash).
 pub fn invite_code(raw: &str) -> String {
-    let raw = raw.trim();
-    match raw.find("/invite/") {
-        Some(at) => raw[at + "/invite/".len()..].split(['?', '#', '/']).next().unwrap_or("").to_owned(),
-        None => raw.to_owned(),
+    raw.trim().to_owned()
+}
+
+/// Whether the invite field holds a link rather than a code.
+fn looks_like_link(raw: &str) -> bool {
+    raw.contains("://") || raw.contains("/invite/")
+}
+
+/// The token at the end of an invite link the OS opened (`thehideout://invite/<token>`).
+fn link_token(url: &str) -> String {
+    let url = url.trim();
+    match url.find("/invite/") {
+        Some(at) => url[at + "/invite/".len()..].split(['?', '#', '/']).next().unwrap_or("").to_owned(),
+        None => String::new(),
     }
 }
 
@@ -284,7 +293,10 @@ impl AppState {
             AuthStep::InviteCode => {
                 let code = invite_code(&a.invite.text);
                 if code.is_empty() {
-                    return self.auth_invalid(AuthField::Invite, "Paste the code or link from your invite email.");
+                    return self.auth_invalid(AuthField::Invite, "Enter the code from your invite email.");
+                }
+                if looks_like_link(&code) {
+                    return self.auth_invalid(AuthField::Invite, "Paste just the code from your invite email, not the link.");
                 }
                 Command::LookupInvite { code }
             }
@@ -510,7 +522,7 @@ impl AppState {
                 }
             },
             Err(ApiError::NotFound) | Err(ApiError::InvalidArgument(_)) => {
-                self.auth.fail(AuthField::Invite, "We couldn't find that invite. Check the code, or paste the whole link.")
+                self.auth.fail(AuthField::Invite, "We couldn't find that invite. Check the code and try again.")
             }
             Err(e) => self.auth.error = Some(auth_error(&e)),
         }
@@ -519,7 +531,7 @@ impl AppState {
     /// A link the system opened the app with (`thehideout://invite/<token>`): straight to the
     /// invite, when signed out.
     pub fn open_link(&mut self, url: &str) {
-        let code = invite_code(url);
+        let code = link_token(url);
         if !url.contains("/invite/") || code.is_empty() || self.session.is_some() || self.auth.phase == Phase::Busy {
             return;
         }
@@ -1093,10 +1105,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn invite_codes_come_out_of_links() {
+    fn invite_codes_are_taken_as_typed_and_links_are_spotted() {
         assert_eq!(invite_code(" WXYZ-2345 "), "WXYZ-2345");
-        assert_eq!(invite_code("https://hideout.example/invite/abc_DEF-123"), "abc_DEF-123");
-        assert_eq!(invite_code("thehideout://invite/tok?x=1"), "tok");
+        assert!(!looks_like_link("WXYZ-2345"));
+        assert!(looks_like_link("https://hideout.example/invite/abc"));
+        assert!(looks_like_link("thehideout://invite/tok"));
+        assert!(looks_like_link("hideout.example/invite/abc"));
+    }
+
+    #[test]
+    fn deep_links_carry_their_token() {
+        assert_eq!(link_token("https://hideout.example/invite/abc_DEF-123"), "abc_DEF-123");
+        assert_eq!(link_token("thehideout://invite/tok?x=1"), "tok");
+        assert_eq!(link_token("thehideout://other"), "");
     }
 
     #[test]

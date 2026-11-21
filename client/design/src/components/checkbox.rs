@@ -108,9 +108,9 @@ impl Checkbox {
             control = k.interactive_with(control, surface.hover, surface.pressed);
         }
         let disabled = self.state == State::Disabled;
-        control = control.focus_ring(2.0, 2.0, k.c.border_focus);
+        control = control.focus_ring(crate::space::RING_WIDTH, crate::space::RING_OFFSET, k.c.border_focus);
         if self.state == State::Focus {
-            control = control.outline(2.0, 2.0, k.c.border_focus);
+            control = control.outline(crate::space::RING_WIDTH, crate::space::RING_OFFSET, k.c.border_focus);
         }
         let mut root = row()
             .role("checkbox")

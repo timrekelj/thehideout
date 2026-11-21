@@ -4,6 +4,7 @@
 use rune::{El, col, el, icon, row, text};
 use rune_kit::Kit;
 use thehideout_design::metrics_of;
+use thehideout_design::components::util::frame_over;
 use thehideout_design::components::{Avatar, Button, ChannelHeader, IconButton, Size, Variant};
 use thehideout_design::icons::{GEAR, HASH, USERS, X, catalog};
 use thehideout_design::{palette_color, radius, theme_of, type_};
@@ -73,7 +74,6 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, lay: Layout) -> El
         .min_h(0.0)
         .w_full()
         .fill(t.surface.color())
-        .border(1.0, t.border_subtle.color())
         .radius(radius::LG)
         .clip_rounded(radius::LG)
         .child(
@@ -88,7 +88,8 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, lay: Layout) -> El
                 .child(transcript::build(a, k))
                 .child(composer::build(a, k)),
         )
-        .child(members::build(a, k, lay.members));
+        .child(members::build(a, k, lay.members))
+        .child(frame_over(1.0, t.border_subtle.color(), radius::LG));
     let body = row()
         .key("shell-body")
         .w_full()
@@ -115,7 +116,7 @@ fn email_banner(a: &App, k: &Kit) -> Option<El> {
         return None;
     }
     let t = theme_of(k);
-    let glyph = catalog::by_name("envelope-simple").unwrap_or(&thehideout_design::icons::INFO);
+    let glyph = &thehideout_design::icons::ENVELOPE_SIMPLE;
     Some(
         row()
             .key("email-banner")

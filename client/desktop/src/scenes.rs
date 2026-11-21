@@ -81,11 +81,11 @@ fn auth_second_factor(a: &mut App, dark: bool) {
     a.pump();
 }
 
-/// "I have an invite" with the link from the email pasted.
+/// "I have an invite" with the code from the email typed in.
 fn auth_invite_lookup(a: &mut App, dark: bool) {
     *a = signed_out(dark);
     a.act(|s| s.set_auth_mode(AuthMode::Invite));
-    a.state.auth.invite.replace_text("https://hideout.example/invite/tok-wxyz");
+    a.state.auth.invite.replace_text("WXYZ-2345");
 }
 
 /// The invite looked up: who sent it and where it leads, a name and password being chosen.

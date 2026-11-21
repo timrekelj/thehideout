@@ -151,6 +151,8 @@ Instrument Sans for UI, JetBrains Mono for code (ligatures off). Size / line hei
 | Control at rest (inputs, composer, Secondary button, icon field, invite code, rail "+", "no colour" swatch) | 1px `control_border` (1.8:1+); hover washes the fill, focus swaps the ring for `focus` (3:1+), invalid for `danger` |
 | Control whose edge is the whole control (unchecked checkbox, hollow role dot) | `border_strong` (3:1) |
 | Focus | `focus`, 3:1+ on `bg`; never weakened |
+
+**Rings and edges never clip.** A ring drawn outside its control is 2pt wide and 1pt clear (`space::RING_WIDTH`, `RING_OFFSET`), so it reaches `space::RING` (3pt) past the box; Button, IconButton, GuildBadge/RailTile, Checkbox, the swatches and media buttons all use it, and a clipping parent (a scroll view, a dialog's scrolling body) leaves `RING` of room round its content: pad the view by `RING` and take it back with a negative margin so nothing moves (`Dialog` and the rail do). A full-width row (NavRow, MemberRow, section toggles, list rows) has no room outside, so its ring is inset (`RING_INSET`, drawn just inside the box). An input's ring at rest is an inset 1px shadow, like its focus and invalid outlines, so it never grows past the box and lines up with the buttons beside it. `El::border` takes no layout space and paints under children, so a panel that clips filled rows draws its outline with `components::util::frame_over` as its last child instead. `desktop/render.sh` ends with keyboard-focus renders (`focus-*.png`) of edge-hugging controls.
 | Selected (your reaction, picker tab, swatch, accent preset, theme preview) | `accent` / `text` / `accent_text`; never quieted |
 | Floating (dialog, toast, tooltip, chart tip, hover actions; rune-kit menus and popovers at half `border`) | the fill step and shadow carry it; 1px `border_subtle` edge (it melts into the overlay in dark, a hairline in light) |
 | Inset panel, auth card | 1px `border_subtle` outline (light `surface` is barely off `bg`) |
@@ -414,10 +416,12 @@ the entrance again.
 **Phosphor Icons** (`@phosphor-icons/core` 2.1.1, MIT, Copyright (c) 2023 Phosphor Icons; licence text in
 `src/icons/LICENSES/phosphor-MIT.txt`). Generated Rust, no runtime dependency.
 
-- **Weight.** Fill, for every icon (chrome and channel icons), with no setting and no regular twin in the binary.
-  Phosphor's fill glyphs are solid: chevrons are triangles, `plus`, `x` and `hash` are rounded squares with the mark
-  cut out, `check` is a tick in a square. Channel icons are stored on the server as a plain Phosphor name
-  (`"game-controller"`, no weight); the app just renders the fill glyph for it.
+- **Weight.** Two sets, never mixed in one role. The app's own chrome (`icons::*`, `curated.rs`) is Phosphor
+  **regular** (outline): chevrons are carets, `plus`, `x` and `check` are strokes, `hash` is the two-bar hash. The icons
+  users choose (channel icons and the icon picker, `icons::catalog`) are **fill**. Channel icons are stored on the server
+  as a plain Phosphor name (`"game-controller"`, no weight); the app renders the fill glyph for it. A glyph the app
+  itself shows (nav, empty states, emoji categories, file types, device kinds) is a curated constant, never a
+  `catalog::by_name` lookup; `by_name` is only for a name that came from a user.
 - **Selection rule.** Selected or active is never a weight swap. Use the row highlight, stronger text and an
   `accent_text` icon (nav rows, rail Home, the members toggle, Ghost `IconButton::selected`). A channel with a palette
   colour keeps its tint and takes the 12% wash on the highlight.
@@ -430,7 +434,7 @@ the entrance again.
   python3 -I tools/gen_icons.py --phosphor /path/to/@phosphor-icons/core --out src/icons
   ```
 
-  It writes `src/icons/curated.rs` (the fill glyph for every entry, with an `ALL` list). To make a new icon available to
+  It writes `src/icons/curated.rs` (the regular glyph for every entry, with an `ALL` list). To make a new icon available to
   channels you need nothing: the catalog already holds every Phosphor icon.
   Names are kebab-case in `Icon::name` and `SCREAMING_SNAKE` as the const (`chevron-up-down` is `CHEVRON_UP_DOWN`).
   The gallery's Icons page lists the curated set from `icons::ALL`. The same run also writes the full catalog
@@ -452,12 +456,12 @@ and `surface_overlay`, under a hover or pressed row, under the mention wash (`ac
 chip wash (`palette_wash`, the icon tone at 16%). It is what a role-coloured name and an `@mention` of such a
 member use. A test checks it on all 320 looks x 12 keys x 4 surfaces x 5 grounds.
 
-**Full catalog** (`icons::catalog`): all 1512 Phosphor fill icons with their search tags, generated into
+**Full catalog** (`icons::catalog`): all 1512 Phosphor fill icons (the user-chosen set) with their search tags, generated into
 `src/icons/catalog/part_{0..3}.rs` (sorted by name; same names and tags as Phosphor's regular set).
 `by_name(&str) -> Option<&'static Icon>` is what a channel's stored icon name resolves through (unknown name:
 fall back to `#`); `entry`, `all()` and `search(query)` (every word must match the name or a tag; exact name,
 name prefix, name substring, then tag-only) serve the picker. The curated `icons::*` constants stay the app's own
-chrome. The regular weight is not shipped (release desktop binary 47,295,328 bytes before, 47,184,880 after).
+chrome, in regular weight.
 
 ## Kit mapping (`kit.rs`)
 

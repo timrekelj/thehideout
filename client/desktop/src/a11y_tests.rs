@@ -201,3 +201,26 @@ fn composer_field_is_a_named_text_field_inside_the_composer() {
     settle(&mut rt, 3);
     assert_eq!(rt.state.state.composer().text, "hello from VoiceOver");
 }
+
+#[test]
+fn page_headers_close_button_lines_its_glyph_up_with_the_content_edge() {
+    // Settings, server settings and admin pages share one header: the close button's box overhangs
+    // the content column by the 8pt its glyph sits inside, so the glyph (not the hover box) lines up
+    // with the right edge of the controls below.
+    use crate::tests::rect_of;
+    for name in [
+        "settings-appearance",
+        "settings-security",
+        "server-settings-overview",
+        "server-settings-roles",
+        "admin-overview",
+        "admin-users",
+        "admin-invites",
+    ] {
+        let rt = scene(name);
+        let key = if name.starts_with("admin") { "admin-header" } else { "page-header" };
+        let header = rect_of(&rt, key);
+        let close = rect_of(&rt, "settings-close");
+        assert_eq!(close[0] + close[2], header[0] + header[2] + 8.0, "{name}: close button");
+    }
+}

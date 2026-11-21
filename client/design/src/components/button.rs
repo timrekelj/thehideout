@@ -166,7 +166,7 @@ impl Button {
         if let Some(b) = s.border {
             e = e.border(1.0, b);
         }
-        e = paint(k, e, s.surface, self.state, (2.0, 2.0));
+        e = paint(k, e, s.surface, self.state, (crate::space::RING_WIDTH, crate::space::RING_OFFSET));
         if let Some(i) = self.icon {
             e = e.child(icon(i, icon_px).key("icon").color(s.ink).a11y_hidden());
         }

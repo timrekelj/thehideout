@@ -13,13 +13,14 @@ use thehideout_api::{
 };
 use thehideout_design::metrics_of;
 use thehideout_design::components::avatar::picture;
+use thehideout_design::components::util::frame_over;
 use thehideout_design::components::{
     ActivityChart, Avatar, Badge, BadgeVariant, BarSegment, Button, Checkbox, Dialog, EmptyState,
     IconButton, Segmented, Size, StackedBar, StatCard, TextInput, Variant, dialog_field,
     group_digits,
 };
-use thehideout_design::icons::{self, SEARCH, SHIELD, TRASH, USERS, WARNING, catalog};
-use thehideout_design::{palette_color, radius, theme_of, type_};
+use thehideout_design::icons::{self, SEARCH, SHIELD, TRASH, USERS};
+use thehideout_design::{palette_color, radius, space, theme_of, type_};
 
 use super::server_settings::tile;
 use super::settings::{header, nav_shell};
@@ -39,6 +40,9 @@ fn pad(k: &Kit) -> f32 {
     metrics_of(k).pad(32.0)
 }
 const MAX_W: f32 = 1040.0;
+/// Extra room before a left-aligned column that follows a right-aligned one (a figure's right edge
+/// would otherwise sit one 12pt gap from the next column's text).
+const COL_GAP: f32 = 16.0;
 fn row_h(k: &Kit) -> f32 {
     metrics_of(k).table_row(52.0)
 }
@@ -102,7 +106,6 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, compact: bool) -> 
         .min_w(0.0)
         .h_full()
         .fill(t.surface.color())
-        .border(1.0, t.border_subtle.color())
         .radius(radius::LG)
         .clip_rounded(radius::LG)
         .child(top)
@@ -116,7 +119,8 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, compact: bool) -> 
                     })
                     .child(parts.body),
             ),
-        );
+        )
+        .child(frame_over(1.0, t.border_subtle.color(), radius::LG));
     let body = row()
         .key("admin-body")
         .w_full()
@@ -154,15 +158,14 @@ impl Parts {
 }
 
 fn nav(k: &Kit, page: AdminPage) -> El {
-    let icon = |name: &str| catalog::by_name(name).unwrap_or(&icons::GEAR);
     let mut rows = Vec::new();
     for (p, label, glyph) in [
-        (AdminPage::Overview, "Overview", icon("chart-bar")),
-        (AdminPage::Servers, "Servers", icon("hard-drives")),
-        (AdminPage::Files, "Files", icon("files")),
+        (AdminPage::Overview, "Overview", &icons::CHART_BAR),
+        (AdminPage::Servers, "Servers", &icons::HARD_DRIVES),
+        (AdminPage::Files, "Files", &icons::FILES),
         (AdminPage::Users, "Users", &USERS),
-        (AdminPage::Invites, "Invites", icon("envelope-simple")),
-        (AdminPage::Audit, "Audit log", icon("clipboard-text")),
+        (AdminPage::Invites, "Invites", &icons::ENVELOPE_SIMPLE),
+        (AdminPage::Audit, "Audit log", &icons::CLIPBOARD_TEXT),
     ] {
         rows.push(
             thehideout_design::components::NavRow::new(label, glyph)
@@ -280,7 +283,7 @@ fn list_foot(k: &Kit, pending: bool, error: &Option<String>) -> Option<El> {
 
 fn unavailable(k: &Kit) -> El {
     col().key("admin-unavailable").w_full().py(64.0).items_center().child(
-        EmptyState::new(catalog::by_name("plugs").unwrap_or(&WARNING), "Admin service not available", "This server doesn't offer the admin dashboard yet. Update the server, then try again.")
+        EmptyState::new(&icons::PLUGS, "Admin service not available", "This server doesn't offer the admin dashboard yet. Update the server, then try again.")
             .action(Button::new("Try again").variant(Variant::Secondary).on_press(|a: &mut App| a.act(|s| s.retry_admin())).build(k).key("admin-retry"))
             .build(k),
     )
@@ -682,7 +685,7 @@ fn server_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
         .center_y()
         .radius(radius::MD)
         .focusable(true)
-        .focus_ring(2.0, 0.0, k.c.border_focus)
+        .focus_ring(space::RING_WIDTH, space::RING_INSET, k.c.border_focus)
         .hover(t.hover.color())
         .press(t.pressed.color())
         .on_press(move |a: &mut App| a.act(|s| s.admin_files_of(guild)))
@@ -901,7 +904,7 @@ fn files(k: &Kit, layer: &mut Vec<El>, ad: &AdminState, compact: bool) -> Parts 
     }
     head.push(head_cell(k, "Size", Some(FILE_SIZE_W), true));
     if !compact {
-        head.push(head_cell(k, "Added", Some(FILE_DATE_W), false));
+        head.push(head_cell(k, "Added", Some(FILE_DATE_W), false).ml(COL_GAP));
     }
     head.push(row().w(FILE_ACT_W).shrink());
 
@@ -910,7 +913,7 @@ fn files(k: &Kit, layer: &mut Vec<El>, ad: &AdminState, compact: bool) -> Parts 
     } else if feed.items.is_empty() && feed.error.is_none() {
         blank(
             k,
-            catalog::by_name("files").unwrap_or(&WARNING),
+            &icons::FILES,
             "No files",
             if ad.file_guild.is_some() || ad.file_kind.is_some() {
                 "Nothing stored matches these filters."
@@ -966,7 +969,7 @@ fn type_icon(r: &AdminFileRow) -> &'static rune::Icon {
         (AdminFileKind::EmbedThumbnail, _) => "link",
         (AdminFileKind::Unknown, _) => "file",
     };
-    catalog::by_name(name).unwrap_or(&icons::IMAGE)
+    icons::ALL.iter().copied().find(|i| i.name == name).unwrap_or(&icons::IMAGE)
 }
 
 fn preview(a: &App, k: &Kit, r: &AdminFileRow) -> El {
@@ -1101,7 +1104,7 @@ fn file_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
     line = line.child(num(k, bytes(r.bytes), FILE_SIZE_W));
     if !compact {
         line = line.child(
-            row().w(FILE_DATE_W).shrink().child(
+            row().w(FILE_DATE_W).shrink().ml(COL_GAP).child(
                 text(when)
                     .font(type_::at(k, type_::CONTROL))
                     .color(t.text_muted.color())
@@ -1117,7 +1120,7 @@ fn file_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
             .justify_end()
             .child(
                 IconButton::new(
-                    catalog::by_name("arrow-square-out").unwrap_or(&icons::X),
+                    &icons::ARROW_SQUARE_OUT,
                     format!("Open {title}"),
                 )
                 .size(Size::Sm)
@@ -1159,7 +1162,7 @@ fn users(k: &Kit, ad: &AdminState, compact: bool) -> Parts {
     }
     head.push(head_cell(k, "Storage", Some(USER_NUM_W), true));
     if !compact {
-        head.push(head_cell(k, "Last active", Some(USER_LAST_W), false));
+        head.push(head_cell(k, "Last active", Some(USER_LAST_W), false).ml(COL_GAP));
     }
     let body = if !feed.loaded && feed.error.is_none() {
         loading(k)
@@ -1302,7 +1305,7 @@ fn user_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
     line = line.child(num(k, bytes(r.storage_bytes), USER_NUM_W));
     if !compact {
         line = line.child(
-            row().w(USER_LAST_W).shrink().child(
+            row().w(USER_LAST_W).shrink().ml(COL_GAP).child(
                 text(last_active(a, r))
                     .font(type_::at(k, type_::CONTROL))
                     .color(t.text_muted.color())
@@ -1429,7 +1432,7 @@ fn invites(a: &App, k: &Kit, layer: &mut Vec<El>, ad: &AdminState, compact: bool
     } else if shown == 0 && feed.error.is_none() {
         blank(
             k,
-            catalog::by_name("envelope-simple").unwrap_or(&WARNING),
+            &icons::ENVELOPE_SIMPLE,
             if feed.items.is_empty() { "No invites yet" } else { "No invites like that" },
             "Invites you and server members send show up here.",
         )
@@ -1615,7 +1618,7 @@ fn audit(k: &Kit, ad: &AdminState, compact: bool) -> Parts {
     } else if feed.items.is_empty() && feed.error.is_none() {
         blank(
             k,
-            catalog::by_name("clipboard-text").unwrap_or(&WARNING),
+            &icons::CLIPBOARD_TEXT,
             "Nothing logged yet",
             "Deleted files and changes to admin rights show up here.",
         )

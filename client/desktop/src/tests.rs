@@ -143,7 +143,7 @@ fn wrong_password_and_taken_name_show_inline_errors() {
 
     // Accounts come from invites: the invite tab, its code, then a name that is taken.
     settle(&mut rt, 30);
-    click(&mut rt, "segment1");
+    click(&mut rt, "auth-link-invite");
     settle(&mut rt, 30);
     assert_eq!(rt.state.state.auth.mode, crate::forms::AuthMode::Invite);
     rt.update(|a, _| a.state.auth.invite.replace_text(crate::fake::account::INVITE_PENDING));

@@ -8,7 +8,7 @@ use rune::{col, Anim, Drag, El, Phase, PointerPress, Tx};
 use rune_kit::{context_menu, Kit, Menu, MenuEntry, MenuItem};
 use thehideout_design::components::{ChannelRow, IconButton, SidebarSection, Size};
 use thehideout_design::icons::{
-    catalog, ARROW_DOWN, ARROW_UP, DOTS_THREE, FOLDER_PLUS, PENCIL, PLUS, TRASH,
+    catalog, ARROW_DOWN, ARROW_UP, DOTS_THREE, PENCIL, PLUS, TRASH,
 };
 use thehideout_design::{palette_color, theme_of};
 
@@ -403,7 +403,7 @@ fn channel_items(a: &App, menu: Menu, guild: u64, id: u64) -> Menu {
     )
     .item(
         MenuItem::new("Move to section")
-            .icon(catalog::by_name("folder-simple").unwrap_or(&FOLDER_PLUS))
+            .icon(&thehideout_design::icons::FOLDER_SIMPLE)
             .disabled(targets.is_empty())
             .submenu(targets, sub_open)
             .on_select(move |a: &mut App| a.state.ui.menu = MenuState::MoveTo { id, at }),

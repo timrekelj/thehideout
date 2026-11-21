@@ -108,7 +108,7 @@ impl GuildBadge {
             hover: t.hover.color(),
             pressed: t.pressed.color(),
         };
-        let face = paint(k, face, surface, self.state, (2.0, 2.0));
+        let face = paint(k, face, surface, self.state, (crate::space::RING_WIDTH, crate::space::RING_OFFSET));
         let rail = indicator(t, s, self.selected, self.unread, self.state == State::Hover);
         tile(
             k,
@@ -309,7 +309,7 @@ impl RailTile {
             hover: t.hover.color(),
             pressed: t.pressed.color(),
         };
-        let face = paint(k, face, surface, self.state, (2.0, 2.0));
+        let face = paint(k, face, surface, self.state, (crate::space::RING_WIDTH, crate::space::RING_OFFSET));
         let rail = indicator(t, s, self.selected, self.unread, self.state == State::Hover);
         tile(
             k,

@@ -6,6 +6,7 @@ use rune::{col, el, El, ScrollSpec};
 use rune_kit::{Kit, Menu, MenuItem};
 use thehideout_design::components::{GuildBadge, RailTile};
 use thehideout_design::icons::{HOUSE, LINK, PLUS};
+use thehideout_design::space::RING;
 
 use crate::app::App;
 use crate::state::{DialogKind, Menu as MenuState, Place};
@@ -79,10 +80,17 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         .child(home(a, k))
         .child(el().key("rail-divider").w(face).h(4.0))
         .child(
+            // The scroll view clips, so it carries `RING` of room round the tiles for their focus
+            // rings; the negative margin takes it back so the tiles stay where they were.
             col()
+                .key("guilds-scroll")
                 .grow(1.0)
                 .min_h(0.0)
-                .w_full()
+                .w(width(k) - 4.0)
+                .ml(-RING)
+                .mt(-RING)
+                .pt(RING)
+                .pl(RING)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })

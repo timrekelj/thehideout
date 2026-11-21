@@ -13,7 +13,7 @@ use thehideout_design::components::{
     EmojiScope, IconButton, IconGrid, PickerTabs, Pick, Size, TextInput, ToastKind, Variant,
 };
 use thehideout_design::icons::{catalog, CHEVRON_DOWN, COPY, HASH, SEARCH, X};
-use thehideout_design::{palette_color, radius, theme_of, type_};
+use thehideout_design::{palette_color, radius, space, theme_of, type_};
 
 use crate::app::App;
 use crate::emoji::IconEmoji;
@@ -318,7 +318,7 @@ fn icon_row(a: &App, k: &Kit, f: &ChannelForm, guild: u64) -> El {
             },
         )
         .focusable(true)
-        .focus_ring(2.0, 0.0, k.c.border_focus)
+        .focus_ring(space::RING_WIDTH, space::RING_OFFSET, k.c.border_focus)
         .hover(t.hover.color())
         .press(t.pressed.color())
         .on_press(|a: &mut App| a.act(|s| s.toggle_picker()))
@@ -520,7 +520,7 @@ fn new_dm(a: &App, k: &Kit, layer: &mut Vec<El>, d: &DialogState) {
                 .center_y()
                 .radius(radius::MD)
                 .focusable(true)
-                .focus_ring(2.0, 0.0, k.c.border_focus)
+                .focus_ring(space::RING_WIDTH, space::RING_INSET, k.c.border_focus)
                 .hover(t.hover.color())
                 .press(t.pressed.color())
                 .on_press(move |a: &mut App| {
@@ -677,7 +677,7 @@ fn invite_by_email(a: &App, k: &Kit, layer: &mut Vec<El>, max_h: f32, d: &Dialog
             .radius(radius::MD)
             .fill(t.success_bg.color())
             .child(
-                text(format!("Invite sent to {}. Share the link, or the code to paste under \u{201c}I have an invite\u{201d}:", created.email))
+                text(format!("Invite sent to {}. Share the link, or the code to enter under \u{201c}Have an invite? Join with a code\u{201d} on the sign-in screen:", created.email))
                     .font(type_::at(k, type_::CONTROL))
                     .color(t.text.color())
                     .wrap()

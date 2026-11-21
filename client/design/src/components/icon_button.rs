@@ -94,7 +94,7 @@ impl IconButton {
         if let Some(b) = s.border {
             e = e.border(1.0, b);
         }
-        e = paint(k, e, s.surface, self.state, (2.0, 2.0));
+        e = paint(k, e, s.surface, self.state, (crate::space::RING_WIDTH, crate::space::RING_OFFSET));
         e = e.child(icon(self.glyph, px).key("icon").color(ink).a11y_hidden());
         self.acts.apply(e, self.state != State::Disabled)
     }

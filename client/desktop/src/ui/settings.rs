@@ -8,12 +8,13 @@
 use rune::{col, el, row, text, Color, El, ScrollSpec, Tx};
 use rune_kit::Kit;
 use thehideout_design::metrics_of;
+use thehideout_design::components::util::frame_over;
 use thehideout_design::components::{
     switch, Avatar, IconButton, Kbd, NavRow, Segmented, ThemePreview,
 };
 use thehideout_design::icons::{self, X};
 use thehideout_design::{
-    motion, radius, theme_for, theme_of, type_, AccentPreset, Appearance, BackgroundPreset, Contrast,
+    motion, radius, space, theme_for, theme_of, type_, AccentPreset, Appearance, BackgroundPreset, Contrast,
     Density, TextSize, ThemeSpec,
 };
 
@@ -26,6 +27,8 @@ const INSET: f32 = 8.0;
 const NAV_W: f32 = 240.0;
 /// The page's text column.
 pub(super) const PAGE_W: f32 = 760.0;
+/// Room round a swatch's circle and a background tile's picture (its hover box and focus ring).
+const TILE_PAD: f32 = 4.0;
 
 /// Applies `f` to the look inside a press: queues the save and asks for the calm colour spring.
 fn change(a: &mut App, tx: &mut Tx, f: impl FnOnce(&mut Look)) {
@@ -57,7 +60,6 @@ pub(super) fn frame(a: &App, k: &Kit, bar: f32, nav: El, page: El) -> El {
         .min_w(0.0)
         .h_full()
         .fill(t.surface.color())
-        .border(1.0, t.border_subtle.color())
         .radius(radius::LG)
         .clip_rounded(radius::LG)
         .child(a.state.ui.edges.page.wrap(
@@ -68,7 +70,8 @@ pub(super) fn frame(a: &App, k: &Kit, bar: f32, nav: El, page: El) -> El {
                     stick_bottom: false,
                 })
                 .child(page),
-        ));
+        ))
+        .child(frame_over(1.0, t.border_subtle.color(), radius::LG));
     let body = row()
         .key("settings-body")
         .w_full()
@@ -99,7 +102,7 @@ fn nav(k: &Kit, section: Section) -> El {
                 .on_press(|a: &mut App| a.act(|s| s.ui.settings = Some(Section::Appearance)))
                 .build(k)
                 .key("settings-nav-appearance"),
-            NavRow::new("Security", thehideout_design::icons::catalog::by_name("shield-check").unwrap_or(&icons::SHIELD))
+            NavRow::new("Security", &icons::SHIELD_CHECK)
                 .selected(section == Section::Security)
                 .highlight_group("settings-nav")
                 .on_press(|a: &mut App| a.act(|s| s.open_security()))
@@ -128,10 +131,13 @@ pub(super) fn nav_shell(k: &Kit, title: &str, rows: Vec<El>) -> El {
         .child(col().w_full().px(8.0).gap(2.0).children(rows))
 }
 
-/// A page's title with the Esc hint and the close button.
+/// A page's title with the Esc hint and the close button. The button's glyph sits 8pt inside its
+/// box, so the box overhangs the column by that much and the glyph lines up with the content's right
+/// edge (the hover box takes the page's side padding).
 pub(super) fn header(k: &Kit, title: &str, close: impl Fn(&mut App) + 'static) -> El {
     let t = theme_of(k);
     row()
+        .key("page-header")
         .w_full()
         .h(metrics_of(k).header_h())
         .gap(8.0)
@@ -147,6 +153,7 @@ pub(super) fn header(k: &Kit, title: &str, close: impl Fn(&mut App) + 'static) -
             IconButton::new(&X, "Close settings")
                 .on_press(close)
                 .build(k)
+                .mr(-8.0)
                 .key("settings-close"),
         )
 }
@@ -165,11 +172,13 @@ fn appearance(a: &App, k: &Kit) -> El {
     .on_pick_tx(|a: &mut App, i, tx| change(a, tx, |l| l.spec.appearance = Appearance::ALL[i]))
     .build(k);
 
-    let mut accents = row().key("set-accent").flex_wrap().gap(8.0);
+    // The swatches and tiles have their own padding (the hover box, the ring's room), so the row takes it
+    // back and the first picture lines up with the text column above it.
+    let mut accents = row().key("set-accent").flex_wrap().gap(8.0).ml(-TILE_PAD);
     for preset in AccentPreset::ALL {
         accents = accents.child(accent_swatch(k, spec, dark, preset));
     }
-    let mut backgrounds = row().key("set-background").flex_wrap().gap(12.0);
+    let mut backgrounds = row().key("set-background").flex_wrap().gap(8.0).ml(-TILE_PAD);
     for preset in BackgroundPreset::ALL {
         backgrounds = backgrounds.child(background_tile(k, spec, dark, preset));
     }
@@ -325,13 +334,14 @@ fn accent_swatch(k: &Kit, spec: ThemeSpec, dark: bool, preset: AccentPreset) -> 
         .role("radio")
         .label(preset.name())
         .focus_selected(selected)
-        .w(76.0)
+        .w(60.0)
+        .px(TILE_PAD)
         .py(6.0)
         .gap(6.0)
-        .items_center()
+        .items_start()
         .radius(radius::MD)
         .focusable(true)
-        .focus_ring(2.0, 0.0, k.c.border_focus)
+        .focus_ring(space::RING_WIDTH, space::RING_OFFSET, k.c.border_focus)
         .hover(t.hover.color())
         .press(t.pressed.color())
         .on_press_tx(move |a: &mut App, tx| change(a, tx, |l| l.spec.accent = preset))
@@ -359,12 +369,12 @@ fn background_tile(k: &Kit, spec: ThemeSpec, dark: bool, preset: BackgroundPrese
         .role("radio")
         .label(preset.name())
         .focus_selected(selected)
-        .w(104.0)
-        .padding(4.0)
+        .w(96.0 + 2.0 * TILE_PAD)
+        .padding(TILE_PAD)
         .gap(6.0)
         .radius(radius::LG)
         .focusable(true)
-        .focus_ring(2.0, 0.0, k.c.border_focus)
+        .focus_ring(space::RING_WIDTH, space::RING_OFFSET, k.c.border_focus)
         .on_press_tx(move |a: &mut App, tx| change(a, tx, |l| l.spec.background = preset))
         .child(
             ThemePreview::new(ThemeSpec { background: preset, ..spec }, dark)

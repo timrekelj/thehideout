@@ -545,16 +545,38 @@ fn signing_up_with_a_passkey_asks_for_it_first_then_offers_two_factor() {
 }
 
 #[test]
-fn a_pasted_link_finds_the_invite_too() {
-    let (app, fake) = looked_up("https://hideout.example/invite/tok-wxyz");
+fn the_invite_field_takes_the_code_as_typed_without_padding() {
+    let (app, fake) = looked_up(&format!("  {INVITE_PENDING} "));
     assert!(matches!(app.state.auth.step, AuthStep::InviteAccept { .. }));
     assert_eq!(
         sent(
             &fake,
-            |c| matches!(c, Command::LookupInvite { code } if code == "tok-wxyz")
+            |c| matches!(c, Command::LookupInvite { code } if code == INVITE_PENDING)
         ),
         1
     );
+}
+
+#[test]
+fn a_pasted_link_is_refused_in_the_invite_field_without_asking_the_server() {
+    for link in [
+        "https://hideout.example/invite/tok-wxyz",
+        "thehideout://invite/tok-wxyz",
+        "hideout.example/invite/tok-wxyz",
+    ] {
+        let (app, fake) = looked_up(link);
+        assert_eq!(app.state.auth.step, AuthStep::InviteCode, "{link}");
+        assert_eq!(
+            error(&app, AuthField::Invite).unwrap(),
+            "Paste just the code from your invite email, not the link."
+        );
+        assert_eq!(
+            sent(&fake, |c| matches!(c, Command::LookupInvite { .. })),
+            0,
+            "{link}"
+        );
+        assert_eq!(app.state.auth.phase, Phase::Idle);
+    }
 }
 
 #[test]
@@ -612,7 +634,7 @@ fn an_invite_that_lapsed_meanwhile_is_refused_at_accept() {
 fn the_invite_tab_is_reached_with_the_mouse() {
     let (app, _) = signed_out();
     let mut rt = runtime(app);
-    click(&mut rt, "segment1");
+    click(&mut rt, "auth-link-invite");
     settle(&mut rt, 3);
     assert_eq!(rt.state.state.auth.mode, AuthMode::Invite);
     assert!(has(&rt, "auth-invite"));

@@ -297,7 +297,7 @@ impl ColorSwatches {
                 .center()
                 .radius(radius::MD)
                 .focusable(true)
-                .focus_ring(2.0, 2.0, k.c.border_focus)
+                .focus_ring(crate::space::RING_WIDTH, crate::space::RING_OFFSET, k.c.border_focus)
                 .token_motion(motion::CONTROL)
                 .hover(t.hover.color());
             swatch = match tone {
@@ -306,7 +306,7 @@ impl ColorSwatches {
             };
             if on {
                 // The selection ring sits outside the swatch so the colour stays whole.
-                swatch = swatch.outline(2.0, 2.0, t.text.color());
+                swatch = swatch.outline(crate::space::RING_WIDTH, crate::space::RING_OFFSET, t.text.color());
                 swatch = swatch.child(
                     icon(if tone.is_some() { &CHECK } else { &X }, size::XS)
                         .color(if tone.is_some() { t.bg } else { t.text_muted }.color())

@@ -509,7 +509,7 @@ impl VideoCard {
                     .role("button")
                     .label("Play video")
                     .focusable(true)
-                    .focus_ring(2.0, 2.0, k.c.border_focus)
+                    .focus_ring(crate::space::RING_WIDTH, crate::space::RING_OFFSET, k.c.border_focus)
                     .hover(MEDIA_BACK.color())
                     .child(icon(&PLAY, isize::MD).color(ink).a11y_hidden()),
             );
@@ -1107,7 +1107,7 @@ pub fn lightbox(k: &Kit, layer: &mut Vec<El>, v: LightboxView, close: impl FnOnc
                 .role("button")
                 .label(label.to_owned())
                 .focusable(true)
-                .focus_ring(2.0, 2.0, k.c.border_focus)
+                .focus_ring(crate::space::RING_WIDTH, crate::space::RING_OFFSET, k.c.border_focus)
                 .hover(t.hover.color())
                 .child(icon(g, isize::MD).color(ink).a11y_hidden())),
             None => el().size(40.0, 40.0),

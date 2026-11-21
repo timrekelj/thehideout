@@ -12,6 +12,7 @@ use rune_kit::Kit;
 use crate::components::{IconButton, Size, TextInput};
 use crate::icons::X;
 use crate::theme_of;
+use crate::space::RING;
 use crate::tokens::{motion, radius, type_};
 
 pub struct Dialog {
@@ -130,10 +131,14 @@ impl Dialog {
         if !body.is_empty() {
             let body = col().key("body").w_full().gap(16.0).children(body);
             panel = panel.child(match self.body_max_h {
+                // The scroll view clips, so it carries `RING` of room round the body for its
+                // controls' focus rings; the negative margin takes it back, so nothing moves.
                 Some(h) => col()
                     .key("body-scroll")
-                    .w_full()
-                    .max_h(h)
+                    .mx(-RING)
+                    .my(-RING)
+                    .padding(RING)
+                    .max_h(h + 2.0 * RING)
                     .scroll(ScrollSpec { stick_bottom: false })
                     .child(body),
                 None => body,
