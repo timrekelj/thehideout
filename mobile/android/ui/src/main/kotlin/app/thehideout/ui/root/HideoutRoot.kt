@@ -62,6 +62,8 @@ fun HideoutRoot(
     onOpenUrl: (String) -> Unit,
     versionName: String,
     modifier: Modifier = Modifier,
+    /** Where this session's attachments load from: the server, or the fake backend's bundled assets. */
+    mediaBase: String = serverUrl,
 ) {
     val c = Hideout.colors
     val snackbar = remember { SnackbarHostState() }
@@ -89,7 +91,9 @@ fun HideoutRoot(
                 onOpenUrl = onOpenUrl,
                 useDemo = actions.useDemo,
             )
-            SessionPhase.SignedIn -> SignedInShell(state, look, onLookChange, actions, versionName)
+            SessionPhase.SignedIn -> androidx.compose.runtime.CompositionLocalProvider(app.thehideout.ui.components.LocalMediaBase provides mediaBase) {
+                SignedInShell(state, look, onLookChange, actions, versionName)
+            }
             is SessionPhase.TermsRequired -> TermsGate(
                 version = phase.version,
                 serverUrl = serverUrl,

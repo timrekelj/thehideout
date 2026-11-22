@@ -145,6 +145,7 @@ fun TranscriptPane(
     LaunchedEffect(channelId) { sink.requestFocus() }
 
     var actionMessage by remember { mutableStateOf<Message?>(null) }
+    var lightboxRequest by remember { mutableStateOf<app.thehideout.ui.components.LightboxRequest?>(null) }
     var editing by remember(channelId) { mutableStateOf<Message?>(null) }
     val text = rememberSaveable(channelId, saver = TextFieldState.Saver) { TextFieldState(state.draft(channelId)) }
     val composerFocus = remember(channelId) { androidx.compose.ui.focus.FocusRequester() }
@@ -218,6 +219,7 @@ fun TranscriptPane(
                                 },
                                 onReact = { r -> actions.react(channelId, item.ui.message.id, r.emoji) },
                                 onRetry = { item.ui.message.nonce.takeIf { it.isNotEmpty() }?.let(actions.retry) },
+                                onOpenLightbox = { lightboxRequest = it },
                             )
                             is TranscriptItem.Day -> DayDivider(item.date, today)
                             TranscriptItem.New -> NewDivider()
@@ -249,6 +251,10 @@ fun TranscriptPane(
             onDelete = { actions.deleteMessage(channelId, m.id) },
             serverEmojis = serverEmojis,
         )
+    }
+
+    lightboxRequest?.let { req ->
+        app.thehideout.ui.components.AttachmentLightbox(req, onDismiss = { lightboxRequest = null })
     }
 }
 

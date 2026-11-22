@@ -86,6 +86,8 @@ class MainActivity : ComponentActivity() {
                             onProbeServer = container::probeServer,
                             onOpenUrl = ::openUrl,
                             versionName = BuildConfig.VERSION_NAME,
+                            // The fake backend has no server: its attachments are bundled assets (ATT-01..05).
+                            mediaBase = if (fake) "file:///android_asset/fake_media" else serverUrl,
                         )
                     }
                 }
