@@ -139,7 +139,7 @@ class ReducerTest {
     @Test fun `editing a message updates it locally and asks the server`() {
         val s = s0.withLog(GENERAL, listOf(1), author = TIM)
         val r = Reducer.reduce(s, Action.EditMessage(GENERAL, 1, "  new text  "))
-        assertEquals(listOf(Effect.EditMessage(GENERAL, 1, "new text")), r.effects)
+        assertEquals(listOf(Effect.EditMessage(GENERAL, 1, "new text", previous = "m1")), r.effects)
         assertEquals("new text", r.state.log(GENERAL)!!.messages.single().content)
     }
 
@@ -150,10 +150,11 @@ class ReducerTest {
         assertEquals(Reduction(s), Reducer.reduce(s, Action.EditMessage(GENERAL, 1, tooLong)))
     }
 
-    @Test fun `a failed edit raises a notice and leaves the optimistic content`() {
+    @Test fun `a failed edit rolls back to what was there and raises a notice`() {
         val s = s0.withLog(GENERAL, listOf(1), author = TIM).reduce(Action.EditMessage(GENERAL, 1, "edited"))
-        val failed = s.reduce(Action.MessageEdited(GENERAL, 1, Result.failure(AppError.PermissionDenied)))
-        assertEquals("edited", failed.log(GENERAL)!!.messages.single().content)
+        assertEquals("edited", s.log(GENERAL)!!.messages.single().content, "optimistic while the server is asked")
+        val failed = s.reduce(Action.MessageEdited(EditOutcome.Failed(GENERAL, 1, "m1", AppError.PermissionDenied)))
+        assertEquals("m1", failed.log(GENERAL)!!.messages.single().content, "rolled back to what was there before the edit")
         assertEquals(1, failed.notices.size)
     }
 
@@ -190,21 +191,38 @@ class ReducerTest {
         assertTrue(feed.all { it.channelId == DEV })
     }
 
-    @Test fun `starting a dm with someone already open just switches to it`() {
+    @Test fun `starting a dm with someone already open switches to it and fetches its history`() {
         val r = Reducer.reduce(s0, Action.StartDm(ANA))
-        assertEquals(emptyList<Effect>(), r.effects, "DM_ANA already exists in the fake seed")
+        assertEquals(listOf(Effect.LoadMessages(DM_ANA, null)), r.effects, "DM_ANA exists but its log is not loaded yet: arrive() must still fetch it")
         assertEquals(Place.Home, r.state.place)
         assertEquals(DM_ANA, r.state.homeDm)
     }
 
-    @Test fun `starting a dm with someone new asks the server, then opens it`() {
+    @Test fun `starting a dm whose history is already loaded switches with no further effect`() {
+        val s = s0.withLog(DM_ANA, listOf(40, 41))
+        val r = Reducer.reduce(s, Action.StartDm(ANA))
+        assertEquals(emptyList<Effect>(), r.effects)
+        assertEquals(DM_ANA, r.state.homeDm)
+    }
+
+    @Test fun `starting a dm never matches myself or a dm that is not 1 to 1`() {
+        assertEquals(listOf(Effect.OpenDm(TIM)), Reducer.reduce(s0, Action.StartDm(TIM)).effects, "never matches myself, even if listed somehow")
+        // CVETKA has no 1:1 DM in the fake seed, so a 3-participant channel that happens to list her must not count as one.
+        val group = DmChannel(90, listOf(s0.me!!, s0.users.getValue(ANA), User(CVETKA, "cvetka", T0)), T0)
+        val withGroup = s0.copy(dms = s0.dms + group)
+        assertEquals(listOf(Effect.OpenDm(CVETKA)), Reducer.reduce(withGroup, Action.StartDm(CVETKA)).effects, "a 3-participant channel is not a 1:1 match")
+    }
+
+    @Test fun `starting a dm with someone new asks the server, then opens it and fetches its history`() {
         val r = Reducer.reduce(s0, Action.StartDm(999))
         assertEquals(listOf(Effect.OpenDm(999)), r.effects)
         val dm = DmChannel(70, listOf(s0.me!!, User(999, "newperson", T0)), T0)
-        val opened = Reducer.reduce(r.state, Action.DmOpened(Result.success(dm))).state
-        assertEquals(Place.Home, opened.place)
-        assertEquals(70L, opened.homeDm)
-        assertTrue(opened.dms.any { it.id == 70L })
+        val opened = Reducer.reduce(r.state, Action.DmOpened(Result.success(dm)))
+        assertEquals(listOf(Effect.LoadMessages(70, null)), opened.effects, "a freshly opened DM has no history yet: must be fetched")
+        val finalState = opened.state
+        assertEquals(Place.Home, finalState.place)
+        assertEquals(70L, finalState.homeDm)
+        assertTrue(finalState.dms.any { it.id == 70L })
     }
 
     @Test fun `the mention feed never includes my own messages`() {

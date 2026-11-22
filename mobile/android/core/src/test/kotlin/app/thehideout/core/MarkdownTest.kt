@@ -25,6 +25,16 @@ class MarkdownTest {
         assertEquals(listOf(t("[x](javascript:alert(1))")), Markdown.inline("[x](javascript:alert(1))"), "only http(s) links")
     }
 
+    @Test fun `custom emoji tokens parse name, id and the animated flag`() {
+        assertEquals(listOf(Inline.CustomEmoji("smug", 7, false)), Markdown.inline("<:smug:7>"))
+        assertEquals(listOf(Inline.CustomEmoji("parrot", 9, true)), Markdown.inline("<a:parrot:9>"))
+        assertEquals(
+            listOf(t("hi "), Inline.CustomEmoji("smug", 7, false), t(" there")),
+            Markdown.inline("hi <:smug:7> there"),
+        )
+        assertEquals(listOf(t("<:no-id:>")), Markdown.inline("<:no-id:>"), "malformed tokens stay literal")
+    }
+
     @Test fun `escapes keep marks literal`() {
         assertEquals(listOf(t("*x*")), Markdown.inline("\\*x\\*"))
     }

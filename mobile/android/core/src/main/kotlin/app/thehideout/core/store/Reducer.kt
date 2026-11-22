@@ -20,9 +20,15 @@ sealed interface Effect {
     data class SendMessage(val channel: Long, val content: String, val nonce: String, val attachmentIds: List<Long>) : Effect
     data class AddReaction(val channel: Long, val message: Long, val emoji: ReactionEmoji) : Effect
     data class RemoveReaction(val channel: Long, val message: Long, val emoji: ReactionEmoji) : Effect
-    data class EditMessage(val channel: Long, val message: Long, val content: String) : Effect
+    data class EditMessage(val channel: Long, val message: Long, val content: String, val previous: String) : Effect
     data class DeleteMessage(val channel: Long, val message: Long) : Effect
     data class OpenDm(val userId: Long) : Effect
+}
+
+/** Where editing a message landed: the new content, or the server's refusal and what to roll back to. */
+sealed interface EditOutcome {
+    data class Edited(val message: Message) : EditOutcome
+    data class Failed(val channel: Long, val message: Long, val previous: String, val error: AppError) : EditOutcome
 }
 
 /** Replies and user intents the reducer understands. */
@@ -33,7 +39,7 @@ sealed interface Action {
     data class ChannelsLoaded(val guild: Long, val result: Result<GuildChannels>) : Action
     data class MessagesLoaded(val channel: Long, val before: Long?, val result: Result<MessagePage>) : Action
     data class MessageSent(val channel: Long, val nonce: String, val result: Result<Message>) : Action
-    data class MessageEdited(val channel: Long, val message: Long, val result: Result<Message>) : Action
+    data class MessageEdited(val outcome: EditOutcome) : Action
     data class MessageDeleteResult(val channel: Long, val message: Long, val result: Result<Unit>) : Action
     data class DmOpened(val result: Result<DmChannel>) : Action
     data class MembersLoaded(val guild: Long, val result: Result<GuildMembers>) : Action
@@ -83,16 +89,19 @@ object Reducer {
         is Action.ChannelsLoaded -> a.result.fold({ setChannels(s, a.guild, it) }, { Reduction(s) })
         is Action.MessagesLoaded -> messages(s, a.channel, a.before, a.result)
         is Action.MessageSent -> sent(s, a.channel, a.nonce, a.result)
-        is Action.MessageEdited -> a.result.fold(
-            { Reduction(messageUpdated(s, it)) },
-            { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't save the edit. ${sentence(e.message.orEmpty())}")) },
-        )
+        is Action.MessageEdited -> when (val o = a.outcome) {
+            is EditOutcome.Edited -> Reduction(messageUpdated(s, o.message))
+            is EditOutcome.Failed -> {
+                val rolledBack = mapMessage(s, o.channel, o.message) { it.copy(content = o.previous) }
+                Reduction(notice(rolledBack, NoticeKind.Danger, "Couldn't save the edit. ${sentence(o.error.message.orEmpty())}"))
+            }
+        }
         is Action.MessageDeleteResult -> a.result.fold(
             { Reduction(s) },
             { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't delete the message. ${sentence(e.message.orEmpty())}")) },
         )
         is Action.DmOpened -> a.result.fold(
-            { dm -> val next = addDm(s, dm); goHome(next).let { Reduction(it.state.let { home -> selectChannel(home, dm.id).state }, it.effects) } },
+            { dm -> openedDm(s, dm) },
             { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't open the conversation. ${sentence(e.message.orEmpty())}")) },
         )
         is Action.MembersLoaded -> membersLoaded(s, a.guild, a.result)
@@ -107,9 +116,8 @@ object Reducer {
         Action.OpenHome -> goHome(s)
         is Action.OpenGuild -> goGuild(s, a.id)
         is Action.StartDm -> {
-            val existing = s.dms.firstOrNull { dm -> dm.participants.any { it.id == a.userId } }
-            if (existing != null) { val r = goHome(s); Reduction(selectChannel(r.state, existing.id).state, r.effects) }
-            else Reduction(s, listOf(Effect.OpenDm(a.userId)))
+            val existing = oneToOneDm(s, a.userId)
+            if (existing != null) goHomeAndSelect(s, existing.id) else Reduction(s, listOf(Effect.OpenDm(a.userId)))
         }
         is Action.OpenChannel -> selectChannel(s, a.channel)
         is Action.LoadOlder -> loadOlder(s, a.channel)
@@ -360,6 +368,27 @@ object Reducer {
     private fun addDm(s: AppState, dm: DmChannel): AppState {
         val users = s.users + dm.participants.associateBy { it.id }
         return s.copy(users = users, dms = if (s.dms.any { it.id == dm.id }) s.dms else s.dms + dm)
+    }
+
+    /** The 1:1 DM with [userId] (never myself, never a group), if one is already known. */
+    private fun oneToOneDm(s: AppState, userId: Long): DmChannel? {
+        if (userId == s.myId) return null
+        return s.dms.firstOrNull { dm ->
+            dm.participants.size == 2 && dm.participants.any { it.id == userId } && dm.participants.any { it.id == s.myId }
+        }
+    }
+
+    /** Goes home and opens [channel] there, keeping both steps' effects (an unloaded DM must still fetch its history). */
+    private fun goHomeAndSelect(s: AppState, channel: Long): Reduction {
+        val home = goHome(s)
+        val selected = selectChannel(home.state, channel)
+        return Reduction(selected.state, home.effects + selected.effects)
+    }
+
+    /** A DM just opened (ours already, or the server's answer to [Effect.OpenDm]): list it and show it. */
+    private fun openedDm(s: AppState, dm: DmChannel): Reduction {
+        val next = addDm(s, dm)
+        return goHomeAndSelect(next, dm.id)
     }
 
     private fun userUpdated(s: AppState, u: User): AppState = s.copy(
@@ -648,12 +677,13 @@ object Reducer {
         )
     }
 
-    /** Edits an own message in place (own edit wins locally; the server's reply or a later event settles it). */
+    /** Edits an own message in place (optimistic; a refusal rolls back to what was there, see [EditOutcome.Failed]). */
     private fun editMessage(s: AppState, channel: Long, message: Long, content: String): Reduction {
         val trimmed = content.trim()
         if (trimmed.isEmpty() || trimmed.codePointCount(0, trimmed.length) > MAX_MESSAGE_CHARS) return Reduction(s)
+        val previous = s.logs[channel]?.messages?.firstOrNull { it.id == message }?.content ?: return Reduction(s)
         val next = mapMessage(s, channel, message) { it.copy(content = trimmed) }
-        return Reduction(next, listOf(Effect.EditMessage(channel, message, trimmed)))
+        return Reduction(next, listOf(Effect.EditMessage(channel, message, trimmed, previous)))
     }
 
     /** Toggles our reaction optimistically and asks the server; the echo from the gateway changes nothing. */

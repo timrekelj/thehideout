@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,7 +34,7 @@ import app.thehideout.ui.theme.Hideout
 @Composable
 fun MentionsScreen(state: AppState, actions: ShellActions, modifier: Modifier = Modifier) {
     val c = Hideout.colors
-    val feed = state.mentionFeed()
+    val feed = remember(state.logs, state.me) { state.mentionFeed() }
     Column(modifier.background(c.bg)) {
         Text("Mentions", style = MaterialTheme.typography.headlineMedium, color = c.text, modifier = Modifier.statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp))
         if (feed.isEmpty()) {

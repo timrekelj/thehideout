@@ -25,6 +25,12 @@ class AutocompleteTest {
         assertEquals(Trigger.Mention("", 0), Autocomplete.trigger("@", 1))
     }
 
+    @Test fun `a colon or at sign in the middle of a word is not a trigger`() {
+        assertEquals(Trigger.None, Autocomplete.trigger("12:3", 4))
+        assertEquals(Trigger.None, Autocomplete.trigger("re:sm", 5))
+        assertEquals(Trigger.None, Autocomplete.trigger("user@ex", 7))
+    }
+
     @Test fun `no colon or at sign before the caret is no trigger`() {
         assertEquals(Trigger.None, Autocomplete.trigger("hello there", 11))
         assertEquals(Trigger.None, Autocomplete.trigger("", 0))

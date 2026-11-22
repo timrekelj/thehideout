@@ -27,6 +27,7 @@ import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +55,9 @@ fun DmsScreen(state: AppState, actions: ShellActions, modifier: Modifier = Modif
     val navigator = rememberListDetailPaneScaffoldNavigator<Long>()
     val scope = rememberCoroutineScope()
     val open = state.homeDm?.let(state::dm)
+    // A DM already open when this pane (re)mounts - because a profile's "Message" or the
+    // new-message sheet switched here - brings the detail pane forward on a phone.
+    LaunchedEffect(open?.id) { if (open != null) navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, open.id) }
     NavigableListDetailPaneScaffold(
         navigator = navigator,
         modifier = modifier,

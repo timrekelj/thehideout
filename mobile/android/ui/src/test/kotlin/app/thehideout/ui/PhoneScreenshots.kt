@@ -32,8 +32,9 @@ class PhoneScreenshots : ScreenshotTest() {
     @Test fun youLight() = shell(Variant.Light, Destination.You)
 
     private fun transcript(variant: Variant) {
+        // Bootstrapping already lands on The Hideout's #general (the reducer's first-guild/first-channel
+        // rule), and the list-detail navigator follows it onto the detail pane on this phone width.
         compose.setThemed(variant) { look -> SignedInShell(world, look, {}, ShellActions(), "0.1.0") }
-        compose.onNodeWithText("general").performClick()
         compose.capture("transcript", Device.Phone, variant)
     }
 
@@ -45,21 +46,18 @@ class PhoneScreenshots : ScreenshotTest() {
 
     @Test fun messageActionSheetDark() {
         compose.setThemed(Variant.Dark) { look -> SignedInShell(world, look, {}, ShellActions(), "0.1.0") }
-        compose.onNodeWithText("general").performClick()
         compose.onAllNodesWithText("Release notes are up: v0.0.3 adds a live gateway, polling and much better reconnects.")[0].performTouchInput { longClick() }
         compose.capture("message-action-sheet", Device.Phone, Variant.Dark)
     }
 
     @Test fun emojiPickerDark() {
         compose.setThemed(Variant.Dark) { look -> SignedInShell(world, look, {}, ShellActions(), "0.1.0") }
-        compose.onNodeWithText("general").performClick()
         compose.onNodeWithContentDescription("Emoji").performClick()
         compose.capture("emoji-picker", Device.Phone, Variant.Dark)
     }
 
     @Test fun composerMentionAutocompleteDark() {
         compose.setThemed(Variant.Dark) { look -> SignedInShell(world, look, {}, ShellActions(), "0.1.0") }
-        compose.onNodeWithText("general").performClick()
         compose.onNodeWithTag("composer-field").performTextInput("hey @a")
         compose.capture("composer-mention-autocomplete", Device.Phone, Variant.Dark)
     }

@@ -22,6 +22,7 @@ import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.model.Perm
 import app.thehideout.core.store.AppState
 import app.thehideout.core.store.Place
 import app.thehideout.core.store.Unread
@@ -61,6 +63,10 @@ fun ServersScreen(state: AppState, actions: ShellActions, modifier: Modifier = M
     val scope = rememberCoroutineScope()
     val guild = state.currentGuild
     val channel = guild?.let { g -> state.currentChannel?.let { state.channel(g.id, it) } }
+    // A channel already open when this pane (re)mounts - on launch, or because a Mentions tap or a
+    // profile's "Message" switched here - brings the detail pane forward on a phone, same as a tap
+    // on a channel row does; nothing to open shows the list.
+    LaunchedEffect(channel?.id) { if (channel != null) navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, channel.id) }
     NavigableListDetailPaneScaffold(
         navigator = navigator,
         modifier = modifier,
@@ -82,7 +88,7 @@ fun ServersScreen(state: AppState, actions: ShellActions, modifier: Modifier = M
                         onBack = if (navigator.canNavigateBack()) ({ scope.launch { navigator.navigateBack() } }) else null,
                         members = members,
                         serverEmojis = state.emojis[guild.id].orEmpty(),
-                        canManageMessages = app.thehideout.core.model.Perm.has(state.perms(guild.id), app.thehideout.core.model.Perm.MANAGE_MESSAGES),
+                        canManageMessages = Perm.has(state.perms(guild.id), Perm.MANAGE_MESSAGES),
                         onOpenMembers = { showMembers = true },
                     )
                     if (showMembers) {

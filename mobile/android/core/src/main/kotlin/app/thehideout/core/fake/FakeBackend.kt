@@ -122,6 +122,8 @@ class FakeBackend(
 
     /** The next [n] sends fail with a network error (for tests of the failed-send state). */
     var failSends: Int = 0
+    /** The next [n] edits fail with a network error, independent of [failSends]. */
+    var failEdits: Int = 0
 
     /** Every message ever sent through [sendMessage], oldest first. */
     val sent: MutableList<Message> = mutableListOf()
@@ -266,8 +268,8 @@ class FakeBackend(
 
     override suspend fun editMessage(channel: Long, message: Long, content: String): Message {
         pause()
-        if (failSends > 0) {
-            failSends--
+        if (failEdits > 0) {
+            failEdits--
             throw AppError.Unavailable("connection reset")
         }
         val list = messages[channel] ?: throw AppError.NotFound
@@ -285,9 +287,20 @@ class FakeBackend(
         val list = messages[channel] ?: throw AppError.NotFound
         val i = list.indexOfFirst { it.id == message }
         if (i < 0) throw AppError.NotFound
-        if (list[i].authorId != currentUserId) throw AppError.PermissionDenied
+        val m = list[i]
+        val guildId = channels.firstOrNull { it.id == channel }?.guildId
+        val mine = m.authorId == currentUserId
+        val moderator = guildId != null && Perm.has(effectivePerms(guildId), Perm.MANAGE_MESSAGES)
+        if (!mine && !moderator) throw AppError.PermissionDenied
         list.removeAt(i)
         emit(GatewayEvent.MessageDeleted(channel, message))
+    }
+
+    /** What [currentUserId] may do in [guildId], same rule the reducer uses. */
+    private fun effectivePerms(guildId: Long): Long {
+        val guild = guilds.firstOrNull { it.id == guildId } ?: return 0L
+        val mine = memberRoles[guildId]?.get(currentUserId).orEmpty()
+        return Perm.effective(guild, currentUserId, mine, roles[guildId].orEmpty())
     }
 
     override suspend fun logout() = Unit

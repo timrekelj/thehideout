@@ -1,11 +1,11 @@
 package app.thehideout.ui.shell
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -120,7 +120,7 @@ internal fun transcriptItems(state: AppState, channel: Long, zone: ZoneId): List
 }
 
 /** The channel (or DM) on screen: a top bar, the reconnect banner, the messages, and the composer. */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TranscriptPane(
     state: AppState,
@@ -147,6 +147,7 @@ fun TranscriptPane(
     var actionMessage by remember { mutableStateOf<Message?>(null) }
     var editing by remember(channelId) { mutableStateOf<Message?>(null) }
     val text = rememberSaveable(channelId, saver = TextFieldState.Saver) { TextFieldState(state.draft(channelId)) }
+    val composerFocus = remember(channelId) { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(channelId) { snapshotFlow { text.text.toString() }.collect { if (editing == null) actions.setDraft(channelId, it) } }
 
     Scaffold(
@@ -179,16 +180,18 @@ fun TranscriptPane(
                 members = members,
                 serverEmojis = serverEmojis,
                 editing = editing,
-                onCancelEdit = { editing = null; text.clearText() },
+                focusRequester = composerFocus,
+                onCancelEdit = { editing = null; text.setTextAndPlaceCursorAtEnd(state.draft(channelId)) },
                 onSend = { body ->
                     val e = editing
                     if (e != null) {
                         actions.editMessage(channelId, e.id, body)
                         editing = null
+                        text.setTextAndPlaceCursorAtEnd(state.draft(channelId))
                     } else {
                         actions.send(body)
+                        text.clearText()
                     }
-                    text.clearText()
                 },
             )
         },
@@ -210,10 +213,9 @@ fun TranscriptPane(
                         when (val item = reversed[i]) {
                             is TranscriptItem.Row -> MessageRow(
                                 item.ui,
-                                modifier = Modifier.combinedClickable(
-                                    onClick = {},
-                                    onLongClick = { if (item.ui.message.id != 0L) actionMessage = item.ui.message },
-                                ),
+                                modifier = Modifier.pointerInput(item.ui.message.id) {
+                                    detectTapGestures(onLongPress = { if (item.ui.message.id != 0L) actionMessage = item.ui.message })
+                                },
                                 onReact = { r -> actions.react(channelId, item.ui.message.id, r.emoji) },
                                 onRetry = { item.ui.message.nonce.takeIf { it.isNotEmpty() }?.let(actions.retry) },
                             )
@@ -238,7 +240,10 @@ fun TranscriptPane(
             onReact = { emoji -> actions.react(channelId, m.id, emoji) },
             onReply = {
                 val name = state.users[m.authorId]?.username
-                if (name != null) text.setTextAndPlaceCursorAtEnd("${text.text}@$name ".trimStart())
+                if (name != null) {
+                    text.setTextAndPlaceCursorAtEnd("@$name ${text.text}")
+                    composerFocus.requestFocus()
+                }
             },
             onEdit = { editing = m; text.setTextAndPlaceCursorAtEnd(m.content) },
             onDelete = { actions.deleteMessage(channelId, m.id) },
@@ -281,6 +286,7 @@ private fun Composer(
     members: List<User>,
     serverEmojis: List<Emoji>,
     editing: Message?,
+    focusRequester: androidx.compose.ui.focus.FocusRequester,
     onCancelEdit: () -> Unit,
     onSend: (String) -> Unit,
 ) {
@@ -306,7 +312,7 @@ private fun Composer(
                         val picked = matches.first { entryLabel(it) == label }
                         val replacement = when (picked) {
                             is EmojiEntry.Unicode -> picked.emoji + " "
-                            is EmojiEntry.Custom -> ":${picked.name}: "
+                            is EmojiEntry.Custom -> customEmojiToken(picked) + " "
                         }
                         text.setTextAndPlaceCursorAtEnd(current.substring(0, trigger.start) + replacement)
                     }
@@ -328,7 +334,7 @@ private fun Composer(
             IconButton(onClick = { showEmojiPicker = true }, modifier = Modifier.padding(bottom = 2.dp)) { SymIcon(Sym.Mood, "Emoji") }
             OutlinedTextField(
                 state = text,
-                modifier = Modifier.weight(1f).testTag("composer-field"),
+                modifier = Modifier.weight(1f).testTag("composer-field").focusRequester(focusRequester),
                 placeholder = { Text(if (editing != null) "Edit message" else "Message $channelName") },
                 lineLimits = TextFieldLineLimits.MultiLine(1, 5),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.xl),
@@ -348,7 +354,7 @@ private fun Composer(
             onPick = { entry ->
                 val insert = when (entry) {
                     is EmojiEntry.Unicode -> entry.emoji
-                    is EmojiEntry.Custom -> ":${entry.name}:"
+                    is EmojiEntry.Custom -> customEmojiToken(entry)
                 }
                 text.setTextAndPlaceCursorAtEnd("$current$insert")
                 showEmojiPicker = false
@@ -363,17 +369,21 @@ private fun entryLabel(e: EmojiEntry): String = when (e) {
     is EmojiEntry.Custom -> "${e.name}"
 }
 
-/** A row of tappable suggestions above the keyboard (member names or emoji). */
+/** The `<:name:id>` / `<a:name:id>` token desktop's composer inserts and its markdown parses (MD-06). */
+private fun customEmojiToken(e: EmojiEntry.Custom): String = "<${if (e.animated) "a" else ""}:${e.name}:${e.id}>"
+
+/** A row of tappable suggestions above the keyboard (member names or emoji), scrollable when it overflows. */
 @Composable
 private fun AutocompleteStrip(labels: List<String>, onPick: (String) -> Unit) {
     val c = Hideout.colors
-    Row(
+    androidx.compose.foundation.lazy.LazyRow(
         Modifier.fillMaxWidth().background(c.surfaceRaised).padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        labels.forEach { label ->
+        items(labels) { label ->
             Surface(
                 onClick = { onPick(label) },
+                modifier = Modifier.testTag("autocomplete-$label"),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.md),
                 color = c.surfaceOverlay,
             ) {

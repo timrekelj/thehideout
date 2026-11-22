@@ -16,21 +16,23 @@ object Autocomplete {
     private val WORD_BOUNDARY = Regex("[\\s]")
 
     /**
-     * What the composer should suggest for [text] with the caret at [caret]: an unbroken run of
-     * non-whitespace back from the caret that starts with `@` (mention) or `:` (emoji shortcode).
-     * Mobile-only nicety; desktop has no `@` autocomplete (MSG-12).
+     * What the composer should suggest for [text] with the caret at [caret]: the current word (the
+     * unbroken run of non-whitespace back from the caret) triggers only when *it itself* starts
+     * with `@` (mention) or `:` (emoji shortcode) - so `12:3`, `re:sm` and `user@ex` are plain text,
+     * not `3`/`sm`/`ex` queries. Mobile-only nicety; desktop has no `@` autocomplete (MSG-12).
      */
     fun trigger(text: String, caret: Int): Trigger {
         if (caret <= 0 || caret > text.length) return Trigger.None
         var start = caret - 1
-        while (start >= 0 && !WORD_BOUNDARY.matches(text[start].toString())) {
-            when (text[start]) {
-                ':' -> return Trigger.EmojiShortcode(text.substring(start + 1, caret), start)
-                '@' -> return Trigger.Mention(text.substring(start + 1, caret), start)
-            }
-            start--
+        while (start >= 0 && !WORD_BOUNDARY.matches(text[start].toString())) start--
+        val wordStart = start + 1
+        if (wordStart >= caret) return Trigger.None
+        val query = text.substring(wordStart + 1, caret)
+        return when (text[wordStart]) {
+            ':' -> Trigger.EmojiShortcode(query, wordStart)
+            '@' -> Trigger.Mention(query, wordStart)
+            else -> Trigger.None
         }
-        return Trigger.None
     }
 
     /** Members whose username starts with [query] (case-insensitive), up to [limit], as desktop's `@` chip does. */

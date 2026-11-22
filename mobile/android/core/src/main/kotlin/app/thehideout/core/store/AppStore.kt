@@ -172,9 +172,14 @@ class AppStore(
                 )
                 is Effect.AddReaction -> guard(runCatching { api.addReaction(effect.channel, effect.message, effect.emoji) })
                 is Effect.RemoveReaction -> guard(runCatching { api.removeReaction(effect.channel, effect.message, effect.emoji) })
-                is Effect.EditMessage -> dispatch(
-                    Action.MessageEdited(effect.channel, effect.message, guard(runCatching { api.editMessage(effect.channel, effect.message, effect.content) })),
-                )
+                is Effect.EditMessage -> {
+                    val r = guard(runCatching { api.editMessage(effect.channel, effect.message, effect.content) })
+                    val outcome = r.fold(
+                        { EditOutcome.Edited(it) },
+                        { e -> EditOutcome.Failed(effect.channel, effect.message, effect.previous, e as? AppError ?: AppError.Other(e.message.orEmpty())) },
+                    )
+                    dispatch(Action.MessageEdited(outcome))
+                }
                 is Effect.DeleteMessage -> dispatch(
                     Action.MessageDeleteResult(effect.channel, effect.message, guard(runCatching { api.deleteMessage(effect.channel, effect.message) })),
                 )
