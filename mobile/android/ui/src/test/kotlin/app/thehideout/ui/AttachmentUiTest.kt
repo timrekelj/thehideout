@@ -32,6 +32,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowDialog
 
 /** Tap an image attachment -> the lightbox opens; swipe -> the next picture; back -> it closes (ATT-05). */
 @RunWith(RobolectricTestRunner::class)
@@ -70,7 +71,10 @@ class AttachmentUiTest {
         compose.waitForIdle()
         compose.onNodeWithText("mood-2.jpg · 2 of 4").assertIsDisplayed()
 
-        compose.activity.onBackPressedDispatcher.onBackPressed()
+        // The lightbox is a Dialog, a separate window: exercise its own back handling
+        // (DialogProperties.dismissOnBackPress -> onDismissRequest), not the host Activity's.
+        @Suppress("DEPRECATION")
+        ShadowDialog.getLatestDialog().onBackPressed()
         compose.waitForIdle()
         compose.onAllNodesWithText("mood-2.jpg · 2 of 4").assertCountEquals(0)
     }
