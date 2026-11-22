@@ -5,7 +5,7 @@ Native iOS (SwiftUI) and Android (Jetpack Compose) apps with the same features a
 - [`PARITY.md`](PARITY.md): every desktop feature and screen, the mobile adaptation, the native component on each platform. The definition of done.
 - [`tokens/`](tokens): design tokens exported from the Rust design crate, the generator, bundled fonts.
 - [`api/`](api): `buf` generation of the Swift and Kotlin API clients from `proto/`.
-- [`ios/`](ios): `Shared/DesignTokens.generated.swift`, `Packages/HideoutAPI` (the Xcode project and app packages come next).
+- [`ios/`](ios): the Xcode project (generated from `project.yml`), the app, `Packages/{HideoutAPI,HideoutDesign,HideoutCore,HideoutUI}`, snapshot tests. See [`ios/README.md`](ios/README.md).
 - [`android/`](android): `design/` (generated tokens) and `api/` (generated client); the Gradle project comes next.
 
 ## Decisions (settled)
@@ -36,7 +36,8 @@ mobile/
   ios/
     Shared/DesignTokens.generated.swift     Theme, ThemeSpec, palette, type, metrics, constants
     Packages/HideoutAPI/                    SwiftPM: generated messages + Connect clients
-    (next) Hideout.xcodeproj, Packages/HideoutCore, Packages/HideoutUI, extensions
+    Hideout.xcodeproj (from project.yml), Hideout/, HideoutTests/, Packages/HideoutDesign, Packages/HideoutCore, Packages/HideoutUI
+    (next) extensions
   android/
     design/src/main/kotlin/app/thehideout/design/DesignTokens.kt
     api/src/main/{java,kotlin}              generated protobuf-javalite + connect-kotlin clients
@@ -222,7 +223,7 @@ Added in this PR (`.github/workflows/ci.yml`):
 
 To add as the apps land:
 
-- iOS (macOS runner): `swift test` for `HideoutCore`; `xcodebuild test` for the app on an iPhone and an iPad simulator (unit, snapshot, UI); snapshot failures upload their diffs as artifacts. Archive and TestFlight upload on tags.
+- iOS: the `ios` job (macOS 26, newest Xcode 26) runs `swift test` for `HideoutCore`, checks that `Hideout.xcodeproj` matches `project.yml`, builds the app for the simulator and runs the unit tests. The snapshot tests are skipped in CI (their references are recorded on one simulator runtime and Liquid Glass renders differently across runtimes; see `ios/README.md`). Still to add: UI tests, snapshot runs once a runner matches, diffs as artifacts, archive and TestFlight upload on tags.
 - Android (Ubuntu runner): `./gradlew :core:test :ui:verifyRoborazziDebug :app:assembleDebug :app:lintDebug`, instrumented tests on a managed device nightly; bundle and Play internal upload on tags.
 - A path filter so `mobile/**` and `client/design/**` changes run the mobile jobs and nothing else does.
 - `buf breaking` already guards the protos; the `--check` jobs guard the generated clients.
