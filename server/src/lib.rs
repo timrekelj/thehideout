@@ -24,6 +24,7 @@ pub mod storage;
 pub mod ttl;
 pub mod validation;
 pub mod versions;
+pub mod voice;
 
 pub mod proto {
     connectrpc::include_generated!();

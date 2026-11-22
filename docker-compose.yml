@@ -64,8 +64,48 @@ services:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
 
+  # Voice channels: a self-hosted LiveKit SFU carries the audio / video; the
+  # server only issues join tokens and keeps track of who is in which channel.
+  # Clients connect to ws://127.0.0.1:7880 (LIVEKIT_URL). LiveKit posts room /
+  # participant webhooks to the server running on the host (see the config
+  # below); `host-gateway` makes host.docker.internal work on Linux too.
+  # No healthcheck: the image has no shell or wget. Check with
+  # `curl http://127.0.0.1:7880` (prints OK).
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    container_name: thehideout-livekit
+    command: --config /etc/livekit.yaml
+    ports:
+      # Localhost only: the API key below is a well-known dev value.
+      - "127.0.0.1:7880:7880"
+      - "127.0.0.1:7881:7881"
+      - "127.0.0.1:50000-50100:50000-50100/udp"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    configs:
+      - source: livekit-config
+        target: /etc/livekit.yaml
+
 configs:
   # Local-only development credentials (match the server's defaults).
+  livekit-config:
+    content: |
+      port: 7880
+      rtc:
+        tcp_port: 7881
+        port_range_start: 50000
+        port_range_end: 50100
+        # Media candidates must be reachable at the published, loopback-only ports.
+        use_external_ip: false
+        node_ip: 127.0.0.1
+      # LiveKit logs "secret is too short" for this on startup; harmless for a
+      # loopback-only dev server. Use a 32+ character secret anywhere else.
+      keys:
+        devkey: secret
+      webhook:
+        api_key: devkey
+        urls:
+          - http://host.docker.internal:8080/livekit/webhook
   seaweedfs-s3:
     content: |
       {

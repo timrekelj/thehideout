@@ -73,6 +73,13 @@ impl MessageService for MessageSvc {
             ChannelAccess::Dm => 0,
         };
 
+        if let ChannelAccess::Guild(guild_id) = &access
+            && crate::access::channel_kind(&self.state, *guild_id, req.channel_id).await?
+                == ChannelKind::CHANNEL_KIND_VOICE
+        {
+            return Err(ConnectError::failed_precondition("voice channels have no messages"));
+        }
+
         let attachment_ids: Vec<u64> = req.attachment_ids.iter().copied().collect();
         if attachment_ids.len() > MAX_ATTACHMENTS {
             return Err(ConnectError::invalid_argument("a message can have at most 10 attachments"));

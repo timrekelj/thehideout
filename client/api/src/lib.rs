@@ -61,6 +61,14 @@
 //! first two may return [`LoginOutcome::SecondFactor`]. Account security:
 //! password, email, TOTP, passkeys and [`Client::list_sessions`].
 //!
+//! # Voice
+//!
+//! Voice channels have [`Channel::kind`] = [`ChannelKind::Voice`]. [`Client::join_voice`]
+//! returns a [`VoiceJoin`] (LiveKit url and token); `leave_voice`, `update_voice_state`
+//! and the moderation calls (`server_mute_member`, `move_member`, `disconnect_member`)
+//! sit next to it. Who is where arrives as [`Event::VoiceStateUpdate`] /
+//! [`Event::VoiceSnapshot`]; [`Event::VoiceMoved`] asks you to rejoin.
+//!
 //! # Real-time updates
 //!
 //! [`Gateway::spawn`] subscribes on the current tokio runtime and keeps the
@@ -97,6 +105,7 @@ mod state;
 mod structure;
 mod types;
 mod upload;
+mod voice;
 
 pub(crate) mod proto {
     connectrpc::include_generated!();
@@ -114,4 +123,4 @@ pub use content::{Attachment, Embed, EmbedKind, EmbedMedia, EmbedMediaKind, Emoj
 pub use error::ApiError;
 pub use gateway::{Gateway, GatewayConfig, GatewayHandle, GatewayUpdate};
 pub use structure::{ChannelIcon, ChannelIconRef, GuildLayout, LayoutEntry, Member, PaletteColor, Permissions, Role, RoleList, Section};
-pub use types::{Channel, DmChannel, Event, Guild, Message, Page, User};
+pub use types::{Channel, ChannelKind, DmChannel, Event, Guild, Message, Page, User, VoiceJoin, VoiceState};

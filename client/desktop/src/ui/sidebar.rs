@@ -2,14 +2,18 @@
 //! strip. Switching server crossfades the body (`motion-control`); the selection highlight
 //! travels between rows of one list (`motion-reflow`, from the components).
 
-use rune::{El, ScrollSpec, SpringPair, Transition, col, icon, row, text};
-use rune_kit::{Kit, Menu, MenuItem};
+use rune::{El, ScrollSpec, SpringPair, Transition, Tx, col, icon, row, text};
+use rune_kit::{Kit, Menu, MenuItem, Placement};
+use thehideout_design::components::tooltip::tooltip_at;
 use thehideout_design::metrics_of;
 use thehideout_design::components::{
     Avatar, ConnectionPill, ConnectionStatus, IconButton, NavRow, Presence,
     SidebarSection,
 };
-use thehideout_design::icons::{CHEVRON_DOWN, FOLDER_PLUS, GEAR, PLUS, SIGN_OUT, USER_PLUS};
+use thehideout_design::icons::{
+    CHEVRON_DOWN, FOLDER_PLUS, GEAR, HEADPHONES, MICROPHONE, MICROPHONE_SLASH, PLUS, SIGN_OUT,
+    USER_PLUS,
+};
 use thehideout_design::{icon as size, motion, theme_of, type_};
 
 use crate::app::App;
@@ -58,6 +62,7 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, width: f32) -> El {
         .fill(t.bg.color())
         .child(header(a, k, layer, width))
         .child(body)
+        .children(super::voice_bar::build(a, k))
         .child(user_strip(a, k, layer))
 }
 
@@ -223,6 +228,7 @@ fn user_strip(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         ConnectionStatus::Connecting | ConnectionStatus::Reconnecting(_) => Presence::Idle,
         ConnectionStatus::Offline => Presence::Offline,
     };
+    let (mute, deafen) = voice_toggles(a, k, layer);
     let gear = IconButton::new(&GEAR, "Account menu")
         .selected(a.state.ui.menu == MenuState::User)
         .on_press(|a: &mut App| {
@@ -310,5 +316,55 @@ fn user_strip(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                 .build(k),
         )
         .child(who)
+        .child(mute)
+        .child(deafen)
         .child(menu)
+}
+
+/// The mute and deafen toggles of the user strip, always there (in voice or not: the flags apply
+/// to the next channel joined). A flag that is on reads in the danger ink with the matching name
+/// ("Unmute", "Undeafen"). While a moderator has muted us the mute button is disabled and says so
+/// in a tooltip: our own flag changes nothing then.
+fn voice_toggles(a: &App, k: &Kit, layer: &mut Vec<El>) -> (El, El) {
+    let t = theme_of(k);
+    let v = &a.state.voice;
+    let server_muted = a.state.i_am_server_muted();
+    let muted = v.self_mute || server_muted;
+    let mut mute = IconButton::new(
+        if muted { &MICROPHONE_SLASH } else { &MICROPHONE },
+        if v.self_mute || server_muted { "Unmute" } else { "Mute" },
+    )
+    .disabled(server_muted)
+    .on_press(|a: &mut App| a.act(|s| s.toggle_mute()));
+    if muted {
+        mute = mute.ink(t.danger.color());
+    }
+    let mut mute = mute.build(k).key("voice-mute");
+    if server_muted {
+        mute = mute.description("Muted by a moderator");
+    } else if a.state.push_to_talk() {
+        mute = mute.description("Push to talk");
+    }
+    let mute = tooltip_at(
+        k,
+        "voice-mute-tip",
+        row()
+            .key("voice-mute-wrap")
+            .on_hover_change(|a: &mut App, on: bool, _tx: &mut Tx| a.state.voice.mute_tip = on)
+            .child(mute),
+        "Muted by a moderator",
+        &[],
+        server_muted && v.mute_tip,
+        Placement::Top,
+        layer,
+    );
+    let mut deafen = IconButton::new(
+        &HEADPHONES,
+        if v.self_deaf { "Undeafen" } else { "Deafen" },
+    )
+    .on_press(|a: &mut App| a.act(|s| s.toggle_deaf()));
+    if v.self_deaf {
+        deafen = deafen.ink(t.danger.color());
+    }
+    (mute, deafen.build(k).key("voice-deafen"))
 }

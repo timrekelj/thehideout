@@ -9,7 +9,7 @@ use thehideout_design::components::{Avatar, Button, ChannelHeader, IconButton, S
 use thehideout_design::icons::{GEAR, HASH, USERS, X, catalog};
 use thehideout_design::{palette_color, radius, theme_of, type_};
 
-use super::{admin, composer, members, rail, server_settings, settings, sidebar, transcript};
+use super::{admin, composer, members, rail, server_settings, settings, sidebar, transcript, voice_stage};
 use crate::account::SecKind;
 use crate::app::App;
 use crate::state::{DialogKind, Place};
@@ -57,7 +57,7 @@ pub const TITLEBAR: f32 = 40.0;
 /// lays the drag strip over that band.
 pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, lay: Layout) -> El {
     if let Some(section) = a.state.ui.settings {
-        return settings::build(a, k, section, bar);
+        return settings::build(a, k, layer, section, bar);
     }
     if a.state.ui.server_settings.is_some() {
         return server_settings::build(a, k, layer, bar);
@@ -75,21 +75,27 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, lay: Layout) -> El
         .w_full()
         .fill(t.surface.color())
         .radius(radius::LG)
-        .clip_rounded(radius::LG)
-        .child(
-            col()
-                .key("chat")
-                .grow(1.0)
-                .shrink()
-                .min_w(0.0)
-                .h_full()
-                .child(header(a, k, lay))
-                .children(email_banner(a, k))
-                .child(transcript::build(a, k))
-                .child(composer::build(a, k)),
-        )
-        .child(members::build(a, k, lay.members))
-        .child(frame_over(1.0, t.border_subtle.color(), radius::LG));
+        .clip_rounded(radius::LG);
+    // The voice stage takes the whole panel (members included) while it is open.
+    let panel = if a.state.stage_open() {
+        panel.child(voice_stage::build(a, k))
+    } else {
+        panel
+            .child(
+                col()
+                    .key("chat")
+                    .grow(1.0)
+                    .shrink()
+                    .min_w(0.0)
+                    .h_full()
+                    .child(header(a, k, lay))
+                    .children(email_banner(a, k))
+                    .child(transcript::build(a, k))
+                    .child(composer::build(a, k)),
+            )
+            .child(members::build(a, k, lay.members))
+    }
+    .child(frame_over(1.0, t.border_subtle.color(), radius::LG));
     let body = row()
         .key("shell-body")
         .w_full()

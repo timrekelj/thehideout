@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use rune::TextEdit;
 use thehideout_api::{
-    Channel, ChannelIconRef, DmChannel, Emoji, Guild, GuildLayout, MAX_MESSAGE_CHARS, Message,
+    Channel, ChannelIconRef, ChannelKind, DmChannel, Emoji, Guild, GuildLayout, MAX_MESSAGE_CHARS, Message,
     PaletteColor, Permissions, Role, User,
 };
 use thehideout_design::components::{ConnectionStatus, EmojiPickerState, ScrollEdges, ToastKind};
@@ -168,6 +168,8 @@ pub struct Data {
     pub emojis: HashMap<u64, Vec<Emoji>>,
     /// Guilds whose emojis were asked for and not yet refused.
     pub emojis_asked: HashSet<u64>,
+    /// Who is in voice, per guild per user (the server keeps one state per user).
+    pub voice: HashMap<u64, HashMap<u64, thehideout_api::VoiceState>>,
     /// Decoded avatars, server icons and emojis by media key.
     pub media: MediaCache,
 }
@@ -207,6 +209,8 @@ pub enum Marker {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
     Appearance,
+    /// Microphone and speakers, how the mic opens, the voice hotkeys and the sounds.
+    Voice,
     /// Email, password, two-factor, passkeys and signed-in devices.
     Security,
 }
@@ -233,6 +237,16 @@ pub enum Menu {
     /// The channel menu's "Move to section" submenu.
     MoveTo {
         id: u64,
+        at: Option<(i32, i32)>,
+    },
+    /// A voice participant's menu (a press on the row, or a right-click at `at`).
+    Participant {
+        user: u64,
+        at: Option<(i32, i32)>,
+    },
+    /// The participant menu's "Move to" submenu (the other voice channels).
+    ParticipantMove {
+        user: u64,
         at: Option<(i32, i32)>,
     },
 }
@@ -294,6 +308,10 @@ pub struct Ui {
     pub look_dirty: bool,
     /// The settings page that replaces the shell, when open.
     pub settings: Option<Section>,
+    /// The recorders of the voice hotkeys on the Voice & audio page.
+    pub voice_keys: crate::voice::VoiceKeys,
+    /// Which device list is open on that page.
+    pub voice_menu: crate::voice::VoiceMenu,
     /// The server's settings page (roles, members, icon), which replaces the shell the same way.
     pub server_settings: Option<ServerSettings>,
     /// The site-admin dashboard (admins only), which replaces the shell the same way.
@@ -359,6 +377,8 @@ impl Ui {
             look: Look::default(),
             look_dirty: false,
             settings: None,
+            voice_keys: Default::default(),
+            voice_menu: Default::default(),
             server_settings: None,
             admin: None,
             copy_request: None,
@@ -386,6 +406,8 @@ pub struct AppState {
     pub outbox: Vec<Command>,
     /// The app clock as of the last poll.
     pub clock: f64,
+    /// Our own voice connection (see `voice.rs`).
+    pub voice: crate::voice::VoiceLocal,
     /// The wall-clock day number "Today" means.
     pub today: i64,
     pub tz: Tz,
@@ -404,6 +426,7 @@ impl AppState {
             ui: Ui::new(),
             outbox: Vec::new(),
             clock: 0.0,
+            voice: Default::default(),
             today: crate::format::day_of(tz, unix(now())),
             tz,
             now,
@@ -435,6 +458,7 @@ impl AppState {
         let recents = std::mem::take(&mut self.ui.recents);
         let folded = std::mem::take(&mut self.ui.attach.embeds_collapsed);
         let waker = self.ui.attach.waker.take();
+        let was_in_voice = self.voice.session != crate::voice::VoiceSession::None;
         // The picture cache keeps its decoder (and the waker it was given); the pictures go.
         let mut media = std::mem::take(&mut self.data.media);
         media.clear();
@@ -448,6 +472,9 @@ impl AppState {
         self.auth = Auth::new(&server);
         self.auth.error = error;
         self.ui.look = look;
+        if was_in_voice {
+            self.voice.intents.push(crate::voice::VoiceIntent::Disconnect);
+        }
     }
 
     // ---- queries -----------------------------------------------------------------------------
@@ -491,6 +518,15 @@ impl AppState {
             .collect();
         out.extend(unlisted);
         out
+    }
+
+    /// The first text channel in sidebar order: what a server opens on (voice channels are joined,
+    /// not opened).
+    pub fn first_text_channel(&self, guild: u64) -> Option<u64> {
+        self.ordered_channels(guild)
+            .iter()
+            .find(|c| c.kind == ChannelKind::Text)
+            .map(|c| c.id)
     }
 
     pub fn channel(&self, guild: u64, id: u64) -> Option<&Channel> {
@@ -727,7 +763,7 @@ impl AppState {
         }
         self.ui.place = Place::Guild(id);
         if !self.ui.guild_channel.contains_key(&id)
-            && let Some(first) = self.ordered_channels(id).first().map(|c| c.id)
+            && let Some(first) = self.first_text_channel(id)
         {
             self.ui.guild_channel.insert(id, first);
         }
@@ -766,8 +802,21 @@ impl AppState {
         }
     }
 
-    /// Opens `channel` in the current place.
+    /// Opens `channel` in the current place. A voice channel is not opened: it is joined, and the
+    /// text channel that is open stays.
     pub fn select_channel(&mut self, channel: u64) {
+        if let Place::Guild(g) = self.ui.place
+            && self.channel(g, channel).is_some_and(|c| c.kind == ChannelKind::Voice)
+        {
+            // The channel we are in opens its stage; any other one is joined.
+            if self.my_voice_channel() == Some(channel) {
+                return self.open_stage();
+            }
+            return self.join_voice(channel);
+        }
+        // A text channel is on the main panel: the voice stage gives way to it, even when it is
+        // the one that was open under the stage.
+        self.voice.view = crate::voice::MainView::Chat;
         if self.current_channel() == Some(channel) {
             return;
         }
@@ -784,7 +833,12 @@ impl AppState {
     pub fn step_channel(&mut self, delta: i32) {
         let ids: Vec<u64> = match self.ui.place {
             Place::Home => self.data.dms.iter().map(|d| d.id).collect(),
-            Place::Guild(g) => self.ordered_channels(g).iter().map(|c| c.id).collect(),
+            Place::Guild(g) => self
+                .ordered_channels(g)
+                .iter()
+                .filter(|c| c.kind == ChannelKind::Text)
+                .map(|c| c.id)
+                .collect(),
         };
         if ids.is_empty() {
             return;
@@ -802,6 +856,8 @@ impl AppState {
     /// The reader just arrived at the current channel: fix the "New" divider, clear its unread
     /// count and fetch its history if it hasn't been.
     fn arrive(&mut self) {
+        // Going anywhere returns the main panel to the transcript (the voice stage was on it).
+        self.voice.view = crate::voice::MainView::Chat;
         self.ui.at_bottom = true;
         self.ui.unseen_below = 0;
         self.ui.marker = Marker::None;
@@ -1095,6 +1151,7 @@ impl AppState {
                     Ok(()) => Command::CreateChannel {
                         guild,
                         name,
+                        kind: f.map_or(ChannelKind::Text, |f| f.kind),
                         section: f.and_then(|f| f.section),
                         icon: f.map_or(ChannelIconRef::Default, ChannelForm::icon_ref),
                         color: PaletteColor::from_key(f.map_or("", |f| f.color)),
@@ -1222,6 +1279,11 @@ impl AppState {
         soon(clock + crate::format::until_next_day(self.tz, now) as f64);
         let (resend, at) = self.tick_resend(clock);
         changed |= resend;
+        if let Some(at) = at {
+            soon(at);
+        }
+        let (retry, at) = self.voice_tick(clock);
+        changed |= retry;
         if let Some(at) = at {
             soon(at);
         }

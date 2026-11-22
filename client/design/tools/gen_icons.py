@@ -54,6 +54,8 @@ ICONS = [
     ("eye-slash", "eye-slash"),
     ("speaker", "speaker-high"),
     ("microphone", "microphone"),
+    ("speaker-high", "speaker-high"),
+    ("stop", "stop"),
     ("sidebar", "sidebar-simple"),
     ("sign-out", "sign-out"),
     ("door-open", "door-open"),
@@ -112,6 +114,18 @@ ICONS = [
     ("flag", "flag"),
     ("clock", "clock"),
     ("star", "star"),
+    ("microphone-slash", "microphone-slash"),
+    ("headphones", "headphones"),
+    ("phone-disconnect", "phone-disconnect"),
+    ("wifi-high", "wifi-high"),
+    ("wifi-medium", "wifi-medium"),
+    ("wifi-low", "wifi-low"),
+    ("arrow-right", "arrow-right"),
+    ("video-camera", "video-camera"),
+    ("video-camera-slash", "video-camera-slash"),
+    ("monitor-arrow-up", "monitor-arrow-up"),
+    ("monitor", "monitor"),
+    ("app-window", "app-window"),
 ]
 
 HEADER = """\
@@ -206,7 +220,8 @@ def regular_path(phosphor, stem):
 def emit_catalog(out, phosphor, version):
     tags = read_tags(phosphor / "dist" / "index.mjs")
     stems = sorted(
-        p.stem.removesuffix("-fill") for p in (phosphor / "assets" / "fill").glob("*-fill.svg")
+        p.stem.removesuffix("-fill")
+        for p in (phosphor / "assets" / "fill").glob("*-fill.svg")
     )
     assert stems, "no fill icons found"
     per = -(-len(stems) // CATALOG_PARTS)

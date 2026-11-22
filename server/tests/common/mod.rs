@@ -50,6 +50,8 @@ const SHARED_PREFIX: &str = "test_shared_";
 pub struct TestApp {
     pub base_url: String,
     pub state: AppState,
+    /// The recording LiveKit stand-in when the app was built with [`Builder::livekit`].
+    pub livekit: Option<Arc<voice::RecordingLiveKit>>,
     /// Whether `state.keyspace` is this app's own throwaway keyspace.
     isolated: bool,
     /// Random suffix that makes this app's usernames unique in the shared keyspace.
@@ -64,9 +66,25 @@ pub struct Builder {
     embeds: EmbedSettings,
     isolated: bool,
     admins: Vec<String>,
+    livekit: bool,
+    connect_grace: Option<Duration>,
 }
 
 impl Builder {
+    /// Voice on, with a recording fake instead of a LiveKit server
+    /// ([`voice::API_KEY`] / [`voice::API_SECRET`], room API calls recorded in
+    /// `TestApp::livekit`).
+    pub fn livekit(mut self) -> Self {
+        self.livekit = true;
+        self
+    }
+
+    /// How long a joined user may take to connect to LiveKit (default 30 s).
+    pub fn connect_grace(mut self, grace: Duration) -> Self {
+        self.connect_grace = Some(grace);
+        self
+    }
+
     /// Usernames (as passed to `TestApp::name`) promoted to site admin at
     /// startup and sign-up, like `THEHIDEOUT_ADMINS`.
     pub fn admins(mut self, names: &[&str]) -> Self {
@@ -124,6 +142,8 @@ impl TestApp {
             embeds: EmbedSettings::default(),
             isolated: false,
             admins: Vec::new(),
+            livekit: false,
+            connect_grace: None,
         }
     }
 
@@ -203,6 +223,17 @@ impl TestApp {
         let addr = listener.local_addr().unwrap();
         // `localhost` (not the IP): WebAuthn needs a domain name as RP id.
         let state = state.with_public_url(format!("http://localhost:{}", addr.port()).parse().unwrap());
+        let livekit = options.livekit.then(|| Arc::new(voice::RecordingLiveKit::default()));
+        let state = match &livekit {
+            Some(fake) => {
+                let mut livekit = thehideout_server::voice::LiveKit::with_admin(voice::config(), fake.clone());
+                if let Some(grace) = options.connect_grace {
+                    livekit.connect_grace = grace;
+                }
+                state.with_livekit(livekit)
+            }
+            None => state,
+        };
         let app = build_app(state.clone());
         tokio::spawn(async move {
             axum::serve(
@@ -216,6 +247,7 @@ impl TestApp {
         Self {
             base_url: format!("http://{addr}"),
             state,
+            livekit,
             isolated: options.isolated,
             tag,
         }
@@ -318,3 +350,4 @@ impl TestApp {
 }
 
 pub mod fixtures;
+pub mod voice;

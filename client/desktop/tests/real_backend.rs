@@ -39,6 +39,8 @@ mod server_settings;
 mod state;
 #[path = "../src/structure.rs"]
 mod structure;
+#[path = "../src/voice.rs"]
+mod voice;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -69,15 +71,20 @@ struct Server {
 
 impl Server {
     async fn start() -> Self {
-        Self::boot(false).await
+        Self::boot(false, false).await
+    }
+
+    /// With voice on, signing tokens for the dev LiveKit keys of `.env.example` (no media flows).
+    async fn start_with_voice() -> Self {
+        Self::boot(false, true).await
     }
 
     /// With the S3-compatible store attached, for pictures (`docker compose up -d`).
     async fn start_with_media() -> Self {
-        Self::boot(true).await
+        Self::boot(true, false).await
     }
 
-    async fn boot(media: bool) -> Self {
+    async fn boot(media: bool, voice: bool) -> Self {
         let storage = if media {
             let config = S3Config::from_env().expect("S3 config");
             let storage = Storage::s3(&config).expect("configure S3 storage");
@@ -108,6 +115,16 @@ impl Server {
             Duration::from_millis(200),
         );
         state.storage = storage;
+        if voice {
+            let config = thehideout_server::config::LiveKitConfig::new(
+                "ws://127.0.0.1:7880",
+                None,
+                "devkey".into(),
+                "secret".into(),
+            )
+            .expect("livekit config");
+            state = state.with_livekit(thehideout_server::voice::LiveKit::new(config));
+        }
         let app = build_app(state.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -305,6 +322,7 @@ fn drives_the_real_server() {
     let extra = alice
         .ask(
             Command::CreateChannel {
+                kind: thehideout_api::ChannelKind::Text,
                 guild: guild.id,
                 name: "random".into(),
                 section: None,
@@ -445,6 +463,7 @@ fn drives_the_real_server() {
     // Errors come back as replies, not panics.
     let denied = bob.ask(
         Command::CreateChannel {
+            kind: thehideout_api::ChannelKind::Text,
             guild: guild.id,
             name: "nope".into(),
             section: None,
@@ -872,6 +891,7 @@ fn sections_icons_and_layout_reach_a_second_client() {
     let dev = alice
         .ask(
             Command::CreateChannel {
+                kind: thehideout_api::ChannelKind::Text,
                 guild,
                 name: "dev".into(),
                 section: Some(section.id),
@@ -1063,6 +1083,7 @@ fn a_role_with_manage_channels_lets_a_second_user_reorder_the_layout() {
     let extra = alice
         .ask(
             Command::CreateChannel {
+                kind: thehideout_api::ChannelKind::Text,
                 guild,
                 name: "random".into(),
                 section: None,
@@ -1897,6 +1918,7 @@ fn emojis_reactions_and_an_emoji_channel_icon_reach_a_second_client() {
     let created = alice
         .ask(
             Command::CreateChannel {
+                kind: thehideout_api::ChannelKind::Text,
                 guild: g,
                 name: "party".into(),
                 section: None,
@@ -2293,4 +2315,113 @@ fn a_passkey_answers_the_second_factor_and_wrong_codes_keep_the_session() {
     assert_eq!(again.map(|s| s.me.id), Err(ApiError::CodeExpired));
 
     rt.block_on(server.cleanup());
+}
+
+#[test]
+fn voice_joins_moderation_and_a_move_reach_a_second_client() {
+    use thehideout_api::{ChannelKind, VoiceJoin};
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(Server::start_with_voice());
+    let mut alice = Peer::new(&server.url);
+    let mut bob = Peer::new(&server.url);
+    alice.sign_up(&server, "alice");
+    alice.initial();
+    alice.connected();
+    let guild = alice
+        .ask(Command::CreateGuild { name: "friends".into() }, |r| match r {
+            Reply::GuildCreated(g) => Some(g.clone()),
+            _ => None,
+        })
+        .expect("create guild");
+    let b = bob.sign_up(&server, "bob");
+    bob.initial();
+    bob.connected();
+    bob.ask(Command::JoinGuild { code: guild.invite_code.clone() }, |r| {
+        matches!(r, Reply::GuildJoined(Ok(_))).then_some(())
+    });
+    let guild = guild.id;
+    let mut voice_channel = |name: &str| {
+        alice
+            .ask(
+                Command::CreateChannel {
+                    guild,
+                    name: name.into(),
+                    kind: ChannelKind::Voice,
+                    section: None,
+                    icon: Default::default(),
+                    color: Default::default(),
+                },
+                |r| match r {
+                    Reply::ChannelCreated(c) => Some(c.clone()),
+                    _ => None,
+                },
+            )
+            .expect("create voice channel")
+    };
+    let (lounge, games) = (voice_channel("lounge"), voice_channel("games"));
+    assert_eq!(lounge.kind, ChannelKind::Voice);
+
+    // Joining answers with the LiveKit url and token, and bob's gateway shows alice in the channel.
+    bob.seen.clear();
+    let joined = alice
+        .ask(Command::JoinVoice { channel: lounge.id }, |r| match r {
+            Reply::VoiceJoined { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("join voice");
+    let VoiceJoin { url, token, channel_id } = joined;
+    assert_eq!((url.as_str(), channel_id), ("ws://127.0.0.1:7880", lounge.id));
+    assert!(!token.is_empty());
+    let state = bob.wait("alice in voice", |r| match r {
+        Reply::Gateway(GatewayUpdate::Event(Event::VoiceStateUpdate { state: Some(s), .. })) => Some(s.clone()),
+        _ => None,
+    });
+    assert_eq!(state.channel_id, lounge.id);
+
+    // Alice's own flags.
+    alice.ask(Command::UpdateVoiceState { self_mute: true, self_deaf: false }, |r| {
+        matches!(r, Reply::VoiceFlags(Ok(s)) if s.self_mute).then_some(())
+    });
+
+    // Bob joins, alice (the owner) server-mutes him and moves him; bob is told to rejoin.
+    bob.ask(Command::JoinVoice { channel: lounge.id }, |r| matches!(r, Reply::VoiceJoined { result: Ok(_), .. }).then_some(()));
+    alice.ask(Command::ServerMuteMember { guild, user: b.me.id, muted: true }, |r| {
+        matches!(r, Reply::VoiceModerated { result: Ok(()), .. }).then_some(())
+    });
+    bob.wait("the server mute", |r| match r {
+        Reply::Gateway(GatewayUpdate::Event(Event::VoiceStateUpdate { state: Some(s), .. })) if s.server_mute => Some(()),
+        _ => None,
+    });
+    alice.ask(Command::MoveMember { guild, user: b.me.id, channel: games.id }, |r| {
+        matches!(r, Reply::VoiceModerated { result: Ok(()), .. }).then_some(())
+    });
+    bob.wait("voice_moved", |r| match r {
+        Reply::Gateway(GatewayUpdate::Event(Event::VoiceMoved { channel_id, .. })) if *channel_id == games.id => Some(()),
+        _ => None,
+    });
+
+    // Bob (no rights) can't moderate; alice disconnects him.
+    let refused = bob.ask(Command::ServerMuteMember { guild, user: a_id(&mut alice), muted: true }, |r| match r {
+        Reply::VoiceModerated { result, .. } => Some(result.clone()),
+        _ => None,
+    });
+    assert_eq!(refused, Err(ApiError::PermissionDenied));
+    alice.ask(Command::DisconnectMember { guild, user: b.me.id }, |r| {
+        matches!(r, Reply::VoiceModerated { result: Ok(()), .. }).then_some(())
+    });
+    alice.ask(Command::LeaveVoice, |r| matches!(r, Reply::VoiceLeft(Ok(()))).then_some(()));
+    rt.block_on(server.cleanup());
+}
+
+/// Alice's user id, from her session.
+fn a_id(alice: &mut Peer) -> u64 {
+    alice
+        .ask(Command::LoadInitial, |r| match r {
+            Reply::Initial(i) => Some(i.clone()),
+            _ => None,
+        })
+        .expect("initial load")
+        .me
+        .id
 }

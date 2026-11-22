@@ -1078,7 +1078,7 @@ fn the_sidebar_and_member_lists_report_their_edges_too() {
     let (top, bottom) = edges_of(&rt, |e| &e.sidebar);
     assert_eq!((top, bottom), (0.0, 1.0), "list taller than the window: more below");
     let (x, y) = rt.find("channels-1-row-general").expect("a channel row");
-    rt.wheel(x, y, -400.0);
+    rt.wheel(x, y, -800.0);
     settle(&mut rt, 60);
     assert_eq!(edges_of(&rt, |e| &e.sidebar), (1.0, 0.0), "scrolled to its end");
 }

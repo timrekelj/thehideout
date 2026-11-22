@@ -39,7 +39,7 @@ message Guild {
   string icon = 6;
 }
 
-// A text channel inside a guild.
+// A text or voice channel inside a guild.
 message Channel {
   // Unique Snowflake ID of the channel.
   uint64 id = 1;
@@ -67,6 +67,46 @@ message Channel {
   // Authoritative three-way icon (Phosphor / Unicode emoji / custom emoji).
   // Unset = default icon. `icon` above mirrors it for old readers.
   ChannelIcon icon_ref = 10;
+  // Text or voice. Set at creation and never changes. `CHANNEL_KIND_UNSPECIFIED`
+  // (channels created before voice existed, and old servers) means TEXT.
+  ChannelKind kind = 11;
+}
+
+// What a channel is for.
+enum ChannelKind {
+  // Treat as TEXT (rows and servers that predate voice channels).
+  CHANNEL_KIND_UNSPECIFIED = 0;
+  // A text channel: messages, reactions, attachments.
+  CHANNEL_KIND_TEXT = 1;
+  // A voice channel: members join it with VoiceService.JoinVoice to talk, share
+  // their camera or screen through LiveKit. SendMessage fails with
+  // FAILED_PRECONDITION; it has no message history.
+  CHANNEL_KIND_VOICE = 2;
+}
+
+// Who is in a voice channel and how. Kept in server memory only (lost on
+// restart, see README "Voice"); one per user at most (a user is in at most one
+// voice channel at a time).
+message VoiceState {
+  // Guild of the voice channel.
+  uint64 guild_id = 1;
+  // The voice channel the user is in.
+  uint64 channel_id = 2;
+  // The user.
+  uint64 user_id = 3;
+  // The user muted their own microphone (client-reported, advisory).
+  bool self_mute = 4;
+  // The user deafened themself (client-reported, advisory).
+  bool self_deaf = 5;
+  // A moderator muted the user. Enforced: the user's LiveKit token and room
+  // permissions no longer allow publishing a microphone track.
+  bool server_mute = 6;
+  // The user is publishing their camera (client-reported).
+  bool self_video = 7;
+  // The user is sharing their screen (client-reported).
+  bool self_stream = 8;
+  // When the user joined (or was moved into) the channel.
+  google.protobuf.Timestamp joined_at = 9;
 }
 
 // A channel icon: exactly one of a Phosphor icon, a Unicode emoji or one of
@@ -320,6 +360,12 @@ message GuildLayout {
 //   - Hierarchy: non-owners can only manage (edit, delete, reorder, assign)
 //     roles strictly below their own highest role, and can only grant
 //     permissions they themselves hold. Only the owner is exempt.
+//   - Voice defaults: there is no @everyone role, so CONNECT, SPEAK and VIDEO
+//     are a baseline every member has, whether or not a role carries the bits
+//     (the bits are accepted in roles and are harmless). MUTE_MEMBERS and
+//     MOVE_MEMBERS are held by nobody by default; ADMINISTRATOR and the owner
+//     imply them, and a role can grant them like any other permission (only
+//     bits the granter holds).
 enum Permission {
   // Not a permission; the zero value.
   PERMISSION_UNSPECIFIED = 0;
@@ -336,6 +382,20 @@ enum Permission {
   // Invite people by email to create an account; the invite auto-joins the
   // guild (see invite_service.proto).
   PERMISSION_INVITE_PEOPLE = 32;
+  // Join voice channels. Granted to every member by default (see below).
+  PERMISSION_CONNECT = 64;
+  // Publish a microphone track in voice channels. Without it the member can
+  // listen only. Granted to every member by default.
+  PERMISSION_SPEAK = 128;
+  // Publish a camera and share the screen (and its audio) in voice channels.
+  // Needs SPEAK too (publishing is off without it). Granted to every member by
+  // default.
+  PERMISSION_VIDEO = 256;
+  // Server-mute other members in voice channels. Subject to the role hierarchy.
+  PERMISSION_MUTE_MEMBERS = 512;
+  // Move other members between voice channels and disconnect them. Subject to
+  // the role hierarchy.
+  PERMISSION_MOVE_MEMBERS = 1024;
 }
 
 // A role within a guild.

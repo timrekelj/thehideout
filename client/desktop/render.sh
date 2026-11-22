@@ -21,11 +21,16 @@ for mode in "" "-light"; do
   for scene in embeds embeds-gallery embeds-collapsed; do
     $BIN --scene "$scene$mode" --size 1280x1300 --at 1 --snap "$OUT/$scene$mode.png" "$@"
   done
+  for scene in voice-sidebar voice-connected voice-server-muted voice-participant-menu voice-stage voice-stage-screen voice-screen-picker voice-sidebar-live dialog-create-voice; do
+    $BIN --scene "$scene$mode" --size 1280x800 --at 1 --snap "$OUT/$scene$mode.png" "$@"
+  done
+  # The roles editor is long: a taller window shows the new voice switches at its end.
+  $BIN --scene "server-settings-roles-voice$mode" --size 1280x1100 --at 1 --snap "$OUT/server-settings-roles-voice$mode.png" "$@"
   $BIN --scene "main-small$mode" --size 800x600 --at 1 --snap "$OUT/main-small$mode.png" "$@"
 done
-# The Appearance and Security pages are tall: a taller window shows all of them.
+# The Appearance, Voice & audio and Security pages are tall: a taller window shows all of them.
 for mode in "" "-light"; do
-  for scene in settings-appearance settings-security; do
+  for scene in settings-appearance settings-voice settings-voice-ptt settings-security; do
     $BIN --scene "$scene$mode" --size 1280x1250 --at 1 --snap "$OUT/$scene$mode.png" "$@"
   done
 done

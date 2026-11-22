@@ -69,6 +69,19 @@ message Event {
     // every open stream of that user; the stream also starts delivering the
     // guild's events.
     Guild guild_added = 17;
+    // A user joined, left, was moved between, or changed their state in a voice
+    // channel. Audience: guild members.
+    VoiceStateUpdate voice_state_update = 18;
+    // The voice states of some guilds, in full: sent right after the first
+    // heartbeat of a stream (covering all the caller's guilds) and right after
+    // `guild_added` (covering that guild), but only when someone is in voice
+    // there. So clients clear their voice states when a stream (re)opens and
+    // then apply a snapshot if one arrives. Replace the local voice states of
+    // the listed guilds with `states`.
+    VoiceSnapshot voice_snapshot = 19;
+    // A moderator moved the caller to another voice channel. Audience: the
+    // caller's open streams. Rejoin with VoiceService.JoinVoice(channel_id).
+    VoiceMoved voice_moved = 20;
   }
 }
 
@@ -136,4 +149,33 @@ message GuildMemberJoined {
 message Heartbeat {
   // Current server time.
   google.protobuf.Timestamp server_time = 1;
+}
+
+// Payload of a voice state change.
+message VoiceStateUpdate {
+  // Guild of the voice channel (also set when the user left).
+  uint64 guild_id = 1;
+  // The user the update is about.
+  uint64 user_id = 2;
+  // The user's new state; unset = the user is no longer in a voice channel of
+  // this guild.
+  optional VoiceState state = 3;
+}
+
+// Full voice state of one or more guilds.
+message VoiceSnapshot {
+  // Guilds covered by this snapshot (every guild of the caller on the first
+  // one), including guilds with nobody in voice.
+  repeated uint64 guild_ids = 1;
+  // Everyone currently in a voice channel of those guilds.
+  repeated VoiceState states = 2;
+}
+
+// The caller was moved to another voice channel by a moderator.
+message VoiceMoved {
+  // Guild of the channel.
+  uint64 guild_id = 1;
+  // The channel to join with VoiceService.JoinVoice. The caller's voice state
+  // already names it; the old LiveKit connection is closed by the server.
+  uint64 channel_id = 2;
 }

@@ -24,6 +24,18 @@ impl Permissions {
     pub const MANAGE_EMOJIS: Self = Self(16);
     /// Invite people by email into the guild.
     pub const INVITE_PEOPLE: Self = Self(32);
+    /// Join voice channels. Every member has it (see [`Permissions::BASELINE`]).
+    pub const CONNECT: Self = Self(64);
+    /// Publish a microphone in voice channels. Every member has it.
+    pub const SPEAK: Self = Self(128);
+    /// Publish a camera and share the screen. Every member has it.
+    pub const VIDEO: Self = Self(256);
+    /// Server-mute other members in voice channels (subject to the role hierarchy).
+    pub const MUTE_MEMBERS: Self = Self(512);
+    /// Move and disconnect other members in voice channels (subject to the role hierarchy).
+    pub const MOVE_MEMBERS: Self = Self(1024);
+    /// What every member has without any role: CONNECT, SPEAK and VIDEO.
+    pub const BASELINE: Self = Self(64 | 128 | 256);
 
     pub const fn bits(self) -> u64 {
         self.0

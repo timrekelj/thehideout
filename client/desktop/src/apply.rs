@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use rune::Tx;
 use thehideout_api::{
-    ApiError, Channel, DmChannel, Event, GatewayUpdate, Guild, Message, Page, User,
+    ApiError, Channel, ChannelKind, DmChannel, Event, GatewayUpdate, Guild, Message, Page, User,
 };
 use thehideout_design::components::{ConnectionStatus, ToastKind};
 
@@ -168,13 +168,25 @@ fn apply_reply(s: &mut AppState, reply: Reply, tx: &mut Tx) {
                     s.data.layouts.insert(guild, with);
                 }
                 s.close_dialog();
-                if s.ui.place == Place::Guild(guild) {
+                // A new voice channel is not joined on the creator's behalf.
+                if s.ui.place == Place::Guild(guild) && c.kind == ChannelKind::Text {
                     s.select_channel(c.id);
                 }
                 s.toast(ToastKind::Success, format!("Created #{name}"));
             }
             Err(e) => dialog_failed(s, &e),
         },
+        Reply::VoiceJoined { channel, result } => s.voice_joined(channel, result),
+        Reply::VoiceFlags(r) => match r {
+            // The new state also arrives as an event; a late reply must not undo a later change.
+            Ok(_) => {}
+            Err(e) => s.voice_failed(&e),
+        },
+        Reply::VoiceLeft(r) | Reply::VoiceModerated { result: r, .. } => {
+            if let Err(e) = r {
+                s.voice_failed(&e);
+            }
+        }
         Reply::Members { guild, result } => match result {
             Ok(users) => {
                 let ids = users.iter().map(|u| u.id).collect();
@@ -546,7 +558,7 @@ fn refreshed(s: &mut AppState, init: Initial) {
         Some(g) if s.guild(g).is_none() => s.go_home(),
         Some(g) => {
             if s.current_channel().is_none()
-                && let Some(first) = s.channels_of(g).first().map(|c| c.id)
+                && let Some(first) = s.first_text_channel(g)
             {
                 s.select_channel(first);
             }
@@ -564,7 +576,7 @@ fn set_channels(s: &mut AppState, guild: u64, list: Vec<Channel>) {
     s.data.channels.insert(guild, list);
     if s.ui.place == Place::Guild(guild)
         && s.current_channel().is_none()
-        && let Some(first) = s.channels_of(guild).first().map(|c| c.id)
+        && let Some(first) = s.first_text_channel(guild)
     {
         s.select_channel(first);
     }
@@ -766,6 +778,8 @@ fn gateway(s: &mut AppState, update: GatewayUpdate, tx: &mut Tx) {
         }
         GatewayUpdate::Connected => {
             s.ui.connection = ConnectionStatus::Connected;
+            // A new stream starts with no voice states; a snapshot follows when anyone is in voice.
+            s.clear_voice();
             // Events missed while disconnected aren't replayed: fetch them again.
             if std::mem::replace(&mut s.ui.stream, Stream::Live) == Stream::Interrupted {
                 s.resync();
@@ -834,6 +848,13 @@ fn event(s: &mut AppState, e: Event, tx: &mut Tx) {
             }
             s.data.users.insert(member.user.id, member.user);
         }
+        Event::VoiceStateUpdate {
+            guild_id,
+            user_id,
+            state,
+        } => s.voice_update(guild_id, user_id, state),
+        Event::VoiceSnapshot { guild_ids, states } => s.voice_snapshot(&guild_ids, states),
+        Event::VoiceMoved { channel_id, .. } => s.voice_moved(channel_id),
         Event::ChannelCreated(c) => add_channel(s, c),
         Event::DmOpened(dm) => add_dm(s, dm),
         Event::GuildMemberJoined { guild_id, user } => {
@@ -967,6 +988,7 @@ mod tests {
             icon_ref: Default::default(),
             color: Default::default(),
             topic: String::new(),
+            kind: ChannelKind::Text,
         };
         s.data
             .channels

@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 
 use crate::proto::thehideout::v1::{
     Channel, DmChannel, EmojisUpdated, Guild, GuildMemberJoined, LayoutUpdated, MemberUpdated, Message,
-    ReactionChange, RolesUpdated, User,
+    ReactionChange, RolesUpdated, User, VoiceMoved, VoiceStateUpdate,
 };
 
 /// Messages buffered per guild channel before slow receivers start lagging.
@@ -37,6 +37,8 @@ pub enum EventPayload {
     EmojisUpdated(EmojisUpdated),
     ReactionAdded(ReactionChange),
     ReactionRemoved(ReactionChange),
+    /// A user's voice state changed (state unset = left voice).
+    VoiceStateUpdate(VoiceStateUpdate),
 }
 
 /// Control notification delivered to a user's open streams.
@@ -51,6 +53,9 @@ pub enum UserControl {
     /// A user sharing a guild or DM with the recipient (or the recipient)
     /// changed their profile; becomes a `user_updated` event.
     ProfileUpdated(User),
+    /// A moderator moved the user to another voice channel; becomes a
+    /// `voice_moved` event.
+    VoiceMoved(VoiceMoved),
 }
 
 #[derive(Default)]
@@ -124,6 +129,11 @@ impl EventBus {
     /// Tells the user's open streams that `updated` changed their profile.
     pub fn notify_user_profile_updated(&self, user_id: u64, updated: User) {
         self.notify_user(user_id, UserControl::ProfileUpdated(updated));
+    }
+
+    /// Tells the user's open streams a moderator moved them to another voice channel.
+    pub fn notify_user_voice_moved(&self, user_id: u64, moved: VoiceMoved) {
+        self.notify_user(user_id, UserControl::VoiceMoved(moved));
     }
 
     fn notify_user(&self, user_id: u64, control: UserControl) {

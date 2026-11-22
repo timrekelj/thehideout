@@ -7,10 +7,10 @@
 //! share a list share a `.highlight_group(..)`. Chrome icons are the regular weight and selection is the
 //! highlight, stronger text and an `accent_text` icon (a channel's own tint wins).
 
-use rune::{El, Icon, Transition, el, icon, row, text};
+use rune::{el, icon, row, text, El, Icon, Transition};
 use rune_kit::{Kit, State};
 
-use crate::components::util::{Acts, over};
+use crate::components::util::{over, Acts};
 use crate::components::{Avatar, MentionPill, UnreadDot};
 use crate::icons::HASH;
 use crate::theme_of;
@@ -41,6 +41,9 @@ struct Row {
     id: Option<String>,
     /// An emoji drawn in place of the icon (a channel whose icon is an emoji).
     art: Option<El>,
+    /// A voice channel we are connected to: `accent_text` ink and a "connected" value, with no
+    /// highlight (a voice channel is never the selected row; that is the open text channel).
+    connected: bool,
 }
 
 impl Row {
@@ -60,14 +63,17 @@ impl Row {
             trailing: None,
             id: None,
             art: None,
+            connected: false,
         }
     }
 
     fn build(mut self, k: &Kit) -> El {
         let t = theme_of(k);
-        let strong = self.selected || (self.unread && !self.muted);
+        let strong = self.selected || self.connected || (self.unread && !self.muted);
         let ink = if self.selected {
             t.text
+        } else if self.connected {
+            t.accent_text
         } else if self.muted {
             t.text_faint
         } else if self.unread {
@@ -77,7 +83,7 @@ impl Row {
         };
         let icon_ink = if let Some(tone) = self.tint {
             tone.alpha(if self.muted { 0.55 } else { 1.0 })
-        } else if self.selected {
+        } else if self.selected || self.connected {
             t.accent_text
         } else if self.muted {
             t.text_faint
@@ -94,7 +100,11 @@ impl Row {
         };
 
         let mut e = row()
-            .key(format!("{}-row-{}", self.group, self.id.as_deref().unwrap_or(&self.label)))
+            .key(format!(
+                "{}-row-{}",
+                self.group,
+                self.id.as_deref().unwrap_or(&self.label)
+            ))
             .role("button")
             .label(self.label.clone())
             .w_full()
@@ -104,12 +114,18 @@ impl Row {
             .center_y()
             .radius(radius::MD)
             .focusable(true)
-            .focus_ring(crate::space::RING_WIDTH, crate::space::RING_INSET, k.c.border_focus)
+            .focus_ring(
+                crate::space::RING_WIDTH,
+                crate::space::RING_INSET,
+                k.c.border_focus,
+            )
             .token_motion(motion::CONTROL);
         // A button carries no selected state on every platform, so the selection is its value
         // ("general, selected, button") and unread or mentions its description.
         if self.selected {
             e = e.a11y_value("selected");
+        } else if self.connected {
+            e = e.a11y_value("connected");
         }
         match (self.mentions, self.unread && !self.muted) {
             (0, false) => {}
@@ -141,7 +157,11 @@ impl Row {
         }
         // Icons, emoji and avatars share one 20pt column, so labels start at one x whatever leads.
         let lead = match (&self.avatar, self.art.take()) {
-            (_, Some(art)) => row().key("icon").size(size::SM, size::SM).center().child(art),
+            (_, Some(art)) => row()
+                .key("icon")
+                .size(size::SM, size::SM)
+                .center()
+                .child(art),
             (Some(id), None) => Avatar::new(id.clone(), self.label.clone())
                 .size(20)
                 .backdrop(t.bg.color())
@@ -273,6 +293,11 @@ impl ChannelRow {
     /// A built control that fades in at the row's right edge on hover (an `IconButton`).
     pub fn trailing(mut self, control: El) -> Self {
         self.0.trailing = Some(control);
+        self
+    }
+    /// A voice channel we are connected to: accent ink, no highlight (see `Row::connected`).
+    pub fn connected(mut self, on: bool) -> Self {
+        self.0.connected = on;
         self
     }
     /// A stable id for the element key (the channel id), so renames and moves keep the row.

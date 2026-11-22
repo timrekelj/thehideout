@@ -60,6 +60,11 @@ pub const MIGRATIONS: &[(i32, &str, &str)] = &[
         "auth",
         include_str!("../migrations/0011_auth.cql"),
     ),
+    (
+        12,
+        "voice",
+        include_str!("../migrations/0012_voice.cql"),
+    ),
 ];
 
 /// Creates the keyspace if needed, selects it on the session, and applies any

@@ -22,7 +22,7 @@ use crate::media::attachments::AttachmentSettings;
 use crate::media::{self, MAX_INPUT_BYTES};
 use crate::ratelimit::RateLimiter;
 use crate::services::auth::AuthMemory;
-use crate::services::{AdminSvc, AuthSvc, DmSvc, EmojiSvc, GatewaySvc, GuildSvc, InviteSvc, MediaSvc, MessageSvc, RoleSvc};
+use crate::services::{AdminSvc, AuthSvc, DmSvc, EmojiSvc, GatewaySvc, GuildSvc, InviteSvc, MediaSvc, MessageSvc, RoleSvc, VoiceSvc};
 use crate::snowflake::Snowflake;
 use crate::storage::Storage;
 
@@ -60,6 +60,10 @@ pub struct AppState {
     pub auth: Arc<AuthMemory>,
     /// Throttles session "last seen" writes.
     pub seen: Arc<SeenThrottle>,
+    /// Who is in which voice channel (memory only).
+    pub voice: Arc<crate::voice::VoiceStates>,
+    /// LiveKit settings and server-API client; voice is off when unconfigured.
+    pub livekit: crate::voice::LiveKit,
 }
 
 impl AppState {
@@ -87,7 +91,15 @@ impl AppState {
             public_url: default_public_url(),
             auth: Arc::default(),
             seen: Arc::default(),
+            voice: Arc::default(),
+            livekit: crate::voice::LiveKit::disabled(),
         }
+    }
+
+    /// Enables voice channels with the given LiveKit settings (`LIVEKIT_*`, tests).
+    pub fn with_livekit(mut self, livekit: crate::voice::LiveKit) -> Self {
+        self.livekit = livekit;
+        self
     }
 
     /// Sets the public base URL (and rebuilds the WebAuthn relying party).
@@ -140,9 +152,10 @@ const MEDIA_REQUEST_LIMIT: usize = MAX_INPUT_BYTES / 3 * 4 + 64 * 1024;
 
 /// Builds the HTTP app: all Connect services, `GET /health`, `GET /media/*`,
 /// `POST /attachments`, the passkey ceremony page (`/auth/passkey*`), the
-/// invite landing page (`GET /invite/{token}`), and CORS for the configured
-/// public origin only.
+/// invite landing page (`GET /invite/{token}`), the LiveKit webhook
+/// (`POST /livekit/webhook`), and CORS for the configured public origin only.
 pub fn build_app(state: AppState) -> Router {
+    crate::voice::spawn_sweeper(&state);
     let public_url = state.public_url.clone();
     let connect = ConnectRouter::new()
         .add_service(Arc::new(AuthSvc::new(state.clone())))
@@ -153,6 +166,7 @@ pub fn build_app(state: AppState) -> Router {
         .add_service(Arc::new(AdminSvc::new(state.clone())))
         .add_service(Arc::new(InviteSvc::new(state.clone())))
         .add_service(Arc::new(EmojiSvc::new(state.clone())))
+        .add_service(Arc::new(VoiceSvc::new(state.clone())))
         .add_service(Arc::new(GatewaySvc::new(state.clone())));
 
     // Media RPCs get their own router so only they accept large bodies; the
@@ -172,6 +186,7 @@ pub fn build_app(state: AppState) -> Router {
         .merge(media::media_route().with_state(state.clone()))
         .merge(media::attachments::attachments_route().with_state(state.clone()))
         .merge(crate::passkeys::routes().with_state(state.clone()))
+        .merge(crate::services::voice::routes().with_state(state.clone()))
         .merge(crate::services::invite::routes().with_state(state))
         .fallback_service(connect.into_axum_service())
         .layer(cors(&public_url))

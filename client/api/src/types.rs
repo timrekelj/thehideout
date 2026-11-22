@@ -36,7 +36,60 @@ pub struct Guild {
     pub icon: Option<String>,
 }
 
-/// A text channel inside a guild.
+/// What a channel is for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum ChannelKind {
+    #[default]
+    Text,
+    Voice,
+}
+
+impl ChannelKind {
+    fn from_proto(kind: &buffa::EnumValue<pb::ChannelKind>) -> Self {
+        match kind.as_known() {
+            Some(pb::ChannelKind::CHANNEL_KIND_VOICE) => Self::Voice,
+            // Unspecified (older rows and servers) and unknown values are text.
+            _ => Self::Text,
+        }
+    }
+
+    pub(crate) fn to_proto(self) -> pb::ChannelKind {
+        match self {
+            Self::Text => pb::ChannelKind::CHANNEL_KIND_TEXT,
+            Self::Voice => pb::ChannelKind::CHANNEL_KIND_VOICE,
+        }
+    }
+}
+
+/// Who is in a voice channel and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceState {
+    pub guild_id: u64,
+    pub channel_id: u64,
+    pub user_id: u64,
+    /// The user muted their own microphone.
+    pub self_mute: bool,
+    /// The user deafened themself.
+    pub self_deaf: bool,
+    /// A moderator muted the user (enforced by the server).
+    pub server_mute: bool,
+    pub self_video: bool,
+    pub self_stream: bool,
+    /// When the user joined (or was moved into) the channel.
+    pub joined_at: SystemTime,
+}
+
+/// What a client needs to connect to a voice channel's media room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceJoin {
+    /// LiveKit server URL.
+    pub url: String,
+    /// LiveKit access token (valid about 10 minutes to connect).
+    pub token: String,
+    pub channel_id: u64,
+}
+
+/// A text or voice channel inside a guild.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Channel {
     pub id: u64,
@@ -54,6 +107,8 @@ pub struct Channel {
     pub color: PaletteColor,
     /// Free-text topic; empty = none.
     pub topic: String,
+    /// Text or voice; fixed at creation.
+    pub kind: ChannelKind,
 }
 
 /// A 1:1 direct-message channel. Its `id` is the `channel_id` for messages.
@@ -128,6 +183,14 @@ pub enum Event {
     /// A message changed (embeds resolved, attachment removed); replace your copy.
     /// Its reactions' `me` is not meaningful: keep your local flags.
     MessageUpdated(Message),
+    /// Someone joined, left (`state: None`), moved between or changed their state in a
+    /// voice channel of `guild_id`.
+    VoiceStateUpdate { guild_id: u64, user_id: u64, state: Option<VoiceState> },
+    /// The full voice states of `guild_ids`: replace yours for those guilds. Only sent when
+    /// someone is in voice, so clear your voice states when a stream opens.
+    VoiceSnapshot { guild_ids: Vec<u64>, states: Vec<VoiceState> },
+    /// A moderator moved the caller: rejoin with [`Client::join_voice`](crate::Client::join_voice).
+    VoiceMoved { guild_id: u64, channel_id: u64 },
 }
 
 pub(crate) fn time(ts: Option<&Timestamp>) -> SystemTime {
@@ -179,6 +242,23 @@ impl From<pb::Channel> for Channel {
             icon_ref,
             color: PaletteColor::from_key(&c.color),
             topic: c.topic,
+            kind: ChannelKind::from_proto(&c.kind),
+        }
+    }
+}
+
+impl From<pb::VoiceState> for VoiceState {
+    fn from(v: pb::VoiceState) -> Self {
+        Self {
+            guild_id: v.guild_id,
+            channel_id: v.channel_id,
+            user_id: v.user_id,
+            self_mute: v.self_mute,
+            self_deaf: v.self_deaf,
+            server_mute: v.server_mute,
+            self_video: v.self_video,
+            self_stream: v.self_stream,
+            joined_at: time(v.joined_at.as_option()),
         }
     }
 }
@@ -258,6 +338,16 @@ impl Event {
                 user_id: r.user_id,
             },
             Payload::MessageUpdated(m) => Self::MessageUpdated(m.message.into_option().map(Message::from)?),
+            Payload::VoiceStateUpdate(v) => Self::VoiceStateUpdate {
+                guild_id: v.guild_id,
+                user_id: v.user_id,
+                state: v.state.into_option().map(VoiceState::from),
+            },
+            Payload::VoiceSnapshot(v) => Self::VoiceSnapshot {
+                guild_ids: v.guild_ids,
+                states: v.states.into_iter().map(VoiceState::from).collect(),
+            },
+            Payload::VoiceMoved(v) => Self::VoiceMoved { guild_id: v.guild_id, channel_id: v.channel_id },
         })
     }
 }
@@ -433,5 +523,33 @@ mod tests {
         let updated = pb::MessageUpdated { message: pb::Message { id: 6, ..Default::default() }.into(), ..Default::default() };
         assert!(matches!(event(Payload::MessageUpdated(Box::new(updated))), Some(Event::MessageUpdated(m)) if m.id == 6));
         assert!(event(Payload::MessageUpdated(Box::default())).is_none());
+    }
+
+    #[test]
+    fn voice_events_and_channel_kind_convert() {
+        use pb::event::Payload;
+        let kind = |k: pb::ChannelKind| Channel::from(pb::Channel { kind: k.into(), ..Default::default() }).kind;
+        assert_eq!(kind(pb::ChannelKind::CHANNEL_KIND_VOICE), ChannelKind::Voice);
+        assert_eq!(kind(pb::ChannelKind::CHANNEL_KIND_TEXT), ChannelKind::Text);
+        assert_eq!(kind(pb::ChannelKind::CHANNEL_KIND_UNSPECIFIED), ChannelKind::Text);
+
+        let vs = |user_id| pb::VoiceState { guild_id: 1, channel_id: 2, user_id, server_mute: true, ..Default::default() };
+        let joined = pb::VoiceStateUpdate { guild_id: 1, user_id: 3, state: vs(3).into(), ..Default::default() };
+        assert!(matches!(
+            event(Payload::VoiceStateUpdate(Box::new(joined))),
+            Some(Event::VoiceStateUpdate { guild_id: 1, user_id: 3, state: Some(s) }) if s.channel_id == 2 && s.server_mute && !s.self_mute
+        ));
+        let left = pb::VoiceStateUpdate { guild_id: 1, user_id: 3, ..Default::default() };
+        assert!(matches!(
+            event(Payload::VoiceStateUpdate(Box::new(left))),
+            Some(Event::VoiceStateUpdate { guild_id: 1, user_id: 3, state: None })
+        ));
+        let snap = pb::VoiceSnapshot { guild_ids: vec![1, 5], states: vec![vs(3), vs(4)], ..Default::default() };
+        assert!(matches!(
+            event(Payload::VoiceSnapshot(Box::new(snap))),
+            Some(Event::VoiceSnapshot { guild_ids, states }) if guild_ids == vec![1, 5] && states.len() == 2
+        ));
+        let moved = pb::VoiceMoved { guild_id: 1, channel_id: 9, ..Default::default() };
+        assert_eq!(event(Payload::VoiceMoved(Box::new(moved))), Some(Event::VoiceMoved { guild_id: 1, channel_id: 9 }));
     }
 }

@@ -853,6 +853,7 @@ impl Backend for RealBackend {
             Command::CreateChannel {
                 guild,
                 name,
+                kind,
                 section,
                 icon,
                 color,
@@ -860,10 +861,86 @@ impl Backend for RealBackend {
                 self.call(
                     async move {
                         client
-                            .create_channel_with_ref(guild, &name, section, &icon, color)
+                            .create_channel_of_kind(guild, &name, kind, section, &icon, color)
                             .await
                     },
                     Reply::ChannelCreated,
+                );
+            }
+            Command::JoinVoice { channel } => {
+                self.call(
+                    async move { client.join_voice(channel).await },
+                    move |result| Reply::VoiceJoined { channel, result },
+                );
+            }
+            Command::LeaveVoice => {
+                self.call(async move { client.leave_voice().await }, Reply::VoiceLeft);
+            }
+            Command::UpdateVoiceState {
+                self_mute,
+                self_deaf,
+            } => {
+                self.call(
+                    async move {
+                        client
+                            .update_voice_state(Some(self_mute), Some(self_deaf), None, None)
+                            .await
+                    },
+                    Reply::VoiceFlags,
+                );
+            }
+            Command::UpdateVideoState { self_video, self_stream } => {
+                self.call(
+                    async move {
+                        client
+                            .update_voice_state(None, None, self_video, self_stream)
+                            .await
+                    },
+                    Reply::VoiceFlags,
+                );
+            }
+            Command::ServerMuteMember { guild, user, muted } => {
+                self.call(
+                    async move {
+                        client
+                            .server_mute_member(guild, user, muted)
+                            .await
+                            .map(|_| ())
+                    },
+                    move |result| Reply::VoiceModerated {
+                        guild,
+                        user,
+                        result,
+                    },
+                );
+            }
+            Command::MoveMember {
+                guild,
+                user,
+                channel,
+            } => {
+                self.call(
+                    async move {
+                        client
+                            .move_member(guild, user, channel)
+                            .await
+                            .map(|_| ())
+                    },
+                    move |result| Reply::VoiceModerated {
+                        guild,
+                        user,
+                        result,
+                    },
+                );
+            }
+            Command::DisconnectMember { guild, user } => {
+                self.call(
+                    async move { client.disconnect_member(guild, user).await },
+                    move |result| Reply::VoiceModerated {
+                        guild,
+                        user,
+                        result,
+                    },
                 );
             }
             Command::LoadAccess { guild } => {

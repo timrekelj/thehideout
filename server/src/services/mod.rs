@@ -8,6 +8,7 @@ pub mod invite;
 pub mod media;
 pub mod message;
 pub mod role;
+pub mod voice;
 
 pub use auth::AuthSvc;
 pub use dm::DmSvc;
@@ -18,4 +19,5 @@ pub use invite::InviteSvc;
 pub use media::MediaSvc;
 pub use message::MessageSvc;
 pub use role::RoleSvc;
+pub use voice::VoiceSvc;
 pub use admin::AdminSvc;

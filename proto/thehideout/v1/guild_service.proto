@@ -101,6 +101,8 @@ message CreateChannelRequest {
   // Three-way icon; if set it wins over `icon`. A custom emoji id must belong
   // to this guild (INVALID_ARGUMENT otherwise).
   optional ChannelIcon icon_ref = 6;
+  // Text or voice; UNSPECIFIED = TEXT. Cannot be changed afterwards.
+  ChannelKind kind = 7;
 }
 
 // Result of creating a channel.

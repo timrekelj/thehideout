@@ -44,6 +44,18 @@ mod structure_tests;
 #[cfg(test)]
 mod tests;
 mod ui;
+mod voice;
+mod voice_engine;
+#[cfg(test)]
+mod voice_engine_tests;
+#[cfg(test)]
+mod voice_tests;
+#[cfg(test)]
+mod voice_settings_tests;
+#[cfg(test)]
+mod voice_ui_tests;
+#[cfg(test)]
+mod voice_video_tests;
 
 use rune::{AppSpec, Titlebar};
 use thehideout_design::{FAMILIES, FONTS};

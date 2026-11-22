@@ -8,11 +8,13 @@ use rune_kit::{Kit, Select};
 use thehideout_design::metrics_of;
 use thehideout_design::components::chat::emoji::glyph_label;
 use thehideout_design::components::chat::pickers::row_key;
+use thehideout_api::ChannelKind;
 use thehideout_design::components::{
     dialog_field, Avatar, Button, ColorSwatches, Dialog, EmojiPicker, EmojiPickerState,
-    EmojiScope, IconButton, IconGrid, PickerTabs, Pick, Size, TextInput, ToastKind, Variant,
+    EmojiScope, IconButton, IconGrid, PickerTabs, Pick, Segmented, Size, TextInput, ToastKind,
+    Variant,
 };
-use thehideout_design::icons::{catalog, CHEVRON_DOWN, COPY, HASH, SEARCH, X};
+use thehideout_design::icons::{catalog, CHEVRON_DOWN, COPY, HASH, SEARCH, SPEAKER, X};
 use thehideout_design::{palette_color, radius, space, theme_of, type_};
 
 use crate::app::App;
@@ -234,19 +236,40 @@ fn channel_dialog(
     let Some(f) = &d.channel else { return };
     let t = theme_of(k);
     let creating = matches!(d.kind, DialogKind::CreateChannel { .. });
+    let voice = f.kind == ChannelKind::Voice;
     let name = TextInput::new(&d.input)
-        .placeholder("plans")
-        .leading_icon(&HASH)
+        .placeholder(if voice { "lounge" } else { "plans" })
+        .leading_icon(if voice { &SPEAKER } else { &HASH })
         .on_edit(dialog_edit)
         .on_submit(|a: &mut App, _| a.act(|s| s.submit_dialog()));
-    let mut body = col()
-        .key("dialog-field")
-        .w_full()
-        .gap(16.0)
-        .child(dialog_field(k, "Channel name", name, d.error.as_deref()));
+    let mut body = col().key("dialog-field").w_full().gap(16.0);
+    // A channel's kind is chosen once, when it is made.
+    if creating {
+        body = body.child(
+            col()
+                .key("kind-field")
+                .w_full()
+                .gap(6.0)
+                .child(text("Channel type").font(type_::at(k, type_::LABEL)).color(t.text_muted.color()))
+                .child(
+                    Segmented::new(&["Text", "Voice"], usize::from(voice))
+                        .label("Channel type")
+                        .on_pick(|a: &mut App, i: usize| {
+                            a.act(|s| {
+                                if let Some(f) = s.channel_form() {
+                                    f.kind = if i == 1 { ChannelKind::Voice } else { ChannelKind::Text };
+                                }
+                            })
+                        })
+                        .build(k),
+                ),
+        );
+    }
+    body = body.child(dialog_field(k, "Channel name", name, d.error.as_deref()));
     // Name, topic, icon and colour are always all there: the picker opens under the Icon field and
     // its grid is short, so the dialog fits a 1280x800 window whole (and scrolls in a smaller one).
-    if !creating {
+    // A voice channel is never opened as a text channel, so it has no topic to show.
+    if !creating && !voice {
         let topic = TextInput::new(&f.topic)
             .placeholder("What is this channel about?")
             .on_edit(topic_edit)
@@ -287,7 +310,12 @@ fn channel_dialog(
 /// "Icon": a field-looking button showing the chosen icon; pressing it opens the picker.
 fn icon_row(a: &App, k: &Kit, f: &ChannelForm, guild: u64) -> El {
     let t = theme_of(k);
-    let glyph = catalog::by_name(&f.icon).unwrap_or(&thehideout_design::icons::HASH);
+    let default_glyph = if f.kind == ChannelKind::Voice {
+        &SPEAKER
+    } else {
+        &thehideout_design::icons::HASH
+    };
+    let glyph = catalog::by_name(&f.icon).unwrap_or(default_glyph);
     let tone = palette_color(f.color, t).unwrap_or(t.text_muted);
     let emoji_art = f.emoji.as_ref().and_then(|e| super::emoji::icon_art(a, k, e, guild, 18.0));
     let label = match &f.emoji {

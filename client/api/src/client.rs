@@ -9,7 +9,7 @@ use crate::error::ApiError;
 use crate::proto::thehideout::v1 as pb;
 use crate::content::{Emoji, ReactionEmoji};
 use crate::structure::{ChannelIcon, ChannelIconRef, GuildLayout, Member, PaletteColor, Section};
-use crate::types::{Channel, DmChannel, Event, Guild, Message, Page, User};
+use crate::types::{Channel, ChannelKind, DmChannel, Event, Guild, Message, Page, User};
 
 type Result<T> = std::result::Result<T, ApiError>;
 
@@ -278,6 +278,19 @@ impl Client {
         icon: &ChannelIconRef,
         color: PaletteColor,
     ) -> Result<Channel> {
+        self.create_channel_of_kind(guild_id, name, ChannelKind::Text, section_id, icon, color).await
+    }
+
+    /// Like [`create_channel_with_ref`](Self::create_channel_with_ref) for a text or voice channel.
+    pub async fn create_channel_of_kind(
+        &self,
+        guild_id: u64,
+        name: &str,
+        kind: ChannelKind,
+        section_id: Option<u64>,
+        icon: &ChannelIconRef,
+        color: PaletteColor,
+    ) -> Result<Channel> {
         let res = self
             .guilds()?
             .create_channel(pb::CreateChannelRequest {
@@ -286,6 +299,7 @@ impl Client {
                 section_id,
                 icon_ref: Some(icon.to_proto()).into(),
                 color: color.as_key().into(),
+                kind: kind.to_proto().into(),
                 ..Default::default()
             })
             .await?

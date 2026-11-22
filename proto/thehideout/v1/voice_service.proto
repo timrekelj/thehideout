@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package thehideout.v1;
+
+import "thehideout/v1/types.proto";
+
+// Voice channels. Media moves through a self-hosted LiveKit SFU; this server
+// decides who may join which room and keeps the list of who is where.
+//
+// LiveKit conventions: room name = `voice-<channel_id>`, participant identity =
+// the user id (decimal string), participant name = the username. A client
+// connects to `JoinVoiceResponse.url` with `token` using a LiveKit SDK.
+//
+// Everything here is UNAVAILABLE ("voice is not configured") when the server
+// has no LiveKit settings (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+// voice channels still exist and list.
+service VoiceService {
+  // Joins a voice channel. The caller must be a guild member with
+  // PERMISSION_CONNECT (`NOT_FOUND` for non-members and unknown channels,
+  // `PERMISSION_DENIED` without CONNECT, `FAILED_PRECONDITION` for a text
+  // channel). A user is in one voice channel at a time: joining another channel
+  // moves the caller out of the old one (its LiveKit connection is closed) and
+  // the voice state is replaced. Calling it for the channel the caller is
+  // already in reissues a token and keeps the state (reconnect, and the second
+  // half of a move by a moderator). Publishes `voice_state_update`.
+  rpc JoinVoice(JoinVoiceRequest) returns (JoinVoiceResponse);
+
+  // Leaves the current voice channel; a no-op when in none. Publishes
+  // `voice_state_update` (state unset) and closes the LiveKit connection.
+  rpc LeaveVoice(LeaveVoiceRequest) returns (LeaveVoiceResponse);
+
+  // Changes the caller's own flags; unset fields are unchanged.
+  // `FAILED_PRECONDITION` when not in a voice channel; `PERMISSION_DENIED` when
+  // setting self_video / self_stream without PERMISSION_VIDEO.
+  rpc UpdateVoiceState(UpdateVoiceStateRequest) returns (UpdateVoiceStateResponse);
+
+  // Server-mutes or unmutes a member who is in a voice channel of the guild.
+  // Needs PERMISSION_MUTE_MEMBERS and a higher top role than the target (the
+  // owner outranks everyone; nobody can mute the owner or themself). Enforced
+  // in LiveKit by revoking / restoring the target's microphone publish
+  // permission (an existing microphone track is unpublished). The flag survives
+  // a move to another channel of the guild but not leaving voice.
+  rpc ServerMuteMember(ServerMuteMemberRequest) returns (ServerMuteMemberResponse);
+
+  // Moves a member to another voice channel of the same guild. Needs
+  // PERMISSION_MOVE_MEMBERS and the same hierarchy rule as ServerMuteMember
+  // (moving yourself is allowed). Flow: the target's voice state switches to the
+  // new channel, the old LiveKit participant is removed, and the target's
+  // streams get `voice_moved { channel_id }`; the target's client then calls
+  // JoinVoice(channel_id). A target that does not rejoin within about 30
+  // seconds is dropped from voice.
+  rpc MoveMember(MoveMemberRequest) returns (MoveMemberResponse);
+
+  // Removes a member from their voice channel (same rules as MoveMember). The
+  // LiveKit participant is removed and `voice_state_update` (state unset) is
+  // published.
+  rpc DisconnectMember(DisconnectMemberRequest) returns (DisconnectMemberResponse);
+}
+
+// Request to join a voice channel.
+message JoinVoiceRequest {
+  // The voice channel.
+  uint64 channel_id = 1;
+}
+
+// Everything a client needs to connect to the channel's LiveKit room.
+message JoinVoiceResponse {
+  // LiveKit server URL for the client (e.g. `ws://127.0.0.1:7880`).
+  string url = 1;
+  // LiveKit access token (JWT, valid about 10 minutes to connect). Grants: join
+  // the room `voice-<channel_id>` as identity `<user_id>`, subscribe; publish
+  // only if the caller has SPEAK, limited to the microphone plus camera,
+  // screen_share and screen_share_audio when the caller has VIDEO (no
+  // microphone while server-muted).
+  string token = 2;
+  // The channel that was joined.
+  uint64 channel_id = 3;
+}
+
+// Request to leave voice.
+message LeaveVoiceRequest {}
+
+// Result of leaving voice.
+message LeaveVoiceResponse {}
+
+// Request to change the caller's own voice flags.
+message UpdateVoiceStateRequest {
+  // Muted own microphone.
+  optional bool self_mute = 1;
+  // Deafened self.
+  optional bool self_deaf = 2;
+  // Publishing the camera.
+  optional bool self_video = 3;
+  // Sharing the screen.
+  optional bool self_stream = 4;
+}
+
+// Result of changing the voice flags.
+message UpdateVoiceStateResponse {
+  // The caller's new voice state.
+  VoiceState state = 1;
+}
+
+// Request to server-mute a member.
+message ServerMuteMemberRequest {
+  // Guild of the voice channel.
+  uint64 guild_id = 1;
+  // The member to (un)mute.
+  uint64 user_id = 2;
+  // True = mute, false = unmute.
+  bool muted = 3;
+}
+
+// Result of server-muting a member.
+message ServerMuteMemberResponse {
+  // The member's new voice state.
+  VoiceState state = 1;
+}
+
+// Request to move a member to another voice channel.
+message MoveMemberRequest {
+  // Guild of both channels.
+  uint64 guild_id = 1;
+  // The member to move; must be in a voice channel of the guild.
+  uint64 user_id = 2;
+  // The destination voice channel (`NOT_FOUND` if not in this guild,
+  // `FAILED_PRECONDITION` if it is a text channel).
+  uint64 channel_id = 3;
+}
+
+// Result of moving a member.
+message MoveMemberResponse {
+  // The member's new voice state.
+  VoiceState state = 1;
+}
+
+// Request to disconnect a member from voice.
+message DisconnectMemberRequest {
+  // Guild of the voice channel.
+  uint64 guild_id = 1;
+  // The member to disconnect; must be in a voice channel of the guild.
+  uint64 user_id = 2;
+}
+
+// Result of disconnecting a member.
+message DisconnectMemberResponse {}

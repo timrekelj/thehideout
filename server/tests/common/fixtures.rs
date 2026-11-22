@@ -15,6 +15,11 @@ pub const MANAGE_CHANNELS: u64 = 4;
 pub const MANAGE_ROLES: u64 = 8;
 pub const MANAGE_EMOJIS: u64 = 16;
 pub const INVITE_PEOPLE: u64 = 32;
+pub const CONNECT: u64 = 64;
+pub const SPEAK: u64 = 128;
+pub const VIDEO: u64 = 256;
+pub const MUTE_MEMBERS: u64 = 512;
+pub const MOVE_MEMBERS: u64 = 1024;
 
 pub struct Account {
     pub token: String,
