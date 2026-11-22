@@ -209,6 +209,9 @@ impl RoleService for RoleSvc {
         let version = versions::get(&self.state, guild_id, versions::ROLES).await?;
         let roles = roles.into_iter().map(|r| if r.id == updated.id { updated.clone() } else { r }).collect();
         self.publish_roles(guild_id, roles, version);
+        if req.permissions.is_some() {
+            crate::voice::reenforce_permissions(&self.state, guild_id, None).await;
+        }
         Response::ok(UpdateRoleResponse {
             role: updated.into(),
             ..Default::default()
@@ -306,6 +309,7 @@ impl RoleService for RoleSvc {
                 );
             }
         }
+        crate::voice::reenforce_permissions(&self.state, guild_id, None).await;
         Response::ok(DeleteRoleResponse {
             version,
             ..Default::default()
@@ -412,6 +416,7 @@ impl RoleService for RoleSvc {
                 ..Default::default()
             }),
         );
+        crate::voice::reenforce_permissions(&self.state, guild_id, Some(req.user_id)).await;
         Response::ok(SetMemberRolesResponse {
             member: member.into(),
             ..Default::default()

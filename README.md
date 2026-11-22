@@ -105,7 +105,12 @@ too short" for the dev secret; it is harmless on loopback.
 
 Unset (all of URL, key and secret empty) = voice off: voice channels still list,
 `JoinVoice` answers `UNAVAILABLE` "voice is not configured on this server" and
-the webhook endpoint answers 503. Setting only some of them is a startup error.
+the webhook endpoint answers 503. Setting only some of them is a startup error, as
+is a `LIVEKIT_API_URL` that is not `http(s)://`. The dev key `devkey`, the dev secret
+`secret` and any secret shorter than 32 characters are public or weak, so the server
+refuses to start with them unless `THEHIDEOUT_PUBLIC_URL` is a development host
+(`localhost`, `*.test`, `*.example` or an IP address), the same rule as for the dev
+S3 keys; set a real key and a secret of 32+ characters (or unset `LIVEKIT_*`).
 
 - **Names.** Room `voice-<channel_id>`, participant identity = user id (decimal),
   participant name = username.
@@ -120,8 +125,12 @@ the webhook endpoint answers 503. Setting only some of them is a startup error.
 - **Permissions** (`types.proto`): `CONNECT`=64, `SPEAK`=128, `VIDEO`=256,
   `MUTE_MEMBERS`=512, `MOVE_MEMBERS`=1024 (moving includes disconnecting). There
   is no @everyone role, so `CONNECT`, `SPEAK` and `VIDEO` are a baseline every
-  member has regardless of roles (the bits are accepted in roles and harmless;
-  this means they cannot be taken away yet). `MUTE_MEMBERS` / `MOVE_MEMBERS` are
+  member has regardless of roles. `CreateRole` / `UpdateRole` accept those bits but they
+  add nothing, and nothing can revoke them: listen-only members need an everyone-level
+  role, which is not available yet (the desktop role editor offers no switch for them).
+  A change of a member's roles or of a role's permissions during a call is pushed to
+  LiveKit at once (`UpdateParticipant`), so it applies live when such a limit exists.
+  `MUTE_MEMBERS` / `MOVE_MEMBERS` are
   held by nobody by default: the owner and `ADMINISTRATOR` imply them, and roles
   can grant them under the usual "only grant what you hold" rule.
 - **Moderation.** `ServerMuteMember`, `MoveMember` and `DisconnectMember` need the
@@ -131,8 +140,11 @@ the webhook endpoint answers 503. Setting only some of them is a startup error.
   - *Mute* is enforced, not advisory: the server updates the participant's LiveKit
     permissions (RoomService `UpdateParticipant`) to drop the microphone source, which
     makes LiveKit unpublish a live microphone track. If the member has not connected yet
-    it is applied when LiveKit reports `participant_joined`. The flag survives a move
-    within the guild but not leaving voice.
+    it is applied when LiveKit reports `participant_joined`. The mute is kept per
+    (guild, user), apart from the voice state: it survives a move, leaving and rejoining,
+    and joining another guild's voice and coming back, and ends only with an unmute (the
+    target must be in voice for that) or the member leaving the guild. Like the voice
+    state it lives in memory, so a restart clears it.
   - *Disconnect* removes the voice state and the LiveKit participant
     (`RemoveParticipant`).
   - *Move* switches the voice state to the new channel, removes the old participant,
@@ -151,14 +163,18 @@ the webhook endpoint answers 503. Setting only some of them is a startup error.
   `UpdateVoiceState` changes the caller's own flags (video / stream need `VIDEO`).
 - **Staying consistent.** LiveKit's webhooks (`POST /livekit/webhook`, verified with
   the `Authorization` JWT, which signs the SHA-256 of the body) drive it:
-  `participant_joined` confirms a join (and disconnects a participant we have no join
-  for, e.g. a stale token), `participant_left` and `room_finished` clear the state. A
-  user who joined but is not confirmed within 30 seconds is dropped. Deleting a channel,
+  `participant_joined` confirms a join and records the participant SID (and disconnects
+  a participant we have no join for, e.g. a stale token), `participant_left` and
+  `room_finished` clear the state. A user who joined but is not confirmed within 30
+  seconds is dropped and their LiveKit participant removed; the server then logs a
+  warning (at most every 5 minutes) that the webhook may not be reaching it. Joining the
+  channel you are in again keeps the confirmed connection and does not restart that
+  timer. Deleting a channel,
   or a member leaving, being removed or banned, must call
   `voice::on_channel_deleted` / `voice::on_member_removed`; those RPCs do not exist yet,
-  so nothing calls them today. A reconnect of the same identity can make LiveKit send a
-  late `participant_left` for the old connection, which drops the state; the client sees
-  its own state go away and calls `JoinVoice` again.
+  so nothing calls them today. A reconnect of the same identity makes LiveKit send a
+  late `participant_left` for the old connection: it is ignored when its SID is not the
+  one recorded from `participant_joined`, so it does not drop the fresh rejoin.
 - Production: run LiveKit with its own config (real keys of 32+ characters, TLS in front
   of the signalling port, `rtc.use_external_ip: true` or a `node_ip`, the UDP range open),
   and point its `webhook.urls` at the server's `/livekit/webhook`.
