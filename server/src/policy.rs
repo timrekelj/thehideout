@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 
 /// Version (date) of the privacy notice and terms; users accept it at sign-up
 /// and again whenever it changes.
-pub const LEGAL_VERSION: &str = "2026-11-22";
+pub const LEGAL_VERSION: &str = "2026-11-23";
 /// Youngest age allowed to use the service.
 pub const MIN_AGE: u32 = 16;
 /// Header every first-party client sends: `desktop/1.2.3 (macos)`.

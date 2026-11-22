@@ -71,6 +71,11 @@ pub fn privacy_body(state: &AppState) -> String {
          <li><b>Your account:</b> username, email address, a hash of your password (never the password), \
          security settings (authenticator app secret, passkeys, recovery codes), your avatar, and when you joined.</li>\
          <li><b>Your devices:</b> a list of your signed-in sessions (device name, when created, roughly when last used).</li>\
+         <li><b>Push notifications:</b> if you turn them on in a mobile app, we store that device&rsquo;s push token (and app version, \
+         device name and language) and your notification settings. When a notification is sent, its text goes through Apple&rsquo;s \
+         push service (iPhone) or Google&rsquo;s Firebase Cloud Messaging (Android) to your device. With &ldquo;show previews&rdquo; on, \
+         that text is the sender, the channel and server, and the start of the message; with it off, only the sender, channel and server, \
+         and &ldquo;New message&rdquo;. Signing out, deleting your account or turning notifications off removes the token.</li>\
          <li><b>Your content:</b> messages, edits, reactions, direct messages, files you upload and custom emojis you add, \
          and which servers and roles you have.</li>\
          <li><b>Voice and video:</b> calls are relayed live and are <b>not recorded or stored</b>.</li>\
@@ -88,8 +93,10 @@ pub fn privacy_body(state: &AppState) -> String {
          <li>If you delete your account, your username, email, avatar, password, security settings, sessions and uploads are removed. \
          Your messages stay in the conversations you had, shown as &ldquo;Deleted user&rdquo;, without your name attached.</li>\
          </ul>\
-         {share}<p>We do not share your data with anyone for their own purposes. Two service providers handle data for us: \
-         an email provider (Resend) that delivers our emails, and our hosting provider. They only process data to provide those services.</p>\
+         {share}<p>We do not share your data with anyone for their own purposes. Some service providers handle data for us: \
+         an email provider (Resend) that delivers our emails, our hosting provider, and, only if you use push notifications in a mobile app, \
+         the Apple Push Notification service (Apple) or Firebase Cloud Messaging (Google) that deliver them to your phone. \
+         They only process data to provide those services.</p>\
          {rights}<ul>\
          <li><b>Export:</b> in the app, choose &ldquo;Export my data&rdquo;; we email you a link to a file with your data (once per 24 hours).</li>\
          <li><b>Delete:</b> in the app, choose &ldquo;Delete account&rdquo;. If you own servers, transfer or delete them first.</li>\
