@@ -7,12 +7,14 @@ import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
 import com.connectrpc.ConnectException
+import com.connectrpc.MethodSpec
 import com.connectrpc.ProtocolClientConfig
 import com.connectrpc.ResponseMessage
 import com.connectrpc.extensions.GoogleJavaLiteProtobufStrategy
 import com.connectrpc.impl.ProtocolClient
 import com.connectrpc.okhttp.ConnectOkHttpClient
 import com.connectrpc.protocols.NetworkProtocol
+import com.connectrpc.simpleTimeouts
 import com.thehideout.v1.AcceptInviteRequest
 import com.thehideout.v1.AcceptTermsRequest
 import com.thehideout.v1.AddReactionRequest
@@ -57,6 +59,8 @@ import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** What the real client needs to know about where it runs. */
 class ApiConfig(
@@ -80,6 +84,14 @@ fun buildHttpClients(config: ApiConfig, base: OkHttpClient = OkHttpClient()): Pa
     return unary to stream
 }
 
+/**
+ * connect-kotlin's own default times every call out at 10 s, the gateway's Subscribe stream
+ * included: it was being torn down and reopened every ~10 s regardless of the OkHttp stream
+ * client's readTimeout(0) and GatewayStream's own 75 s silence watchdog. Unary calls keep that
+ * 10 s default; a stream has no library-imposed timeout, only its own watchdog.
+ */
+internal val apiTimeoutOracle: (MethodSpec<*, *>) -> Duration? = simpleTimeouts(10.seconds, Duration.INFINITE)
+
 /** The real [ApiClient]: connect-kotlin over OkHttp, with every failure mapped to [AppError]. */
 class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
     private val client = ProtocolClient(
@@ -88,6 +100,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
             host = config.baseUrl,
             serializationStrategy = GoogleJavaLiteProtobufStrategy(),
             networkProtocol = NetworkProtocol.CONNECT,
+            timeoutOracle = apiTimeoutOracle,
         ),
     )
     private val auth = AuthServiceClient(client)
