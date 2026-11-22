@@ -112,6 +112,14 @@ public enum ConnectionStatus: Sendable, Equatable {
 /// missed, and `ConnectionStatus` can't say: `connecting` arrives before every retry and overwrites `reconnecting`.
 public enum StreamHealth: Sendable, Equatable { case live, interrupted }
 
+/// One hit in `AppState.mentionFeed()`.
+public struct MentionEntry: Sendable, Equatable, Identifiable {
+    public var channelID: ID
+    public var message: Message
+    public var id: String { "\(channelID):\(message.id)" }
+    public init(channelID: ID, message: Message) { self.channelID = channelID; self.message = message }
+}
+
 public struct Notice: Sendable, Equatable, Identifiable {
     public enum Kind: Sendable, Equatable { case info, success, danger }
     public var id: Int
@@ -131,6 +139,10 @@ public enum Effect: Sendable, Equatable {
     case loadEmojis(guild: ID)
     case send(channel: ID, content: String, nonce: String, attachmentIDs: [ID])
     case updateLayout(guild: ID, layout: Layout)
+    /// Replaces a message's content; `previous` is what to roll back to on a refusal.
+    case editMessage(channel: ID, message: ID, content: String, previous: String)
+    /// Opens (or asks the server to open) a DM with a user.
+    case startDm(user: ID)
 }
 
 /// The whole mirror of the server a signed-in session shows. Plain data and pure transitions (see
@@ -187,6 +199,8 @@ public struct AppState: Sendable {
     public var voiceMovedTo: ID?
     /// Sections the user folded, `(guild, section)`.
     public var collapsed: Set<SectionKey> = []
+    /// The composer's unsent text per channel, kept while switching channels (COMP-03).
+    public var drafts: [ID: String] = [:]
 
     public var outbox: [Effect] = []
     var nonceCounter = 0
@@ -264,6 +278,34 @@ public struct AppState: Sendable {
 
     public func mentionsMe(_ content: String) -> Bool {
         me.map { Mentions.contains(content, username: $0.username) } ?? false
+    }
+
+    public func draft(_ channel: ID) -> String { drafts[channel] ?? "" }
+
+    public mutating func setDraft(channel: ID, text: String) {
+        if text.isEmpty { drafts.removeValue(forKey: channel) } else { drafts[channel] = text }
+    }
+
+    /// Loaded messages that mention the signed-in user, newest first, across every channel whose history is
+    /// in memory (a local feed: the server has no mentions index, MOB follow-up).
+    public func mentionFeed() -> [MentionEntry] {
+        guard let name = me?.username else { return [] }
+        var out: [MentionEntry] = []
+        for (channel, log) in logs {
+            for m in log.messages where m.authorID != myID && Mentions.contains(m.content, username: name) {
+                out.append(MentionEntry(channelID: channel, message: m))
+            }
+        }
+        return out.sorted { $0.message.createdAt > $1.message.createdAt }
+    }
+
+    /// The 1:1 DM with `user` (never myself, never a group), if one is already known (StartDm matches only
+    /// a 1:1 conversation: a group DM with the same person present is not a match).
+    public func oneToOneDm(with user: ID) -> DMChannel? {
+        guard user != myID else { return nil }
+        return dms.first { dm in
+            dm.participants.count == 2 && dm.participants.contains { $0.id == user } && dm.participants.contains { $0.id == myID }
+        }
     }
 
     /// The voice state of `user`, wherever they are.

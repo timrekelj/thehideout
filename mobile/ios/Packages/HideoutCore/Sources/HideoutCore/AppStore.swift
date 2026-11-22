@@ -159,6 +159,15 @@ public final class AppStore {
     public func retry(nonce: String) { mutate { $0.retry(nonce: nonce) } }
     public func discard(nonce: String) { mutate { $0.discard(nonce: nonce) } }
     public func editLayout(guild: ID, _ layout: Layout) { mutate { _ = $0.editLayout(guild: guild, layout) } }
+    public func setDraft(channel: ID, text: String) { mutate { $0.setDraft(channel: channel, text: text) } }
+    public func startDm(user: ID) { mutate { $0.startDm(user: user) } }
+
+    @discardableResult
+    public func editMessage(channel: ID, message: ID, content: String) -> Bool {
+        var ok = false
+        mutate { ok = $0.editMessage(channel: channel, message: message, content: content) }
+        return ok
+    }
 
     @discardableResult
     public func send(_ text: String, to channel: ID, attachmentIDs: [ID] = []) -> Bool {
@@ -315,6 +324,26 @@ public final class AppStore {
                 } catch {
                     let e = store.handleFailure(error)
                     store.state.applyLayoutReply(guild: guild, result: .failure(e))
+                }
+            }
+        case .editMessage(let channel, let message, let content, let previous):
+            run { store in
+                do {
+                    let m = try await store.api.editMessage(channel: channel, message: message, content: content)
+                    store.state.applyEditReply(channel: channel, message: message, previous: previous, result: .success(m))
+                } catch {
+                    let e = store.handleFailure(error)
+                    store.state.applyEditReply(channel: channel, message: message, previous: previous, result: .failure(e))
+                }
+            }
+        case .startDm(let user):
+            run { store in
+                do {
+                    let dm = try await store.api.startDm(user: user)
+                    store.state.applyDmOpened(result: .success(dm))
+                } catch {
+                    let e = store.handleFailure(error)
+                    store.state.applyDmOpened(result: .failure(e))
                 }
             }
         }

@@ -179,6 +179,22 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
         emit(.reactionRemoved(channel: channel, message: message, emoji: emoji, user: me))
     }
 
+    public func startDm(user: ID) async throws -> DMChannel {
+        try await delay()
+        let dm: DMChannel = try lock.withLock {
+            guard user != world.meID, world.users.contains(where: { $0.id == user }) else { throw AppError.invalidArgument("no such user") }
+            if let existing = world.dms.first(where: { $0.participants.count == 2 && $0.participants.contains { $0.id == user } }) {
+                return existing
+            }
+            world.nextID += 1
+            let dm = DMChannel(id: world.nextID, participants: [world.user(world.meID), world.user(user)], createdAt: Date())
+            world.dms.append(dm)
+            return dm
+        }
+        emit(.dmOpened(dm))
+        return dm
+    }
+
     public func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> Layout {
         try await delay()
         let l: Layout = try lock.withLock {
