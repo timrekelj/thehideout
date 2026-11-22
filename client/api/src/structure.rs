@@ -34,6 +34,12 @@ impl Permissions {
     pub const MUTE_MEMBERS: Self = Self(512);
     /// Move and disconnect other members in voice channels (subject to the role hierarchy).
     pub const MOVE_MEMBERS: Self = Self(1024);
+    /// Delete other members' messages.
+    pub const MANAGE_MESSAGES: Self = Self(2048);
+    /// Kick members (subject to the role hierarchy).
+    pub const KICK_MEMBERS: Self = Self(4096);
+    /// Ban and unban members and list bans (subject to the role hierarchy).
+    pub const BAN_MEMBERS: Self = Self(8192);
     /// What every member has without any role: CONNECT, SPEAK and VIDEO.
     pub const BASELINE: Self = Self(64 | 128 | 256);
 
@@ -298,6 +304,28 @@ impl From<pb::Role> for Role {
             position: r.position,
             permissions: Permissions(r.permissions),
             created_at: time(r.created_at.as_option()),
+        }
+    }
+}
+
+/// A ban of a user from a guild.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ban {
+    pub user: User,
+    /// The moderator who banned them; 0 if unknown.
+    pub banned_by: u64,
+    /// Why; empty = none given.
+    pub reason: String,
+    pub created_at: SystemTime,
+}
+
+impl From<pb::Ban> for Ban {
+    fn from(b: pb::Ban) -> Self {
+        Self {
+            user: b.user.into_option().map(User::from).unwrap_or_else(|| User::from(pb::User::default())),
+            banned_by: b.banned_by,
+            reason: b.reason,
+            created_at: time(b.created_at.as_option()),
         }
     }
 }

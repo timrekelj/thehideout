@@ -101,6 +101,7 @@ mod content;
 mod client_ext;
 mod error;
 mod gateway;
+mod moderation;
 mod state;
 mod structure;
 mod types;
@@ -122,5 +123,5 @@ pub use client::{CLIENT_HEADER, Client, client_header_value, DEFAULT_MAX_UPLOAD_
 pub use content::{Attachment, Embed, EmbedKind, EmbedMedia, EmbedMediaKind, Emoji, PendingAttachment, Reaction, ReactionEmoji};
 pub use error::{ApiError, update_required};
 pub use gateway::{Gateway, GatewayConfig, GatewayHandle, GatewayUpdate};
-pub use structure::{ChannelIcon, ChannelIconRef, GuildLayout, LayoutEntry, Member, PaletteColor, Permissions, Role, RoleList, Section};
-pub use types::{Channel, ChannelKind, DmChannel, Event, Guild, Message, Page, User, VoiceJoin, VoiceState};
+pub use structure::{Ban, ChannelIcon, ChannelIconRef, GuildLayout, LayoutEntry, Member, PaletteColor, Permissions, Role, RoleList, Section};
+pub use types::{Channel, ChannelKind, DmChannel, Event, Guild, MemberRemovalReason, Message, Page, User, VoiceJoin, VoiceState};

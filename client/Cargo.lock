@@ -7238,6 +7238,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "html-escape",
+ "http",
  "image",
  "lettre",
  "livekit-api",

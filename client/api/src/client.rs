@@ -121,7 +121,7 @@ impl Client {
         Ok(pb::GuildServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    fn messages(&self) -> Result<pb::MessageServiceClient<HttpClient>> {
+    pub(crate) fn messages(&self) -> Result<pb::MessageServiceClient<HttpClient>> {
         Ok(pb::MessageServiceClient::new(self.http.clone(), self.config()?))
     }
 
