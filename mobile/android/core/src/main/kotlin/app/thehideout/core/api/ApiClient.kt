@@ -49,6 +49,8 @@ interface ApiClient {
     suspend fun openDm(userId: Long): DmChannel
     suspend fun listMembers(guild: Long): GuildMembers
     suspend fun listRoles(guild: Long): GuildRoles
+    /** The guild's custom emojis, ordered by name (MSG-09); mutations arrive as `emojis_updated`. */
+    suspend fun listEmojis(guild: Long): List<Emoji>
     suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji)
     suspend fun removeReaction(channel: Long, message: Long, emoji: ReactionEmoji)
     /** Replaces the content of the caller's own message. */

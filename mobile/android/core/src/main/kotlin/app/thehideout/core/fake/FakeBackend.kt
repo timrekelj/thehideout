@@ -115,6 +115,14 @@ class FakeBackend(
         VoiceState(HIDEOUT, LOUNGE, BRUNO, selfMute = true, joinedAt = now - Duration.ofMinutes(12)),
     )
 
+    private val emojis = mutableMapOf(
+        HIDEOUT to mutableListOf(
+            Emoji(EMOJI_WAVE, HIDEOUT, "wave", animated = false, image = "$FAKE_EMOJI_PREFIX/wave.webp", creatorId = TIM, createdAt = now - Duration.ofDays(60)),
+            Emoji(EMOJI_THUMBS_UP, HIDEOUT, "thumbs_up", animated = false, image = "$FAKE_EMOJI_PREFIX/thumbs_up.webp", creatorId = ANA, createdAt = now - Duration.ofDays(55)),
+            Emoji(EMOJI_PARTY_PARROT, HIDEOUT, "party_parrot", animated = true, image = "$FAKE_EMOJI_PREFIX/party_parrot.gif", creatorId = CVETKA, createdAt = now - Duration.ofDays(40)),
+        ),
+    )
+
     private val messages = mutableMapOf<Long, MutableList<Message>>()
     private var nextId = 10_000L
     private var unreadDemoSent = false
@@ -249,6 +257,11 @@ class FakeBackend(
     override suspend fun listRoles(guild: Long): GuildRoles {
         pause()
         return GuildRoles(roles[guild].orEmpty(), version = 4)
+    }
+
+    override suspend fun listEmojis(guild: Long): List<Emoji> {
+        pause()
+        return emojis[guild].orEmpty()
     }
 
     override suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji) {
@@ -630,7 +643,134 @@ class FakeBackend(
         DM_BRUNO_LINES.forEachIndexed { i, (who, line) -> push(DM_BRUNO, who, line, now - Duration.ofDays(5) + Duration.ofSeconds(i * 120L)) }
         push(20, ANA, "rehearsal moved to Thursday", now - Duration.ofDays(6))
         push(30, BRUNO, "sourdough starter is alive", now - Duration.ofDays(7))
+        // Oldest seeds first: the transcript orders by message id, and the attachment UI tests
+        // scroll to the attachment rows, so those must stay the newest messages in #design.
+        seedEmbeds()
+        seedEmoji()
         seedAttachments()
+    }
+
+    /** Custom emoji inline in a sentence, and a jumbo-only message (MD-06/07), into #design.
+     *  Seeded older than the attachment messages so they stay the newest - and so the rows the
+     *  attachment UI tests scroll to remain in the transcript's initial viewport. */
+    private fun seedEmoji() {
+        var t = now - Duration.ofDays(4) - Duration.ofHours(2)
+        push(DESIGN, BRUNO, "nice work team <:thumbs_up:$EMOJI_THUMBS_UP> see you at standup <:wave:$EMOJI_WAVE>", t)
+        t = t.plusSeconds(300)
+        push(DESIGN, ANA, "<a:party_parrot:$EMOJI_PARTY_PARROT> <a:party_parrot:$EMOJI_PARTY_PARROT> <a:party_parrot:$EMOJI_PARTY_PARROT>", t)
+    }
+
+    /**
+     * A link, image and video embed, then one rich post per provider (X, TikTok, Instagram,
+     * Reddit) - desktop's `fake_files.rs::seed_embeds` (ATT-06), into #design. `message_updated`
+     * is simulated by attaching the embed directly rather than delaying it (the gateway path is
+     * exercised by the reducer and UI tests, not the fake's timing). Seeded older than the
+     * attachment messages so those stay the newest in #design (see [seedEmoji]).
+     */
+    private fun seedEmbeds() {
+        var t = now - Duration.ofDays(4) - Duration.ofHours(6)
+        pushEmbed(
+            DESIGN, TIM, "the release notes are up", t,
+            Embed(
+                url = "https://example.com/wiki/release",
+                title = "Release notes: v0.0.3",
+                description = "Adds a live gateway, drops polling in favor of push updates, and tightens the reconnect backoff so flaky networks recover faster without hammering the server.",
+                siteName = "example wiki",
+                thumbnail = "$FAKE_MEDIA_PREFIX/landscape-3.jpg",
+                thumbnailWidth = 1200,
+                thumbnailHeight = 800,
+                kind = EmbedKind.Link,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, ANA, "found the old mockup", t,
+            Embed(
+                url = "https://example.com/gallery/mockup",
+                title = "Early dashboard mockup",
+                description = "Before the warm palette landed.",
+                siteName = "example gallery",
+                thumbnail = "$FAKE_MEDIA_PREFIX/square-1.jpg",
+                thumbnailWidth = 1000,
+                thumbnailHeight = 1000,
+                kind = EmbedKind.Image,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, BRUNO, "clip from the demo", t,
+            Embed(
+                url = "https://example.com/clips/demo",
+                title = "Screen recording of the bug",
+                siteName = "example clips",
+                kind = EmbedKind.Video,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Video, file = "$FAKE_MEDIA_PREFIX/clip-1.mp4", poster = "$FAKE_MEDIA_PREFIX/clip-1-poster.jpg", width = 960, height = 540, durationMs = 6_000, size = 590_746)),
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, CVETKA, "", t,
+            Embed(
+                url = "https://x.example.com/cvetka/status/1",
+                provider = "x",
+                authorName = "cvetka",
+                authorIcon = "$FAKE_MEDIA_PREFIX/square-1.jpg",
+                description = "Shipped the new icon set today. Been a long couple of weeks but it's finally in the wiki.",
+                kind = EmbedKind.Rich,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/landscape-4.jpg", width = 1200, height = 800)),
+                publishedAt = t,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, ANA, "", t,
+            Embed(
+                url = "https://tiktok.example.com/@ana/video/1",
+                provider = "tiktok",
+                authorName = "ana",
+                description = "weekend hike recap #trail",
+                kind = EmbedKind.Rich,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Video, file = "$FAKE_MEDIA_PREFIX/clip-1.mp4", poster = "$FAKE_MEDIA_PREFIX/clip-1-poster.jpg", width = 960, height = 540, durationMs = 6_000, size = 590_746)),
+                publishedAt = t,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, BRUNO, "", t,
+            Embed(
+                url = "https://instagram.example.com/p/1",
+                provider = "instagram",
+                authorName = "bruno.cooks",
+                authorIcon = "$FAKE_MEDIA_PREFIX/square-1.jpg",
+                description = "Saturday's moodboard.",
+                kind = EmbedKind.Rich,
+                media = listOf(
+                    EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/landscape-1.jpg", width = 1200, height = 800),
+                    EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/portrait-1.jpg", width = 900, height = 1200),
+                ),
+                publishedAt = t,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, TIM, "", t,
+            Embed(
+                url = "https://reddit.example.com/r/thehideout/comments/1",
+                provider = "reddit",
+                authorName = "u/tim",
+                title = "Found this at the flea market, 5 euros",
+                description = "Still works. Mechanical, loud, perfect.",
+                kind = EmbedKind.Rich,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/landscape-5.jpg", width = 1200, height = 800)),
+                publishedAt = t,
+            ),
+        )
+    }
+
+    private fun pushEmbed(channel: Long, author: Long, content: String, at: Instant, embed: Embed) {
+        val m = push(channel, author, content, at)
+        val withEmbed = m.copy(embeds = listOf(embed))
+        messages.getValue(channel).let { list -> list[list.indexOfFirst { it.id == m.id }] = withEmbed }
     }
 
     companion object {
@@ -665,6 +805,14 @@ class FakeBackend(
 
         const val DM_ANA = 50L
         const val DM_BRUNO = 51L
+
+        /** The Hideout's custom emoji (MSG-09): two static, one animated. */
+        const val EMOJI_WAVE = 9001L
+        const val EMOJI_THUMBS_UP = 9002L
+        const val EMOJI_PARTY_PARROT = 9003L
+
+        private const val FAKE_MEDIA_PREFIX = "file:///android_asset/fake_media"
+        private const val FAKE_EMOJI_PREFIX = "file:///android_asset/fake_emoji"
 
         /** The account with an authenticator app (signing in as her asks for the second factor). */
         const val DORA = 5L

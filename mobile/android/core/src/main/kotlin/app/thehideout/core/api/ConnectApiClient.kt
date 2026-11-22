@@ -24,6 +24,8 @@ import com.thehideout.v1.CompleteSecondFactorRequest
 import com.thehideout.v1.DeleteMessageRequest
 import com.thehideout.v1.DmServiceClient
 import com.thehideout.v1.EditMessageRequest
+import com.thehideout.v1.EmojiServiceClient
+import com.thehideout.v1.ListEmojisRequest
 import com.thehideout.v1.FinishPasskeyLoginRequest
 import com.thehideout.v1.FinishPasskeyRegistrationRequest
 import com.thehideout.v1.FinishSecondFactorPasskeyRequest
@@ -95,6 +97,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     private val dms = DmServiceClient(client)
     private val messages = MessageServiceClient(client)
     private val roles = RoleServiceClient(client)
+    private val emojiService = EmojiServiceClient(client)
     private val gateway = GatewayServiceClient(client)
     private val invites = InviteServiceClient(client)
 
@@ -169,6 +172,11 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     override suspend fun listRoles(guild: Long): GuildRoles {
         val r = call { roles.listRoles(ListRolesRequest.newBuilder().setGuildId(guild).build()) }
         return GuildRoles(r.rolesList.map { it.toModel() }, r.version)
+    }
+
+    override suspend fun listEmojis(guild: Long): List<Emoji> {
+        val r = call { emojiService.listEmojis(ListEmojisRequest.newBuilder().setGuildId(guild).build()) }
+        return r.emojisList.map { it.toModel() }
     }
 
     override suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji) {

@@ -6,6 +6,8 @@ import app.thehideout.core.api.GuildMembers
 import app.thehideout.core.api.GuildRoles
 import app.thehideout.core.api.Initial
 import app.thehideout.core.api.MessagePage
+import app.thehideout.core.embed.EmbedRef
+import app.thehideout.core.embed.toggleEmbedCollapsed
 import app.thehideout.core.model.*
 import java.time.Instant
 
@@ -15,6 +17,7 @@ sealed interface Effect {
     data class LoadChannels(val guild: Long) : Effect
     data class LoadMembers(val guild: Long) : Effect
     data class LoadAccess(val guild: Long) : Effect
+    data class LoadEmojis(val guild: Long) : Effect
     /** The lists again after a gap in the stream. */
     data object Refresh : Effect
     data class SendMessage(val channel: Long, val content: String, val nonce: String, val attachmentIds: List<Long>) : Effect
@@ -44,6 +47,7 @@ sealed interface Action {
     data class DmOpened(val result: Result<DmChannel>) : Action
     data class MembersLoaded(val guild: Long, val result: Result<GuildMembers>) : Action
     data class AccessLoaded(val guild: Long, val result: Result<GuildRoles>) : Action
+    data class EmojisLoaded(val guild: Long, val result: Result<List<Emoji>>) : Action
     data class Gateway(val update: GatewayUpdate) : Action
 
     // ---- session ----
@@ -70,6 +74,8 @@ sealed interface Action {
     data class Notice(val kind: NoticeKind, val text: String) : Action
     /** Marks a guild as being left or deleted by us, so its `guild_removed` is not announced. */
     data class Exiting(val guild: Long) : Action
+    /** The embed card's header was tapped: its fold flips (ATT-07). */
+    data class ToggleEmbedCollapsed(val message: Long, val index: Int) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -109,6 +115,10 @@ object Reducer {
             { Reduction(s.copy(roles = s.roles + (a.guild to sortRoles(it.roles)), roleVersions = s.roleVersions + (a.guild to it.version))) },
             { Reduction(s.copy(accessAsked = s.accessAsked - a.guild)) },
         )
+        is Action.EmojisLoaded -> a.result.fold(
+            { Reduction(s.copy(emojis = s.emojis + (a.guild to it))) },
+            { Reduction(s.copy(emojisAsked = s.emojisAsked - a.guild)) },
+        )
         is Action.Gateway -> gateway(s, a.update)
         is Action.SignedOut -> Reduction(AppState(phase = SessionPhase.SignedOut(a.error)))
         is Action.SetPhase -> Reduction(s.copy(phase = a.phase))
@@ -130,6 +140,7 @@ object Reducer {
         is Action.DismissNotice -> Reduction(s.copy(notices = s.notices.filter { it.id != a.id }))
         is Action.Notice -> Reduction(notice(s, a.kind, a.text))
         is Action.Exiting -> Reduction(s.copy(exiting = s.exiting + a.guild))
+        is Action.ToggleEmbedCollapsed -> Reduction(s.copy(collapsedEmbeds = toggleEmbedCollapsed(s.collapsedEmbeds, EmbedRef(a.message, a.index))))
     }
 
     // ---- data in ------------------------------------------------------------------------------
@@ -186,6 +197,7 @@ object Reducer {
             members = s.members.filterKeys { it == open },
             membersAsked = s.membersAsked.filter { it == open }.toSet(),
             emojis = s.emojis.filterKeys { it == open },
+            emojisAsked = s.emojisAsked.filter { it == open }.toSet(),
         )
         val effects = mutableListOf<Effect>()
         if (open != null) {
@@ -200,6 +212,8 @@ object Reducer {
             val r = wantAccess(next, open)
             next = r.state
             effects += r.effects
+            effects += Effect.LoadEmojis(open)
+            next = next.copy(emojisAsked = next.emojisAsked + open)
         }
         return Reduction(next, effects)
     }
@@ -561,6 +575,7 @@ object Reducer {
             members = s.members - guild,
             membersAsked = s.membersAsked - guild,
             emojis = s.emojis - guild,
+            emojisAsked = s.emojisAsked - guild,
             guildChannel = s.guildChannel - guild,
         )
         return if (wasOpen) goHome(next.copy(place = Place.InGuild(guild))) else Reduction(next)
@@ -598,6 +613,7 @@ object Reducer {
         val effects = mutableListOf<Effect>()
         wantMembers(next, id).let { next = it.state; effects += it.effects }
         wantAccess(next, id).let { next = it.state; effects += it.effects }
+        wantEmojis(next, id).let { next = it.state; effects += it.effects }
         if (id !in next.channels) effects += Effect.LoadChannels(id)
         arrive(next).let { next = it.state; effects += it.effects }
         return Reduction(next, effects)
@@ -608,6 +624,9 @@ object Reducer {
 
     private fun wantAccess(s: AppState, guild: Long): Reduction =
         if (guild !in s.roles && guild !in s.accessAsked) Reduction(s.copy(accessAsked = s.accessAsked + guild), listOf(Effect.LoadAccess(guild))) else Reduction(s)
+
+    private fun wantEmojis(s: AppState, guild: Long): Reduction =
+        if (guild !in s.emojis && guild !in s.emojisAsked) Reduction(s.copy(emojisAsked = s.emojisAsked + guild), listOf(Effect.LoadEmojis(guild))) else Reduction(s)
 
     /** Asks for the members of the guild [m] was posted in when its author is a stranger. */
     private fun wantAuthor(s: AppState, m: Message): Reduction {

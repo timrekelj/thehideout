@@ -16,6 +16,8 @@ data class ShellActions(
     val editMessage: (Long, Long, String) -> Unit = { _, _, _ -> },
     val deleteMessage: (Long, Long) -> Unit = { _, _ -> },
     val setDraft: (Long, String) -> Unit = { _, _ -> },
+    /** An embed card's header was tapped: its fold flips (ATT-07). */
+    val toggleEmbedCollapsed: (Long, Int) -> Unit = { _, _ -> },
     /** Switches tabs (set by [SignedInShell]; plain UI actions, not store intents). */
     val navigateToDms: () -> Unit = {},
     val navigateToServers: () -> Unit = {},
@@ -39,6 +41,7 @@ data class ShellActions(
             editMessage = store::editMessage,
             deleteMessage = store::deleteMessage,
             setDraft = store::setDraft,
+            toggleEmbedCollapsed = store::toggleEmbedCollapsed,
             signOut = store::signOut,
             acceptTerms = store::acceptTerms,
             dismissNotice = store::dismissNotice,

@@ -27,8 +27,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -123,6 +125,7 @@ private fun CategoryStrip(hasServerEmojis: Boolean, onPick: (String) -> Unit) {
 
 @Composable
 private fun EmojiGrid(cells: List<PickerCell>, onPick: (EmojiEntry) -> Unit, state: androidx.compose.foundation.lazy.grid.LazyGridState) {
+    val mediaBase = LocalMediaBase.current
     LazyVerticalGrid(
         columns = GridCells.Fixed(9),
         state = state,
@@ -142,11 +145,27 @@ private fun EmojiGrid(cells: List<PickerCell>, onPick: (EmojiEntry) -> Unit, sta
                 ) {
                     when (val entry = cell.entry) {
                         is EmojiEntry.Unicode -> Text(entry.emoji, style = MaterialTheme.typography.titleLarge)
-                        is EmojiEntry.Custom -> Text(":${entry.name}:", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        is EmojiEntry.Custom -> PickerEmojiImage(entry, mediaBase)
                     }
                 }
             }
         }
+    }
+}
+
+/** A server emoji's picture in the picker grid (MSG-09); a graceful `:name:` on a failed load. */
+@Composable
+private fun PickerEmojiImage(entry: EmojiEntry.Custom, mediaBase: String) {
+    var failed by remember(entry.id) { mutableStateOf(false) }
+    if (failed) {
+        Text(":${entry.name}:", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    } else {
+        coil3.compose.AsyncImage(
+            model = app.thehideout.core.attachment.mediaUrl(mediaBase, entry.image),
+            contentDescription = ":${entry.name}:",
+            modifier = Modifier.size(28.dp),
+            onState = { if (it is coil3.compose.AsyncImagePainter.State.Error) failed = true },
+        )
     }
 }
 

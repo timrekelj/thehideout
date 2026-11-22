@@ -28,6 +28,7 @@ enum class Sym(@DrawableRes val res: Int) {
     MusicNote(R.drawable.ic_music_note),
     Notifications(R.drawable.ic_notifications), OpenInNew(R.drawable.ic_open_in_new), Palette(R.drawable.ic_palette),
     Pause(R.drawable.ic_pause), Person(R.drawable.ic_person), PictureAsPdf(R.drawable.ic_picture_as_pdf), PlayArrow(R.drawable.ic_play_arrow),
+    Public(R.drawable.ic_public),
     Refresh(R.drawable.ic_refresh),
     Reply(R.drawable.ic_reply), ScreenShare(R.drawable.ic_screen_share), Search(R.drawable.ic_search),
     Send(R.drawable.ic_send), Settings(R.drawable.ic_settings), Share(R.drawable.ic_share), Stack(R.drawable.ic_stack), Tag(R.drawable.ic_tag),

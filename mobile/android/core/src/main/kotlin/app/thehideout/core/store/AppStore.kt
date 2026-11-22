@@ -149,6 +149,8 @@ class AppStore(
     fun deleteMessage(channel: Long, message: Long) = dispatch(Action.DeleteMessage(channel, message))
     fun setDraft(channel: Long, text: String) = dispatch(Action.SetDraft(channel, text))
     fun dismissNotice(id: Long) = dispatch(Action.DismissNotice(id))
+    /** The embed header was tapped: its fold flips (ATT-07). */
+    fun toggleEmbedCollapsed(message: Long, index: Int) = dispatch(Action.ToggleEmbedCollapsed(message, index))
 
     // ---- effects ------------------------------------------------------------------------------
 
@@ -163,6 +165,7 @@ class AppStore(
                 is Effect.LoadChannels -> dispatch(Action.ChannelsLoaded(effect.guild, guard(runCatching { api.listChannels(effect.guild) })))
                 is Effect.LoadMembers -> dispatch(Action.MembersLoaded(effect.guild, guard(runCatching { api.listMembers(effect.guild) })))
                 is Effect.LoadAccess -> dispatch(Action.AccessLoaded(effect.guild, guard(runCatching { api.listRoles(effect.guild) })))
+                is Effect.LoadEmojis -> dispatch(Action.EmojisLoaded(effect.guild, guard(runCatching { api.listEmojis(effect.guild) })))
                 Effect.Refresh -> guard(runCatching { api.loadInitial() }).onSuccess {
                     dispatch(Action.Refreshed(it))
                     cache?.saveLists(state.value)
