@@ -1,17 +1,17 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use thehideout_server::config::Config;
+use thehideout_server::config::{Config, LogFormat};
 use thehideout_server::email::{self, EmailSender, Mailer, ResendSender, SmtpSender};
 use thehideout_server::services::invite;
 use thehideout_server::embeds::EmbedSettings;
 use thehideout_server::media::{self, attachments::AttachmentSettings};
 use thehideout_server::snowflake::Snowflake;
 use thehideout_server::storage::Storage;
-use thehideout_server::{AppState, build_app, migrations};
+use thehideout_server::{AppState, build_app, migrations, scylla_conn};
 use scylla::client::caching_session::CachingSession;
-use scylla::client::session_builder::SessionBuilder;
+use thehideout_server::server;
+use thehideout_server::shutdown::Shutdown;
 use tracing_subscriber::EnvFilter;
 
 /// Number of prepared statements kept by the session cache.
@@ -83,9 +83,11 @@ async fn main() -> Result<()> {
     // environment, including RUST_LOG. Variables already set in the real
     // environment win over the file. Reported once logging is up.
     let dotenv = dotenvy::dotenv();
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    match LogFormat::from_env()? {
+        LogFormat::Text => tracing_subscriber::fmt().with_env_filter(filter).init(),
+        LogFormat::Json => tracing_subscriber::fmt().json().with_env_filter(filter).init(),
+    }
     match dotenv {
         Ok(path) => tracing::info!(path = %path.display(), "loaded environment file"),
         Err(e) if e.not_found() => {}
@@ -98,12 +100,14 @@ async fn main() -> Result<()> {
         tracing::info!(?config, "starting thehideout-server");
     }
 
-    let session = SessionBuilder::new()
-        .known_nodes(&config.scylla_nodes)
-        .build()
-        .await
-        .context("connecting to ScyllaDB")?;
-    migrations::run(&session, &config.keyspace).await?;
+    if config.scylla_auth.is_none() {
+        tracing::warn!("ScyllaDB credentials are not set (THEHIDEOUT_SCYLLA_USERNAME/PASSWORD)");
+    }
+    if config.scylla_tls_ca.is_none() {
+        tracing::warn!("connecting to ScyllaDB without TLS (set THEHIDEOUT_SCYLLA_TLS_CA to enable it)");
+    }
+    let session = scylla_conn::connect(&config.scylla_nodes, config.scylla_auth.as_ref(), config.scylla_tls_ca.as_deref()).await?;
+    migrations::run_with(&session, &config.keyspace, &config.scylla_replication).await?;
 
     let storage = Storage::s3(&config.s3)?;
     let storage_ok = match storage.check().await {
@@ -119,12 +123,16 @@ async fn main() -> Result<()> {
         tracing::info!(bucket = %config.s3.bucket, "object storage ready");
     }
 
+    let shutdown = Shutdown::default();
     let state = AppState::new(
         Arc::new(CachingSession::from(session, PREPARED_STATEMENT_CACHE_SIZE)),
         Arc::new(Snowflake::new(config.worker_id)),
         config.keyspace.clone(),
         config.heartbeat_interval,
     )
+    .with_shutdown(shutdown.clone())
+    .with_trusted_proxies(config.trusted_proxies.clone())
+    .with_stream_limits(config.max_streams_per_user, config.max_streams)
     .with_admins(config.admins.clone())
     .with_public_url(config.public_url.clone())
     .with_mailer(mailer(&config)?)
@@ -163,19 +171,48 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("startup jobs failed: {}", e.message.as_deref().unwrap_or("?")))?;
     media::pending::spawn_sweeper(state.clone());
+    let mailer = state.mailer.clone();
     let app = build_app(state);
 
     let listener = tokio::net::TcpListener::bind(config.listen_addr)
         .await
         .with_context(|| format!("binding {}", config.listen_addr))?;
     tracing::info!(addr = %config.listen_addr, "listening");
-    // ConnectInfo<SocketAddr> is stamped into every request's extensions, which
-    // the auth service reads for per-IP rate limiting.
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("shutting down");
-        })
-        .await?;
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            wait_for_signal().await;
+            tracing::info!("shutting down: ending event streams and draining connections");
+            shutdown.trigger();
+        }
+    });
+    let started = std::time::Instant::now();
+    server::serve(listener, app, shutdown.clone(), server::HEADER_READ_TIMEOUT, server::DRAIN_TIMEOUT).await;
+    // Mail still being sent or retried gets what is left of the drain budget.
+    let left = server::DRAIN_TIMEOUT.saturating_sub(started.elapsed());
+    if tokio::time::timeout(left, mailer.flush()).await.is_err() {
+        tracing::warn!("some queued email was not sent before shutdown");
+    }
+    tracing::info!("stopped");
     Ok(())
+}
+
+/// Resolves on SIGTERM or SIGINT (Ctrl-C).
+async fn wait_for_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut term), Ok(mut int)) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) else {
+            tracing::error!("could not install signal handlers");
+            return std::future::pending().await;
+        };
+        tokio::select! {
+            _ = term.recv() => tracing::info!("received SIGTERM"),
+            _ = int.recv() => tracing::info!("received SIGINT"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

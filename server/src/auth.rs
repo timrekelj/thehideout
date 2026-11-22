@@ -1,14 +1,12 @@
 //! Password hashing, session tokens and request authentication.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
-use axum::extract::ConnectInfo;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -36,12 +34,12 @@ pub fn bearer_token(ctx: &RequestContext) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-/// Best-effort peer IP for rate-limit keys; `"unknown"` when the server is
-/// not served with `into_make_service_with_connect_info`.
+/// Best-effort client IP for rate-limit keys (the forwarded address behind a
+/// trusted proxy, see `clientip`); `"unknown"` when the server is not served
+/// with `into_make_service_with_connect_info`.
 pub fn peer_key(ctx: &RequestContext) -> String {
-    ctx.extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| info.ip().to_string())
+    crate::clientip::from_extensions(ctx.extensions())
+        .map(|ip| ip.to_string())
         .unwrap_or_else(|| "unknown".to_owned())
 }
 

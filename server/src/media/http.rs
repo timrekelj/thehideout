@@ -2,12 +2,11 @@
 //! (content-addressed) and message attachments (random 128-bit keys, which are
 //! the access control), with single-range support.
 
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -27,10 +26,7 @@ pub fn media_route() -> Router<AppState> {
 }
 
 async fn serve(State(state): State<AppState>, Path(key): Path<String>, request: Request) -> Response {
-    let peer = request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map_or_else(|| "unknown".to_owned(), |c| c.ip().to_string());
+    let peer = crate::clientip::from_extensions(request.extensions()).map_or_else(|| "unknown".to_owned(), |ip| ip.to_string());
     if state.limiter.check(&format!("media:{peer}"), MEDIA_IP_MAX, MEDIA_WINDOW).is_err() {
         return (StatusCode::TOO_MANY_REQUESTS, "too many requests").into_response();
     }

@@ -306,13 +306,16 @@ pub async fn sweep_once(state: &AppState) -> Result<usize, ConnectError> {
     Ok(swept)
 }
 
-/// Runs [`sweep_once`] every `sweep_interval` for the life of the process.
+/// Runs [`sweep_once`] every `sweep_interval` until shutdown.
 pub fn spawn_sweeper(state: AppState) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(state.attachments.sweep_interval);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
+            tokio::select! {
+                _ = tick.tick() => {}
+                _ = state.shutdown.triggered() => return,
+            }
             match sweep_once(&state).await {
                 Ok(0) => {}
                 Ok(n) => tracing::info!(deleted = n, "swept expired attachment uploads"),

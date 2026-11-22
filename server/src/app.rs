@@ -3,11 +3,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{HeaderName, HeaderValue, Method};
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use connectrpc::Router as ConnectRouter;
 use scylla::client::caching_session::CachingSession;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::trace::TraceLayer;
 use url::Url;
 
 fn default_public_url() -> Url {
@@ -15,6 +20,9 @@ fn default_public_url() -> Url {
 }
 
 use crate::auth::SeenThrottle;
+use crate::clientip::TrustedProxies;
+use crate::shutdown::Shutdown;
+use crate::streams::StreamGate;
 use crate::email::Mailer;
 use crate::embeds::EmbedSettings;
 use crate::events::EventBus;
@@ -64,6 +72,12 @@ pub struct AppState {
     pub voice: Arc<crate::voice::VoiceStates>,
     /// LiveKit settings and server-API client; voice is off when unconfigured.
     pub livekit: crate::voice::LiveKit,
+    /// Proxies whose `X-Forwarded-For` is believed (`THEHIDEOUT_TRUSTED_PROXIES`).
+    pub trusted_proxies: Arc<TrustedProxies>,
+    /// Triggered when the process is asked to stop; ends gateway streams and sweepers.
+    pub shutdown: Shutdown,
+    /// Caps on concurrent gateway streams.
+    pub streams: Arc<StreamGate>,
 }
 
 impl AppState {
@@ -93,7 +107,28 @@ impl AppState {
             seen: Arc::default(),
             voice: Arc::default(),
             livekit: crate::voice::LiveKit::disabled(),
+            trusted_proxies: Arc::default(),
+            shutdown: Shutdown::default(),
+            streams: Arc::default(),
         }
+    }
+
+    /// Sets the trusted reverse proxies (`THEHIDEOUT_TRUSTED_PROXIES`).
+    pub fn with_trusted_proxies(mut self, proxies: TrustedProxies) -> Self {
+        self.trusted_proxies = Arc::new(proxies);
+        self
+    }
+
+    /// Sets the gateway stream caps (`THEHIDEOUT_MAX_STREAMS_PER_USER`, `THEHIDEOUT_MAX_STREAMS`).
+    pub fn with_stream_limits(mut self, per_user: usize, total: usize) -> Self {
+        self.streams = Arc::new(StreamGate::new(per_user, total));
+        self
+    }
+
+    /// Uses `shutdown` as the process shutdown signal.
+    pub fn with_shutdown(mut self, shutdown: Shutdown) -> Self {
+        self.shutdown = shutdown;
+        self
     }
 
     /// Enables voice channels with the given LiveKit settings (`LIVEKIT_*`, tests).
@@ -150,7 +185,66 @@ impl AppState {
 /// fields.
 const MEDIA_REQUEST_LIMIT: usize = MAX_INPUT_BYTES / 3 * 4 + 64 * 1024;
 
-/// Builds the HTTP app: all Connect services, `GET /health`, `GET /media/*`,
+/// Time limit of ordinary requests (unary RPCs and pages).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Time limit of requests that move large bodies: uploads (50 MiB by default)
+/// and media reads.
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long `/ready` waits for each dependency.
+const READY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The time limit of a request path; `None` for the long-lived gateway stream.
+fn request_timeout(path: &str) -> Option<Duration> {
+    if path.starts_with("/thehideout.v1.GatewayService/") {
+        None
+    } else if path == "/attachments" || path.starts_with("/media/") || path.starts_with("/thehideout.v1.MediaService/") {
+        Some(TRANSFER_TIMEOUT)
+    } else {
+        Some(REQUEST_TIMEOUT)
+    }
+}
+
+async fn timeout_middleware(request: Request, next: Next) -> Response {
+    match request_timeout(request.uri().path()) {
+        None => next.run(request).await,
+        Some(limit) => match tokio::time::timeout(limit, next.run(request)).await {
+            Ok(response) => response,
+            Err(_) => (StatusCode::REQUEST_TIMEOUT, "request timed out").into_response(),
+        },
+    }
+}
+
+/// `GET /ready`: 200 when ScyllaDB and object storage both answer within
+/// [`READY_PROBE_TIMEOUT`], else 503 naming what failed. No auth.
+async fn ready(State(state): State<AppState>) -> Response {
+    let scylla = async {
+        matches!(
+            tokio::time::timeout(READY_PROBE_TIMEOUT, state.session.execute_unpaged("SELECT key FROM system.local", ())).await,
+            Ok(Ok(_))
+        )
+    };
+    let s3 = async {
+        match &state.storage {
+            Some(storage) => matches!(tokio::time::timeout(READY_PROBE_TIMEOUT, storage.check()).await, Ok(Ok(()))),
+            None => true,
+        }
+    };
+    let (scylla_ok, s3_ok) = tokio::join!(scylla, s3);
+    let mut failed = Vec::new();
+    if !scylla_ok {
+        failed.push("scylla");
+    }
+    if !s3_ok {
+        failed.push("s3");
+    }
+    if failed.is_empty() {
+        return (StatusCode::OK, axum::Json(serde_json::json!({ "status": "ok" }))).into_response();
+    }
+    tracing::warn!(?failed, "readiness check failed");
+    (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({ "status": "unavailable", "failed": failed }))).into_response()
+}
+
+/// Builds the HTTP app: all Connect services, `GET /health`, `GET /ready`, `GET /media/*`,
 /// `POST /attachments`, the passkey ceremony page (`/auth/passkey*`), the
 /// invite landing page (`GET /invite/{token}`), the LiveKit webhook
 /// (`POST /livekit/webhook`), and CORS for the configured public origin only.
@@ -180,8 +274,10 @@ pub fn build_app(state: AppState) -> Router {
         .into_axum_service()
         .with_limits(media_limits);
 
+    let trusted = state.trusted_proxies.clone();
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/ready", get(ready).with_state(state.clone()))
         .route_service("/thehideout.v1.MediaService/{method}", media_connect)
         .merge(media::media_route().with_state(state.clone()))
         .merge(media::attachments::attachments_route().with_state(state.clone()))
@@ -190,6 +286,27 @@ pub fn build_app(state: AppState) -> Router {
         .merge(crate::services::invite::routes().with_state(state))
         .fallback_service(connect.into_axum_service())
         .layer(cors(&public_url))
+        .layer(middleware::from_fn(timeout_middleware))
+        .layer(
+            // Method, path (never the query), status, latency and client IP; no headers.
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<Body>| {
+                    let ip = crate::clientip::from_extensions(request.extensions()).map_or_else(|| "unknown".to_owned(), |ip| ip.to_string());
+                    tracing::info_span!("http", method = %request.method(), path = %request.uri().path(), client_ip = %ip)
+                })
+                .on_request(())
+                .on_response(|response: &axum::http::Response<Body>, latency: Duration, _span: &tracing::Span| {
+                    let (status, latency_ms) = (response.status().as_u16(), latency.as_millis() as u64);
+                    if status >= 500 {
+                        tracing::warn!(status, latency_ms, "request");
+                    } else {
+                        tracing::info!(status, latency_ms, "request");
+                    }
+                })
+                .on_failure(()),
+        )
+        // Outermost: the trace layer and everything below read the client IP.
+        .layer(middleware::from_fn_with_state(trusted, crate::clientip::middleware))
 }
 
 /// CORS for `public_url`'s origin only (the app's own pages, e.g. the passkey
