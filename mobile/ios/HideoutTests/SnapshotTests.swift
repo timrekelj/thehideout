@@ -82,4 +82,35 @@ final class ShellSnapshotTests: SnapshotCase {
         await signedOut.bootstrap()
         assertScreen(RootView(), store: signedOut)
     }
+
+    func testDMsTab() async {
+        let (store, _) = await makeFakeStore()
+        assertScreen(DMsTabForTests(), store: store, styles: [("dark", .dark)])
+    }
+
+    func testMentionsTab() async {
+        // `live: true` seeds a mention of tim in #dev ("heads up @tim, the build is green"); loaded history
+        // already has one in #general too (`generalLines`): open both so the feed spans more than one channel.
+        let (store, _) = await makeFakeStore(live: true)
+        store.open(channel: FakeBackend.Ids.general)
+        store.open(channel: FakeBackend.Ids.dev)
+        await store.settle()
+        store.closeChannel()
+        assertScreen(MentionsTabForTests(), store: store, styles: [("dark", .dark)])
+    }
+
+    func testEmojiPicker() async {
+        let (store, _) = await makeFakeStore()
+        assertScreen(EmojiPickerSheet(onPick: { _ in }), store: store, styles: [("dark", .dark)])
+    }
+
+    func testMessageActionsPreview() async {
+        let (store, _) = await makeFakeStore(open: FakeBackend.Ids.general)
+        let m = store.state.log(FakeBackend.Ids.general)!.messages.last!
+        assertColumn(
+            MessageRow(author: store.state.userName(m.authorID), time: m.createdAt, text: m.content, reactions: m.reactions, me: store.state.me?.username)
+                .card(),
+            store: store, styles: [("dark", .dark)]
+        )
+    }
 }

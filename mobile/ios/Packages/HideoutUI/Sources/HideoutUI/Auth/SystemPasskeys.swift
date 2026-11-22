@@ -118,13 +118,15 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
 
     // MARK: helpers
 
-    private static func publicKey(_ json: String) throws -> [String: Any] {
+    /// Unwraps `{"publicKey": {...}}`, the shape webauthn-rs' `options_json` always has. `internal` (not
+    /// `private`) so `@testable import` can exercise the parsing without a real authenticator (SystemPasskeysTests).
+    static func publicKey(_ json: String) throws -> [String: Any] {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any], let pk = obj["publicKey"] as? [String: Any]
         else { throw PasskeyFailure.failed("bad options") }
         return pk
     }
 
-    private static func verification(_ s: String?) -> ASAuthorizationPublicKeyCredentialUserVerificationPreference {
+    static func verification(_ s: String?) -> ASAuthorizationPublicKeyCredentialUserVerificationPreference {
         switch s {
         case "required": .required
         case "discouraged": .discouraged
@@ -132,7 +134,7 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
         }
     }
 
-    private static func attestation(_ s: String?) -> ASAuthorizationPublicKeyCredentialAttestationKind {
+    static func attestation(_ s: String?) -> ASAuthorizationPublicKeyCredentialAttestationKind {
         switch s {
         case "direct": .direct
         case "indirect": .indirect
