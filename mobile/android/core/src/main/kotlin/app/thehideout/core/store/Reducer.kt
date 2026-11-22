@@ -49,6 +49,8 @@ sealed interface Action {
     data class Retry(val nonce: String) : Action
     data class React(val channel: Long, val message: Long, val emoji: ReactionEmoji) : Action
     data class DismissNotice(val id: Long) : Action
+    /** Raises a snackbar notice. */
+    data class Notice(val kind: NoticeKind, val text: String) : Action
     /** Marks a guild as being left or deleted by us, so its `guild_removed` is not announced. */
     data class Exiting(val guild: Long) : Action
 }
@@ -87,6 +89,7 @@ object Reducer {
         is Action.Retry -> retry(s, a.nonce)
         is Action.React -> react(s, a.channel, a.message, a.emoji)
         is Action.DismissNotice -> Reduction(s.copy(notices = s.notices.filter { it.id != a.id }))
+        is Action.Notice -> Reduction(notice(s, a.kind, a.text))
         is Action.Exiting -> Reduction(s.copy(exiting = s.exiting + a.guild))
     }
 

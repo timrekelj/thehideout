@@ -1,5 +1,10 @@
 package app.thehideout.core.api
 
+import app.thehideout.core.auth.InvitePreview
+import app.thehideout.core.auth.PasskeyCeremony
+import app.thehideout.core.auth.PasskeyFinish
+import app.thehideout.core.auth.PasskeyRegistered
+import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
 import com.connectrpc.ConnectException
 import com.connectrpc.ProtocolClientConfig
@@ -8,12 +13,22 @@ import com.connectrpc.extensions.GoogleJavaLiteProtobufStrategy
 import com.connectrpc.impl.ProtocolClient
 import com.connectrpc.okhttp.ConnectOkHttpClient
 import com.connectrpc.protocols.NetworkProtocol
+import com.thehideout.v1.AcceptInviteRequest
+import com.thehideout.v1.AcceptTermsRequest
 import com.thehideout.v1.AddReactionRequest
 import com.thehideout.v1.AuthServiceClient
+import com.thehideout.v1.BeginPasskeyLoginRequest
+import com.thehideout.v1.BeginPasskeyRegistrationRequest
+import com.thehideout.v1.BeginSecondFactorPasskeyRequest
+import com.thehideout.v1.CompleteSecondFactorRequest
 import com.thehideout.v1.DmServiceClient
+import com.thehideout.v1.FinishPasskeyLoginRequest
+import com.thehideout.v1.FinishPasskeyRegistrationRequest
+import com.thehideout.v1.FinishSecondFactorPasskeyRequest
 import com.thehideout.v1.GatewayServiceClient
 import com.thehideout.v1.GetMeRequest
 import com.thehideout.v1.GuildServiceClient
+import com.thehideout.v1.InviteServiceClient
 import com.thehideout.v1.ListChannelsRequest
 import com.thehideout.v1.ListDmsRequest
 import com.thehideout.v1.ListGuildMembersRequest
@@ -21,11 +36,16 @@ import com.thehideout.v1.ListMessagesRequest
 import com.thehideout.v1.ListMyGuildsRequest
 import com.thehideout.v1.ListRolesRequest
 import com.thehideout.v1.LoginRequest
+import com.thehideout.v1.LookupInviteRequest
 import com.thehideout.v1.MessageServiceClient
 import com.thehideout.v1.RemoveReactionRequest
+import com.thehideout.v1.RequestEmailCodeRequest
+import com.thehideout.v1.RequestPasswordResetRequest
+import com.thehideout.v1.ResetPasswordRequest
 import com.thehideout.v1.RoleServiceClient
 import com.thehideout.v1.SendMessageRequest
 import com.thehideout.v1.SubscribeRequest
+import com.thehideout.v1.VerifyEmailCodeRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -74,6 +94,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     private val messages = MessageServiceClient(client)
     private val roles = RoleServiceClient(client)
     private val gateway = GatewayServiceClient(client)
+    private val invites = InviteServiceClient(client)
 
     private suspend fun <T> call(block: suspend () -> ResponseMessage<T>): T {
         val r = try {
@@ -93,11 +114,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
 
     override suspend fun login(username: String, password: String, deviceName: String): LoginResult {
         val r = call { auth.login(LoginRequest.newBuilder().setUsername(username).setPassword(password).setDeviceName(deviceName).build()) }
-        return if (r.hasSecondFactorRequired()) {
-            LoginResult.SecondFactor(r.secondFactorRequired.challengeId)
-        } else {
-            LoginResult.SignedIn(Session(r.token, r.user.toModel()))
-        }
+        return loginResult(r.token, if (r.hasUser()) r.user else null, if (r.hasSecondFactorRequired()) r.secondFactorRequired else null)
     }
 
     override suspend fun me(): Me {
@@ -156,6 +173,129 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     }
 
     override suspend fun logout() = Unit
+
+    // ---- authentication and onboarding ---------------------------------------------------------
+
+    private fun com.thehideout.v1.PasskeyCeremony.toModel() = PasskeyCeremony(ceremonyId, ceremonyUrl, optionsJson)
+
+    private fun loginResult(token: String, user: com.thehideout.v1.User?, challenge: com.thehideout.v1.SecondFactorChallenge?): LoginResult =
+        if (challenge != null) {
+            LoginResult.SecondFactor(challenge.challengeId, secondFactorMethods(challenge), challenge.expiresAt.toInstant())
+        } else {
+            LoginResult.SignedIn(Session(token, user!!.toModel()))
+        }
+
+    private fun secondFactorMethods(challenge: com.thehideout.v1.SecondFactorChallenge): Set<SecondFactorMethod> =
+        challenge.methodsList.map {
+            when (it) {
+                com.thehideout.v1.SecondFactorMethod.SECOND_FACTOR_METHOD_TOTP -> SecondFactorMethod.Totp
+                com.thehideout.v1.SecondFactorMethod.SECOND_FACTOR_METHOD_RECOVERY_CODE -> SecondFactorMethod.RecoveryCode
+                com.thehideout.v1.SecondFactorMethod.SECOND_FACTOR_METHOD_PASSKEY -> SecondFactorMethod.Passkey
+                else -> SecondFactorMethod.Unspecified
+            }
+        }.toSet()
+
+    private fun com.thehideout.v1.InviteStatus.toModel(): app.thehideout.core.model.InviteStatus = when (this) {
+        com.thehideout.v1.InviteStatus.INVITE_STATUS_PENDING -> app.thehideout.core.model.InviteStatus.Pending
+        com.thehideout.v1.InviteStatus.INVITE_STATUS_ACCEPTED -> app.thehideout.core.model.InviteStatus.Accepted
+        com.thehideout.v1.InviteStatus.INVITE_STATUS_EXPIRED -> app.thehideout.core.model.InviteStatus.Expired
+        com.thehideout.v1.InviteStatus.INVITE_STATUS_REVOKED -> app.thehideout.core.model.InviteStatus.Revoked
+        else -> app.thehideout.core.model.InviteStatus.Unspecified
+    }
+
+    override suspend fun requestEmailCode(email: String) {
+        call { auth.requestEmailCode(RequestEmailCodeRequest.newBuilder().setEmail(email).build()) }
+    }
+
+    override suspend fun verifyEmailCode(email: String, code: String, deviceName: String): LoginResult {
+        val r = call { auth.verifyEmailCode(VerifyEmailCodeRequest.newBuilder().setEmail(email).setCode(code).setDeviceName(deviceName).build()) }
+        return loginResult(r.token, if (r.hasUser()) r.user else null, if (r.hasSecondFactorRequired()) r.secondFactorRequired else null)
+    }
+
+    override suspend fun completeSecondFactor(challengeId: String, totpCode: String, recoveryCode: String): Session {
+        val r = call {
+            auth.completeSecondFactor(
+                CompleteSecondFactorRequest.newBuilder().setChallengeId(challengeId).setTotpCode(totpCode).setRecoveryCode(recoveryCode).build(),
+            )
+        }
+        return Session(r.token, r.user.toModel())
+    }
+
+    override suspend fun beginSecondFactorPasskey(challengeId: String): PasskeyCeremony {
+        val r = call { auth.beginSecondFactorPasskey(BeginSecondFactorPasskeyRequest.newBuilder().setChallengeId(challengeId).build()) }
+        return r.ceremony.toModel()
+    }
+
+    override suspend fun finishSecondFactorPasskey(ceremonyId: String, credentialJson: String): PasskeyFinish {
+        val r = call { auth.finishSecondFactorPasskey(FinishSecondFactorPasskeyRequest.newBuilder().setCeremonyId(ceremonyId).setCredentialJson(credentialJson).build()) }
+        return PasskeyFinish(if (r.token.isEmpty()) null else Session(r.token, r.user.toModel()), r.pending)
+    }
+
+    override suspend fun requestPasswordReset(email: String) {
+        call { auth.requestPasswordReset(RequestPasswordResetRequest.newBuilder().setEmail(email).build()) }
+    }
+
+    override suspend fun resetPassword(email: String, code: String, newPassword: String) {
+        call { auth.resetPassword(ResetPasswordRequest.newBuilder().setEmail(email).setCode(code).setNewPassword(newPassword).build()) }
+    }
+
+    override suspend fun beginPasskeyLogin(username: String, deviceName: String): PasskeyCeremony {
+        val r = call { auth.beginPasskeyLogin(BeginPasskeyLoginRequest.newBuilder().setUsername(username).setDeviceName(deviceName).build()) }
+        return r.ceremony.toModel()
+    }
+
+    override suspend fun finishPasskeyLogin(ceremonyId: String, credentialJson: String): PasskeyFinish {
+        val r = call { auth.finishPasskeyLogin(FinishPasskeyLoginRequest.newBuilder().setCeremonyId(ceremonyId).setCredentialJson(credentialJson).build()) }
+        return PasskeyFinish(if (r.token.isEmpty()) null else Session(r.token, r.user.toModel()), r.pending)
+    }
+
+    override suspend fun beginPasskeyRegistration(name: String): PasskeyCeremony {
+        val r = call { auth.beginPasskeyRegistration(BeginPasskeyRegistrationRequest.newBuilder().setName(name).build()) }
+        return r.ceremony.toModel()
+    }
+
+    override suspend fun finishPasskeyRegistration(ceremonyId: String, credentialJson: String): PasskeyRegistered {
+        val r = call {
+            auth.finishPasskeyRegistration(FinishPasskeyRegistrationRequest.newBuilder().setCeremonyId(ceremonyId).setCredentialJson(credentialJson).build())
+        }
+        return PasskeyRegistered(if (r.hasPasskey()) r.passkey.name else "", r.pending)
+    }
+
+    override suspend fun lookupInvite(tokenOrCode: String): InvitePreview {
+        val r = call { invites.lookupInvite(LookupInviteRequest.newBuilder().setTokenOrCode(tokenOrCode).build()) }
+        return InvitePreview(
+            maskedEmail = r.maskedEmail,
+            inviter = if (r.hasInviter()) r.inviter.toModel() else null,
+            guildNames = r.guildNamesList,
+            expiresAt = r.expiresAt.toInstant(),
+            status = r.status.toModel(),
+            termsVersion = r.termsVersion,
+            minimumAge = r.minimumAge,
+        )
+    }
+
+    override suspend fun acceptInvite(
+        tokenOrCode: String,
+        username: String,
+        password: String?,
+        deviceName: String,
+        acceptedTermsVersion: String,
+        ageConfirmed: Boolean,
+    ): Session {
+        val b = AcceptInviteRequest.newBuilder()
+            .setTokenOrCode(tokenOrCode)
+            .setUsername(username)
+            .setDeviceName(deviceName)
+            .setAcceptedTermsVersion(acceptedTermsVersion)
+            .setAgeConfirmed(ageConfirmed)
+        if (password != null) b.setPassword(password)
+        val r = call { invites.acceptInvite(b.build()) }
+        return Session(r.token, r.user.toModel())
+    }
+
+    override suspend fun acceptTerms(version: String) {
+        call { auth.acceptTerms(AcceptTermsRequest.newBuilder().setVersion(version).build()) }
+    }
 
     override fun subscribe(): Flow<GatewayEvent> = flow {
         val stream = try {

@@ -22,12 +22,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- thehideout://invite/<token>: an invite to a server (the https App Link comes with the sign-in phase). -->
+            <!-- thehideout://invite/<token>: an invite to a server. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:host="invite" android:scheme="thehideout" />
+            </intent-filter>
+            <!-- The same invite as an App Link: https://thehideout.zabit.si/invite/<token> (needs the
+                 server to serve /.well-known/assetlinks.json for this app's signing cert to verify). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="thehideout.zabit.si" android:pathPrefix="/invite/" />
             </intent-filter>
         </activity>
     </application>

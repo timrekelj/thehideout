@@ -57,14 +57,37 @@ class AppStore(
         }
         val cached = cache?.loadInitial()
         if (cached != null) dispatch(Action.InitialLoaded(cached))
-        guard(runCatching { api.loadInitial() }).onSuccess {
-            dispatch(if (cached != null) Action.Refreshed(it) else Action.InitialLoaded(it))
-            cache?.saveLists(state.value)
-        }.onFailure {
-            // Offline with a cache: stay on what we have; the gateway's reconnect refreshes later.
-            if (cached == null && state.value.phase == SessionPhase.Loading) dispatch(Action.SignedOut(it as? AppError))
+        // Terms first: an unaccepted terms version puts up the gate before anything else loads.
+        val me = guard(runCatching { api.me() })
+        val terms = me.getOrNull()?.termsUpdateRequired
+        if (terms != null) {
+            dispatch(Action.SetPhase(SessionPhase.TermsRequired(terms)))
+            return@launch
         }
+        if (me.isSuccess) {
+            guard(runCatching { api.loadInitial() }).onSuccess {
+                dispatch(if (cached != null) Action.Refreshed(it) else Action.InitialLoaded(it))
+                cache?.saveLists(state.value)
+            }.onFailure {
+                // Offline without a cache: the sign-in screen, but the token stays (only a refused token is cleared).
+                if (cached == null && state.value.phase == SessionPhase.Loading) dispatch(Action.SignedOut(it as? AppError))
+            }
+        } else if (cached == null && state.value.phase == SessionPhase.Loading) {
+            // Offline (or refused) without a cache: the sign-in screen. `guard` already cleared a refused token.
+            dispatch(Action.SignedOut(me.exceptionOrNull() as? AppError))
+        }
+        // Offline with a cache: stay on what we have; the gateway's reconnect refreshes later.
         startGateway()
+    }
+
+    /** Accepts the current terms version on the gate; back into the app when it lands. */
+    fun acceptTerms(version: String): Job = scope.launch {
+        runCatching { api.acceptTerms(version) }.onSuccess {
+            dispatch(Action.SetPhase(SessionPhase.SignedIn))
+            bootstrap()
+        }.onFailure { e ->
+            if (e is AppError) dispatch(Action.Notice(NoticeKind.Danger, e.message ?: "Couldn't accept the terms."))
+        }
     }
 
     /** Signs in with a username and password; the token goes to the [TokenStore]. */
@@ -78,6 +101,13 @@ class AppStore(
             }
         }
         return r
+    }
+
+    /** A sign-in landed (from the auth flow): the token goes to the [TokenStore] and the world loads. */
+    fun onSignedIn(session: app.thehideout.core.api.Session) {
+        tokens.save(session.token)
+        dispatch(Action.SessionStarted(session.me))
+        bootstrap()
     }
 
     fun signOut() {

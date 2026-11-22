@@ -35,7 +35,11 @@ class PhoneScreenshots : ScreenshotTest() {
     @Test fun transcriptLight() = transcript(Variant.Light)
 
     @Test fun signedOutDark() = compose.snapshot("signed-out", Device.Phone, Variant.Dark) { _ ->
-        HideoutRoot(app.thehideout.core.store.AppState(phase = app.thehideout.core.store.SessionPhase.SignedOut()), Look(), {}, ShellActions(useDemo = {}), "0.1.0")
+        HideoutRoot(
+            app.thehideout.core.store.AppState(phase = app.thehideout.core.store.SessionPhase.SignedOut()),
+            Look(), {}, ShellActions(useDemo = {}),
+            app.thehideout.core.auth.AuthUiState(), StubAuth(), "http://10.0.2.2:8080", {}, { true }, {}, "0.1.0",
+        )
     }
 
     @Test fun galleryTopDark() = compose.snapshot("gallery-top", Device.Phone, Variant.Dark) { look -> GalleryScreen(look, {}) }

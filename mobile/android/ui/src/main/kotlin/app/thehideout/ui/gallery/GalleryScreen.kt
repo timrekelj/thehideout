@@ -390,8 +390,9 @@ private fun ChipsAndBadges() {
             InputChip(selected = false, onClick = {}, label = { Text("ana") }, shape = chipShape, trailingIcon = { SymIcon(Sym.Close, null, size = 18.dp) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            BadgedBox(badge = { Badge { Text("3") } }) { SymIcon(Sym.Forum, null) }
-            BadgedBox(badge = { Badge() }) { SymIcon(Sym.Notifications, null) }
+            val bc = Hideout.colors
+            BadgedBox(badge = { Badge(containerColor = bc.accent, contentColor = bc.accentFg) { Text("3") } }) { SymIcon(Sym.Forum, null) }
+            BadgedBox(badge = { Badge(containerColor = bc.accent, contentColor = bc.accentFg) }) { SymIcon(Sym.Notifications, null) }
             UnreadPill(7); UnreadPill(142); MentionBadge(2); MentionBadge(12)
         }
     }

@@ -1,6 +1,11 @@
 package app.thehideout.core.fake
 
 import app.thehideout.core.api.*
+import app.thehideout.core.auth.InvitePreview
+import app.thehideout.core.auth.PasskeyCeremony
+import app.thehideout.core.auth.PasskeyFinish
+import app.thehideout.core.auth.PasskeyRegistered
+import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -24,13 +29,15 @@ class FakeBackend(
     /** After the first heartbeat, deliver a few messages in channels nobody has open, so unread badges show. */
     private val unreadDemo: Boolean = false,
 ) : ApiClient {
-    private val users = listOf(
-        user(TIM, "tim", "tim@example.com"),
-        user(ANA, "ana", "ana@example.com"),
-        user(BRUNO, "bruno", null),
-        user(CVETKA, "cvetka", "cvetka@example.com", admin = true),
-    ).associateBy { it.id }
-    private val me: User get() = users.getValue(TIM)
+    private val users = mutableMapOf(
+        TIM to user(TIM, "tim", "tim@example.com"),
+        ANA to user(ANA, "ana", "ana@example.com"),
+        BRUNO to user(BRUNO, "bruno", null),
+        CVETKA to user(CVETKA, "cvetka", "cvetka@example.com", admin = true),
+        DORA to user(DORA, "dora", "dora@example.com"),
+    )
+    private var currentUserId = TIM
+    private val me: User get() = users.getValue(currentUserId)
 
     private val guilds = listOf(
         guild(HIDEOUT, "The Hideout", TIM, "HIDEOUT1"),
@@ -119,6 +126,36 @@ class FakeBackend(
     /** Every message ever sent through [sendMessage], oldest first. */
     val sent: MutableList<Message> = mutableListOf()
 
+    // ---- the fake server's accounts (desktop's `fake_account.rs`, with the same fixed secrets) ----
+
+    /** The one valid emailed code and authenticator code. */
+    var emailCode: String = "123456"
+    /** The terms version the fake server requires; [termsOutdated] makes `GetMe` ask for a re-accept. */
+    var termsVersion: String = "2026-11-22"
+    var termsOutdated: Boolean = false
+    /** Passwords that are refused ("wrong" and the empty one), like the desktop fake. */
+    var wrongPassword: String = "wrong"
+    /** Users with an authenticator app (their sign-in asks for the second factor) and their recovery codes. */
+    val totpUsers = mutableMapOf(DORA to RECOVERY_CODES.toMutableList())
+    /** Users whose passkey answers a second-factor challenge. */
+    val secondFactorPasskeyUsers = setOf(DORA)
+    /** Users who have a passkey for sign-in. */
+    val passkeyUsers = mutableSetOf(TIM)
+    /** Second-factor challenges: id, username, wrong answers so far (five kills the challenge). */
+    private val challenges = mutableListOf<Triple<String, String, Int>>()
+    private var nextChallenge = 0L
+    /** Passkey ceremonies: id -> how many empty-credential polls still answer `pending`. */
+    private val ceremonies = mutableMapOf<String, Int>()
+    private var nextCeremony = 0L
+    private data class FakeInvite(val email: String, val code: String, val token: String, val status: InviteStatus, val inviter: User?, val guildNames: List<String>, val expiresAt: Instant)
+    private val invites = listOf(
+        FakeInvite("erin@example.com", "WXYZ-2345", "tok-wxyz", InviteStatus.Pending, users.getValue(TIM), listOf("The Hideout"), now + Duration.ofDays(6)),
+        FakeInvite("finn@example.com", "EXPD-0001", "tok-expd", InviteStatus.Expired, users.getValue(TIM), listOf("The Hideout"), now - Duration.ofDays(2)),
+        FakeInvite("gus@example.com", "RVKD-0001", "tok-rvkd", InviteStatus.Revoked, users.getValue(TIM), listOf("The Hideout"), now + Duration.ofDays(4)),
+        FakeInvite("ana@example.com", "USED-0001", "tok-used", InviteStatus.Accepted, null, listOf("The Hideout"), now - Duration.ofDays(53)),
+    )
+    private var nextUserId = 100L
+
     init {
         seed()
     }
@@ -144,14 +181,14 @@ class FakeBackend(
 
     override suspend fun login(username: String, password: String, deviceName: String): LoginResult {
         pause()
-        val u = users.values.firstOrNull { it.username == username.trim().lowercase() } ?: throw AppError.Unauthenticated
-        if (password.isEmpty()) throw AppError.Unauthenticated
-        return LoginResult.SignedIn(Session("fake-token-${u.id}", u))
+        val u = byLogin(username) ?: throw AppError.Unauthenticated
+        if (password.isEmpty() || password == wrongPassword) throw AppError.Unauthenticated
+        return firstFactor(u)
     }
 
     override suspend fun me(): Me {
         pause()
-        return Me(me, null, "2026-01-01")
+        return Me(me, if (termsOutdated) termsVersion else null, termsVersion)
     }
 
     override suspend fun loadInitial(): Initial {
@@ -214,6 +251,207 @@ class FakeBackend(
     }
 
     override suspend fun logout() = Unit
+
+    // ---- authentication and onboarding (the rules of desktop's `fake_account.rs`) -----------------
+
+    /** A username or an email, as `Login` takes it. */
+    private fun byLogin(login: String): User? {
+        val l = login.trim()
+        return if (l.contains('@')) users.values.firstOrNull { it.email.equals(l, ignoreCase = true) }
+        else users.values.firstOrNull { it.username.equals(l, ignoreCase = true) }
+    }
+
+    /** A first factor passed: a session, or the second factor when the account has an app. */
+    private fun firstFactor(u: User): LoginResult {
+        if (totpUsers.containsKey(u.id)) {
+            nextChallenge++
+            val id = "fake-challenge-$nextChallenge"
+            challenges += Triple(id, u.username.lowercase(), 0)
+            val methods = buildSet {
+                add(SecondFactorMethod.Totp)
+                add(SecondFactorMethod.RecoveryCode)
+                if (secondFactorPasskeyUsers.contains(u.id)) add(SecondFactorMethod.Passkey)
+            }
+            return LoginResult.SecondFactor(id, methods, now.plus(Duration.ofMinutes(5)))
+        }
+        return LoginResult.SignedIn(sessionFor(u))
+    }
+
+    private fun sessionFor(u: User) = Session("fake-token-${u.id}", u)
+
+    /** `XXXX-XXXX` without case, dashes or spaces, as the server forgives them. */
+    private fun plain(code: String) = code.filter { it.isLetterOrDigit() }.uppercase()
+
+    private fun findInvite(codeOrLink: String): FakeInvite? {
+        val raw = codeOrLink.trim()
+        val token = raw.substringAfterLast('/')
+        return invites.firstOrNull { it.token == token || plain(it.code) == plain(raw) }
+    }
+
+    /** The masked form of an email: `e***@example.com`. */
+    private fun mask(email: String): String =
+        email.split('@').let { if (it.size == 2) "${it[0].firstOrNull() ?: '*'}***@${it[1]}" else "***" }
+
+    private fun newCeremony(pollsBeforeDone: Int = 1): PasskeyCeremony {
+        nextCeremony++
+        val id = "fake-ceremony-$nextCeremony"
+        ceremonies[id] = pollsBeforeDone
+        return PasskeyCeremony(id, "http://127.0.0.1:8080/auth/passkey?ceremony=$id", """{"publicKey":{"challenge":"ZmFrZQ"}}""")
+    }
+
+    /** Finishes a ceremony: a non-empty credential answers at once, an empty one polls. */
+    private fun finishCeremony(ceremonyId: String, credentialJson: String, session: () -> Session): PasskeyFinish {
+        if (credentialJson.isNotEmpty()) return PasskeyFinish(session(), false)
+        val left = (ceremonies[ceremonyId] ?: 0) - 1
+        ceremonies[ceremonyId] = left
+        return if (left < 0) PasskeyFinish(session(), false) else PasskeyFinish(null, true)
+    }
+
+    override suspend fun requestEmailCode(email: String) {
+        pause()
+    }
+
+    override suspend fun verifyEmailCode(email: String, code: String, deviceName: String): LoginResult {
+        pause()
+        val u = users.values.firstOrNull { it.email.equals(email.trim(), ignoreCase = true) } ?: throw AppError.Unauthenticated
+        if (code.trim() != emailCode) throw AppError.Unauthenticated
+        return firstFactor(u)
+    }
+
+    override suspend fun completeSecondFactor(challengeId: String, totpCode: String, recoveryCode: String): Session {
+        pause()
+        val i = challenges.indexOfFirst { it.first == challengeId }
+        if (i < 0) throw AppError.CodeExpired
+        val (id, name, tries) = challenges[i]
+        val u = users.values.first { it.username.lowercase() == name }
+        val code = if (recoveryCode.isNotEmpty()) recoveryCode else totpCode
+        val ok = if (recoveryCode.isNotEmpty()) {
+            val left = totpUsers[u.id]
+            val at = left?.indexOfFirst { plain(it) == plain(code) } ?: -1
+            if (at >= 0) {
+                left!!.removeAt(at)
+                true
+            } else false
+        } else code.trim() == emailCode
+        if (!ok) {
+            val attempts = tries + 1
+            challenges[i] = Triple(id, name, attempts)
+            if (attempts >= SECOND_FACTOR_TRIES) {
+                challenges.removeAt(i)
+                throw AppError.TooManyAttempts
+            }
+            throw AppError.WrongCode(SECOND_FACTOR_TRIES - attempts)
+        }
+        challenges.removeAt(i)
+        return sessionFor(u)
+    }
+
+    override suspend fun beginSecondFactorPasskey(challengeId: String): PasskeyCeremony {
+        pause()
+        val i = challenges.indexOfFirst { it.first == challengeId }
+        if (i < 0) throw AppError.CodeExpired
+        val u = users.values.first { it.username.lowercase() == challenges[i].second }
+        if (!secondFactorPasskeyUsers.contains(u.id)) throw AppError.Precondition("no passkey for this account")
+        challenges.removeAt(i)
+        return newCeremony()
+    }
+
+    override suspend fun finishSecondFactorPasskey(ceremonyId: String, credentialJson: String): PasskeyFinish {
+        pause()
+        val u = users.getValue(currentUserId)
+        return finishCeremony(ceremonyId, credentialJson) { sessionFor(users.values.first { passkeyUsers.contains(it.id) || secondFactorPasskeyUsers.contains(it.id) }) }
+    }
+
+    override suspend fun requestPasswordReset(email: String) {
+        pause()
+    }
+
+    override suspend fun resetPassword(email: String, code: String, newPassword: String) {
+        pause()
+        val known = users.values.any { it.email.equals(email.trim(), ignoreCase = true) }
+        if (!known || code.trim() != emailCode) throw AppError.Unauthenticated
+        if (newPassword.length < MIN_PASSWORD) throw AppError.InvalidArgument("password must be at least 8 characters")
+    }
+
+    override suspend fun beginPasskeyLogin(username: String, deviceName: String): PasskeyCeremony {
+        pause()
+        val u = byLogin(username) ?: throw AppError.NotFound
+        if (!passkeyUsers.contains(u.id)) throw AppError.Precondition("this account has no passkey")
+        return newCeremony()
+    }
+
+    override suspend fun finishPasskeyLogin(ceremonyId: String, credentialJson: String): PasskeyFinish {
+        pause()
+        val u = users.values.first { passkeyUsers.contains(it.id) }
+        return finishCeremony(ceremonyId, credentialJson) { sessionFor(u) }
+    }
+
+    override suspend fun beginPasskeyRegistration(name: String): PasskeyCeremony {
+        pause()
+        return newCeremony()
+    }
+
+    override suspend fun finishPasskeyRegistration(ceremonyId: String, credentialJson: String): PasskeyRegistered {
+        pause()
+        if (credentialJson.isEmpty()) {
+            val left = (ceremonies[ceremonyId] ?: 0) - 1
+            ceremonies[ceremonyId] = left
+            if (left >= 0) return PasskeyRegistered("", true)
+        }
+        passkeyUsers += currentUserId
+        return PasskeyRegistered("Passkey", false)
+    }
+
+    override suspend fun lookupInvite(tokenOrCode: String): InvitePreview {
+        pause()
+        val i = findInvite(tokenOrCode) ?: throw AppError.NotFound
+        return InvitePreview(
+            maskedEmail = mask(i.email),
+            inviter = i.inviter,
+            guildNames = i.guildNames,
+            expiresAt = i.expiresAt,
+            status = i.status,
+            termsVersion = termsVersion,
+            minimumAge = MINIMUM_AGE,
+        )
+    }
+
+    override suspend fun acceptInvite(
+        tokenOrCode: String,
+        username: String,
+        password: String?,
+        deviceName: String,
+        acceptedTermsVersion: String,
+        ageConfirmed: Boolean,
+    ): Session {
+        pause()
+        val i = findInvite(tokenOrCode) ?: throw AppError.NotFound
+        when (i.status) {
+            InviteStatus.Pending -> {}
+            InviteStatus.Accepted -> throw AppError.Precondition("this invite was already used")
+            InviteStatus.Expired -> throw AppError.Precondition("this invite has expired")
+            else -> throw AppError.Precondition("this invite was revoked")
+        }
+        if (acceptedTermsVersion != termsVersion) throw AppError.TermsUpdateRequired
+        if (!ageConfirmed) throw AppError.InvalidArgument("you must confirm that you are at least $MINIMUM_AGE years old")
+        val name = username.trim()
+        if (name.length !in 3..32 || !name.all { it.isLetterOrDigit() || it == '_' || it == '.' }) {
+            throw AppError.InvalidArgument("usernames are 3 to 32 letters, digits, dots or underscores")
+        }
+        if (users.values.any { it.username.equals(name, ignoreCase = true) }) throw AppError.AlreadyExists
+        if (password != null && password.length < MIN_PASSWORD) throw AppError.InvalidArgument("password must be at least 8 characters")
+        val id = nextUserId++
+        val u = user(id, name.lowercase(), i.email)
+        users[id] = u
+        currentUserId = id
+        return sessionFor(u)
+    }
+
+    override suspend fun acceptTerms(version: String) {
+        pause()
+        if (version != termsVersion) throw AppError.Precondition("the current terms version is $termsVersion")
+        termsOutdated = false
+    }
 
     override fun subscribe(): Flow<GatewayEvent> = flow {
         emit(GatewayEvent.Heartbeat)
@@ -314,6 +552,20 @@ class FakeBackend(
 
         const val DM_ANA = 50L
         const val DM_BRUNO = 51L
+
+        /** The account with an authenticator app (signing in as her asks for the second factor). */
+        const val DORA = 5L
+
+        /** Wrong answers a second-factor challenge takes before it dies. */
+        const val SECOND_FACTOR_TRIES = 5
+        const val MIN_PASSWORD = 8
+        const val MINIMUM_AGE = 16
+
+        /** Dora's recovery codes (each works once). */
+        val RECOVERY_CODES = listOf(
+            "7KQ2-M9XD", "4HTW-PZ3N", "C8RB-V6YE", "J2LF-Q7KA", "N5XG-D4MS",
+            "R9PC-W2HT", "T3YE-K8VB", "V6MA-F5QR", "X2ND-H9LC", "Z7GK-B3WP",
+        )
 
         private val UNREAD_DEMO = listOf(
             Triple(DEV, BRUNO, "Gateway backoff now resets on a clean connect, @tim can you review?"),

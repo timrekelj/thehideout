@@ -11,6 +11,8 @@ data class ShellActions(
     val send: (String) -> Unit = {},
     val retry: (String) -> Unit = {},
     val signOut: () -> Unit = {},
+    /** The terms gate: accept the version the server asked for. */
+    val acceptTerms: (String) -> Unit = {},
     val dismissNotice: (Long) -> Unit = {},
     /** Signed-out screen: continue with the built-in demo data (debug builds). */
     val useDemo: (() -> Unit)? = null,
@@ -24,6 +26,7 @@ data class ShellActions(
             send = store::send,
             retry = store::retry,
             signOut = store::signOut,
+            acceptTerms = store::acceptTerms,
             dismissNotice = store::dismissNotice,
             useDemo = useDemo,
         )

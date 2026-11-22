@@ -68,7 +68,7 @@ fun SignedInShell(
                             Destination.Messages -> dmUnread.count
                             else -> 0
                         }
-                        if (count > 0) BadgedBox(badge = { Badge { Text(if (count > 99) "99+" else count.toString()) } }) { SymIcon(d.sym, null) } else SymIcon(d.sym, null)
+                        if (count > 0) BadgedBox(badge = { Badge(containerColor = c.accent, contentColor = c.accentFg) { Text(if (count > 99) "99+" else count.toString()) } }) { SymIcon(d.sym, null) } else SymIcon(d.sym, null)
                     },
                     label = { Text(d.label) },
                 )

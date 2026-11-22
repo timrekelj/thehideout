@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,9 +40,6 @@ import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.theme.Hideout
 
-/** A touch row is never shorter than 48 dp, whatever the density's row height says. */
-private val MinTouch = 48.dp
-
 /**
  * A channel in the list: its icon in the channel's palette colour (Phosphor glyphs arrive with
  * DS-04, so text channels wear a hash and voice channels a speaker; an emoji icon is drawn as
@@ -59,6 +57,9 @@ fun ChannelRow(
     onClick: () -> Unit = {},
 ) {
     val c = Hideout.colors
+    // The density's row height is the visual height (desktop's row_h: 32 comfortable / 28 compact);
+    // the 48 dp minimum is a touch target, not a visual one.
+    val m = Hideout.metrics
     val bg by animateColorAsState(if (selected) c.accentSubtle else Color.Transparent, label = "row")
     val ink = c.channel(channel.color)?.ink ?: if (selected) c.accentText else c.textMuted
     val hasUnread = unread.count > 0 && !selected
@@ -68,10 +69,11 @@ fun ChannelRow(
             .clip(RoundedCornerShape(Radius.lg))
             .background(bg)
             .semantics(mergeDescendants = true) { this.selected = selected; this.role = Role.Tab; contentDescription = channel.name }
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .minimumInteractiveComponentSize(),
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = MinTouch).padding(horizontal = 12.dp),
+            Modifier.fillMaxWidth().heightIn(min = m.rowHeight).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -94,7 +96,7 @@ fun ChannelRow(
         voice.forEach { v ->
             val (id, name) = names(v.userId)
             Row(
-                Modifier.fillMaxWidth().padding(start = 44.dp, end = 12.dp).heightIn(min = 32.dp),
+                Modifier.fillMaxWidth().padding(start = 44.dp, end = 12.dp).heightIn(min = m.rowHeight),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -120,13 +122,15 @@ private fun ChannelGlyph(channel: Channel, ink: Color) {
 fun SectionHeader(name: String, open: Boolean, modifier: Modifier = Modifier, unread: Unread = Unread(), onToggle: () -> Unit = {}) {
     val c = Hideout.colors
     val turn by animateFloatAsState(if (open) 0f else -90f, label = "chevron")
+    val m = Hideout.metrics
     Row(
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(Radius.md))
             .semantics(mergeDescendants = true) { contentDescription = "$name, ${if (open) "expanded" else "collapsed"}" }
             .clickable(onClick = onToggle)
-            .heightIn(min = 40.dp)
+            .minimumInteractiveComponentSize()
+            .heightIn(min = m.sectionHeight)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),

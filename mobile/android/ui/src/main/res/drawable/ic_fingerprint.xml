@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- A fingerprint glyph (Material Symbols style, stroked arcs), for the passkey waiting screens. -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.6"
+      android:strokeLineCap="round"
+      android:pathData="M12,12.2 m-1.4,0.4 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.6"
+      android:strokeLineCap="round"
+      android:pathData="M8.6,15.8 A4.2,4.2 0 1 1 15.4,15.8" />
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.6"
+      android:strokeLineCap="round"
+      android:pathData="M5.8,17.6 A7.2,7.2 0 1 1 18.2,17.6" />
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.6"
+      android:strokeLineCap="round"
+      android:pathData="M3,19.4 A10.4,10.4 0 1 1 21,19.4" />
+</vector>
