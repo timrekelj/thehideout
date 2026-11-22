@@ -149,6 +149,7 @@ class AppStore(
     fun deleteMessage(channel: Long, message: Long) = dispatch(Action.DeleteMessage(channel, message))
     fun setDraft(channel: Long, text: String) = dispatch(Action.SetDraft(channel, text))
     fun dismissNotice(id: Long) = dispatch(Action.DismissNotice(id))
+    fun setChannelForeground(visible: Boolean) = dispatch(Action.SetChannelForeground(visible))
 
     // ---- effects ------------------------------------------------------------------------------
 

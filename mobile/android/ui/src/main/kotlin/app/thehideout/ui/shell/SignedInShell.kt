@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +49,10 @@ fun SignedInShell(
     val navActions = remember(actions) {
         actions.copy(navigateToDms = { current = Destination.Messages }, navigateToServers = { current = Destination.Servers })
     }
+    // Unread for the open channel only counts while its tab is actually on screen: the Servers tab
+    // keeps `currentChannel` selected even after switching to DMs/Mentions/You, so the core store
+    // needs this separately to avoid treating a channel as "read" while another tab is showing.
+    LaunchedEffect(current) { actions.setChannelForeground(current == Destination.Servers) }
     val dmUnread = state.homeUnread
     val serverUnread = state.guilds.sumOf { state.guildUnread(it.id).count }
     val mentionCount = state.guilds.sumOf { state.guildUnread(it.id).mentions } + state.homeUnread.mentions
