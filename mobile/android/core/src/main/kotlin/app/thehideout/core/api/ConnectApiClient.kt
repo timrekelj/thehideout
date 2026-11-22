@@ -21,7 +21,9 @@ import com.thehideout.v1.BeginPasskeyLoginRequest
 import com.thehideout.v1.BeginPasskeyRegistrationRequest
 import com.thehideout.v1.BeginSecondFactorPasskeyRequest
 import com.thehideout.v1.CompleteSecondFactorRequest
+import com.thehideout.v1.DeleteMessageRequest
 import com.thehideout.v1.DmServiceClient
+import com.thehideout.v1.EditMessageRequest
 import com.thehideout.v1.FinishPasskeyLoginRequest
 import com.thehideout.v1.FinishPasskeyRegistrationRequest
 import com.thehideout.v1.FinishSecondFactorPasskeyRequest
@@ -154,6 +156,11 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
         return call { messages.sendMessage(req.build()) }.message.toModel()
     }
 
+    override suspend fun openDm(userId: Long): DmChannel {
+        val r = call { dms.openDm(com.thehideout.v1.OpenDmRequest.newBuilder().setUserId(userId).build()) }
+        return r.channel.toModel()
+    }
+
     override suspend fun listMembers(guild: Long): GuildMembers {
         val r = call { guilds.listGuildMembers(ListGuildMembersRequest.newBuilder().setGuildId(guild).build()) }
         return GuildMembers(r.usersList.map { it.toModel() }, r.membersList.map { it.toModel() })
@@ -170,6 +177,15 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
 
     override suspend fun removeReaction(channel: Long, message: Long, emoji: ReactionEmoji) {
         call { messages.removeReaction(RemoveReactionRequest.newBuilder().setChannelId(channel).setMessageId(message).setEmoji(emoji.toProto()).build()) }
+    }
+
+    override suspend fun editMessage(channel: Long, message: Long, content: String): Message {
+        val req = EditMessageRequest.newBuilder().setChannelId(channel).setMessageId(message).setContent(content)
+        return call { messages.editMessage(req.build()) }.message.toModel()
+    }
+
+    override suspend fun deleteMessage(channel: Long, message: Long) {
+        call { messages.deleteMessage(DeleteMessageRequest.newBuilder().setChannelId(channel).setMessageId(message).build()) }
     }
 
     override suspend fun logout() = Unit

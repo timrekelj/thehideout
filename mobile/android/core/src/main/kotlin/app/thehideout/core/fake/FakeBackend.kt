@@ -193,7 +193,7 @@ class FakeBackend(
 
     override suspend fun loadInitial(): Initial {
         pause()
-        return Initial(me, guilds, channels.toList(), layouts.toMap(), dms)
+        return Initial(me, guilds, channels.toList(), layouts.toMap(), openedDms.toList())
     }
 
     override suspend fun listChannels(guild: Long): GuildChannels {
@@ -219,6 +219,20 @@ class FakeBackend(
         sent += m
         emit(GatewayEvent.MessageCreated(m))
         return m
+    }
+
+    private val openedDms = mutableListOf<DmChannel>().apply { addAll(dms) }
+    private var nextDmId = 60L
+
+    override suspend fun openDm(userId: Long): DmChannel {
+        pause()
+        val peer = users[userId] ?: throw AppError.NotFound
+        if (userId == currentUserId) throw AppError.InvalidArgument("cannot DM yourself")
+        openedDms.firstOrNull { dm -> dm.participants.any { it.id == userId } }?.let { return it }
+        val dm = DmChannel(nextDmId++, listOf(me, peer), now)
+        openedDms += dm
+        emit(GatewayEvent.DmOpened(dm))
+        return dm
     }
 
     override suspend fun listMembers(guild: Long): GuildMembers {
@@ -248,6 +262,32 @@ class FakeBackend(
     override suspend fun removeReaction(channel: Long, message: Long, emoji: ReactionEmoji) {
         pause()
         emit(GatewayEvent.ReactionRemoved(channel, message, emoji, TIM))
+    }
+
+    override suspend fun editMessage(channel: Long, message: Long, content: String): Message {
+        pause()
+        if (failSends > 0) {
+            failSends--
+            throw AppError.Unavailable("connection reset")
+        }
+        val list = messages[channel] ?: throw AppError.NotFound
+        val i = list.indexOfFirst { it.id == message }
+        if (i < 0) throw AppError.NotFound
+        if (list[i].authorId != currentUserId) throw AppError.PermissionDenied
+        val edited = list[i].copy(content = content, editedAt = now)
+        list[i] = edited
+        emit(GatewayEvent.MessageUpdated(edited))
+        return edited
+    }
+
+    override suspend fun deleteMessage(channel: Long, message: Long) {
+        pause()
+        val list = messages[channel] ?: throw AppError.NotFound
+        val i = list.indexOfFirst { it.id == message }
+        if (i < 0) throw AppError.NotFound
+        if (list[i].authorId != currentUserId) throw AppError.PermissionDenied
+        list.removeAt(i)
+        emit(GatewayEvent.MessageDeleted(channel, message))
     }
 
     override suspend fun logout() = Unit

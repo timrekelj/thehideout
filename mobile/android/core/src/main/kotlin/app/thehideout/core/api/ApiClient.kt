@@ -45,10 +45,16 @@ interface ApiClient {
     suspend fun listChannels(guild: Long): GuildChannels
     suspend fun listMessages(channel: Long, before: Long?, limit: Int = PAGE): MessagePage
     suspend fun sendMessage(channel: Long, content: String, nonce: String, attachmentIds: List<Long> = emptyList()): Message
+    /** Opens a DM with [userId], or returns the existing one (idempotent). */
+    suspend fun openDm(userId: Long): DmChannel
     suspend fun listMembers(guild: Long): GuildMembers
     suspend fun listRoles(guild: Long): GuildRoles
     suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji)
     suspend fun removeReaction(channel: Long, message: Long, emoji: ReactionEmoji)
+    /** Replaces the content of the caller's own message. */
+    suspend fun editMessage(channel: Long, message: Long, content: String): Message
+    /** The author, or MANAGE_MESSAGES in a guild channel. */
+    suspend fun deleteMessage(channel: Long, message: Long)
     suspend fun logout()
 
     // ---- authentication and onboarding (the unauthenticated RPCs; the rest need the token) ----

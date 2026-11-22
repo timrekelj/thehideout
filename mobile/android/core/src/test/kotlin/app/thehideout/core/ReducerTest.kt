@@ -134,6 +134,86 @@ class ReducerTest {
         assertTrue(off.state.log(GENERAL)!!.messages.single().reactions.isEmpty())
     }
 
+    // ---- edit, delete, drafts, mentions ----
+
+    @Test fun `editing a message updates it locally and asks the server`() {
+        val s = s0.withLog(GENERAL, listOf(1), author = TIM)
+        val r = Reducer.reduce(s, Action.EditMessage(GENERAL, 1, "  new text  "))
+        assertEquals(listOf(Effect.EditMessage(GENERAL, 1, "new text")), r.effects)
+        assertEquals("new text", r.state.log(GENERAL)!!.messages.single().content)
+    }
+
+    @Test fun `an empty or too-long edit is dropped`() {
+        val s = s0.withLog(GENERAL, listOf(1), author = TIM)
+        assertEquals(Reduction(s), Reducer.reduce(s, Action.EditMessage(GENERAL, 1, "   ")))
+        val tooLong = "x".repeat(MAX_MESSAGE_CHARS + 1)
+        assertEquals(Reduction(s), Reducer.reduce(s, Action.EditMessage(GENERAL, 1, tooLong)))
+    }
+
+    @Test fun `a failed edit raises a notice and leaves the optimistic content`() {
+        val s = s0.withLog(GENERAL, listOf(1), author = TIM).reduce(Action.EditMessage(GENERAL, 1, "edited"))
+        val failed = s.reduce(Action.MessageEdited(GENERAL, 1, Result.failure(AppError.PermissionDenied)))
+        assertEquals("edited", failed.log(GENERAL)!!.messages.single().content)
+        assertEquals(1, failed.notices.size)
+    }
+
+    @Test fun `deleting asks the server, message_deleted then removes it from the transcript`() {
+        val s = s0.withLog(GENERAL, listOf(1, 2), author = TIM)
+        val r = Reducer.reduce(s, Action.DeleteMessage(GENERAL, 1))
+        assertEquals(listOf(Effect.DeleteMessage(GENERAL, 1)), r.effects)
+        assertEquals(listOf(1L, 2L), r.state.log(GENERAL)!!.messages.map { it.id }, "removal waits for the event")
+        val gone = r.state.event(GatewayEvent.MessageDeleted(GENERAL, 1))
+        assertEquals(listOf(2L), gone.log(GENERAL)!!.messages.map { it.id })
+    }
+
+    @Test fun `a draft is kept per channel and an empty one clears it`() {
+        val s = s0.reduce(Action.SetDraft(GENERAL, "hello")).reduce(Action.SetDraft(DEV, "world"))
+        assertEquals("hello", s.draft(GENERAL))
+        assertEquals("world", s.draft(DEV))
+        val cleared = s.reduce(Action.SetDraft(GENERAL, ""))
+        assertEquals("", cleared.draft(GENERAL))
+        assertFalse(cleared.drafts.containsKey(GENERAL))
+    }
+
+    @Test fun `the mention feed lists loaded messages that mention me, newest first`() {
+        val log = ChannelLog(
+            messages = listOf(
+                msg(1, DEV, ANA, "hi @tim"),
+                msg(2, DEV, BRUNO, "no mention here"),
+                msg(3, DEV, ANA, "@tim again, later"),
+            ),
+            loaded = true,
+        )
+        val s = s0.copy(logs = s0.logs + (DEV to log))
+        val feed = s.mentionFeed()
+        assertEquals(listOf(3L, 1L), feed.map { it.message.id })
+        assertTrue(feed.all { it.channelId == DEV })
+    }
+
+    @Test fun `starting a dm with someone already open just switches to it`() {
+        val r = Reducer.reduce(s0, Action.StartDm(ANA))
+        assertEquals(emptyList<Effect>(), r.effects, "DM_ANA already exists in the fake seed")
+        assertEquals(Place.Home, r.state.place)
+        assertEquals(DM_ANA, r.state.homeDm)
+    }
+
+    @Test fun `starting a dm with someone new asks the server, then opens it`() {
+        val r = Reducer.reduce(s0, Action.StartDm(999))
+        assertEquals(listOf(Effect.OpenDm(999)), r.effects)
+        val dm = DmChannel(70, listOf(s0.me!!, User(999, "newperson", T0)), T0)
+        val opened = Reducer.reduce(r.state, Action.DmOpened(Result.success(dm))).state
+        assertEquals(Place.Home, opened.place)
+        assertEquals(70L, opened.homeDm)
+        assertTrue(opened.dms.any { it.id == 70L })
+    }
+
+    @Test fun `the mention feed never includes my own messages`() {
+        val s = s0.withLog(DEV, listOf(1)).copy(
+            logs = s0.logs + (DEV to ChannelLog(messages = listOf(msg(1, DEV, TIM, "@tim talking to myself")), loaded = true)),
+        )
+        assertTrue(s.mentionFeed().isEmpty())
+    }
+
     @Test fun `channel_created adds once, channel_updated replaces`() {
         val c = Channel(77, HIDEOUT, "new", T0)
         val added = s0.event(GatewayEvent.ChannelCreated(c)).event(GatewayEvent.ChannelCreated(c))

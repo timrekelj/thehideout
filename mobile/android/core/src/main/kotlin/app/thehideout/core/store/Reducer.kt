@@ -20,6 +20,9 @@ sealed interface Effect {
     data class SendMessage(val channel: Long, val content: String, val nonce: String, val attachmentIds: List<Long>) : Effect
     data class AddReaction(val channel: Long, val message: Long, val emoji: ReactionEmoji) : Effect
     data class RemoveReaction(val channel: Long, val message: Long, val emoji: ReactionEmoji) : Effect
+    data class EditMessage(val channel: Long, val message: Long, val content: String) : Effect
+    data class DeleteMessage(val channel: Long, val message: Long) : Effect
+    data class OpenDm(val userId: Long) : Effect
 }
 
 /** Replies and user intents the reducer understands. */
@@ -30,6 +33,9 @@ sealed interface Action {
     data class ChannelsLoaded(val guild: Long, val result: Result<GuildChannels>) : Action
     data class MessagesLoaded(val channel: Long, val before: Long?, val result: Result<MessagePage>) : Action
     data class MessageSent(val channel: Long, val nonce: String, val result: Result<Message>) : Action
+    data class MessageEdited(val channel: Long, val message: Long, val result: Result<Message>) : Action
+    data class MessageDeleteResult(val channel: Long, val message: Long, val result: Result<Unit>) : Action
+    data class DmOpened(val result: Result<DmChannel>) : Action
     data class MembersLoaded(val guild: Long, val result: Result<GuildMembers>) : Action
     data class AccessLoaded(val guild: Long, val result: Result<GuildRoles>) : Action
     data class Gateway(val update: GatewayUpdate) : Action
@@ -43,11 +49,16 @@ sealed interface Action {
     // ---- intents ----
     data object OpenHome : Action
     data class OpenGuild(val id: Long) : Action
+    /** Opens (or asks the server to open) a DM with a user and shows it. */
+    data class StartDm(val userId: Long) : Action
     data class OpenChannel(val channel: Long) : Action
     data class LoadOlder(val channel: Long) : Action
     data class Send(val content: String, val now: Instant) : Action
     data class Retry(val nonce: String) : Action
     data class React(val channel: Long, val message: Long, val emoji: ReactionEmoji) : Action
+    data class EditMessage(val channel: Long, val message: Long, val content: String) : Action
+    data class DeleteMessage(val channel: Long, val message: Long) : Action
+    data class SetDraft(val channel: Long, val text: String) : Action
     data class DismissNotice(val id: Long) : Action
     /** Raises a snackbar notice. */
     data class Notice(val kind: NoticeKind, val text: String) : Action
@@ -72,6 +83,18 @@ object Reducer {
         is Action.ChannelsLoaded -> a.result.fold({ setChannels(s, a.guild, it) }, { Reduction(s) })
         is Action.MessagesLoaded -> messages(s, a.channel, a.before, a.result)
         is Action.MessageSent -> sent(s, a.channel, a.nonce, a.result)
+        is Action.MessageEdited -> a.result.fold(
+            { Reduction(messageUpdated(s, it)) },
+            { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't save the edit. ${sentence(e.message.orEmpty())}")) },
+        )
+        is Action.MessageDeleteResult -> a.result.fold(
+            { Reduction(s) },
+            { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't delete the message. ${sentence(e.message.orEmpty())}")) },
+        )
+        is Action.DmOpened -> a.result.fold(
+            { dm -> val next = addDm(s, dm); goHome(next).let { Reduction(it.state.let { home -> selectChannel(home, dm.id).state }, it.effects) } },
+            { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't open the conversation. ${sentence(e.message.orEmpty())}")) },
+        )
         is Action.MembersLoaded -> membersLoaded(s, a.guild, a.result)
         is Action.AccessLoaded -> a.result.fold(
             { Reduction(s.copy(roles = s.roles + (a.guild to sortRoles(it.roles)), roleVersions = s.roleVersions + (a.guild to it.version))) },
@@ -83,11 +106,19 @@ object Reducer {
         is Action.SessionStarted -> Reduction(s.copy(me = a.me, users = s.users + (a.me.id to a.me)))
         Action.OpenHome -> goHome(s)
         is Action.OpenGuild -> goGuild(s, a.id)
+        is Action.StartDm -> {
+            val existing = s.dms.firstOrNull { dm -> dm.participants.any { it.id == a.userId } }
+            if (existing != null) { val r = goHome(s); Reduction(selectChannel(r.state, existing.id).state, r.effects) }
+            else Reduction(s, listOf(Effect.OpenDm(a.userId)))
+        }
         is Action.OpenChannel -> selectChannel(s, a.channel)
         is Action.LoadOlder -> loadOlder(s, a.channel)
         is Action.Send -> send(s, a.content, a.now)
         is Action.Retry -> retry(s, a.nonce)
         is Action.React -> react(s, a.channel, a.message, a.emoji)
+        is Action.EditMessage -> editMessage(s, a.channel, a.message, a.content)
+        is Action.DeleteMessage -> Reduction(s, listOf(Effect.DeleteMessage(a.channel, a.message)))
+        is Action.SetDraft -> Reduction(s.copy(drafts = if (a.text.isEmpty()) s.drafts - a.channel else s.drafts + (a.channel to a.text)))
         is Action.DismissNotice -> Reduction(s.copy(notices = s.notices.filter { it.id != a.id }))
         is Action.Notice -> Reduction(notice(s, a.kind, a.text))
         is Action.Exiting -> Reduction(s.copy(exiting = s.exiting + a.guild))
@@ -615,6 +646,14 @@ object Reducer {
             s.copy(outgoing = s.outgoing.map { if (it.nonce == nonce) it.copy(state = Delivery.Pending) else it }),
             listOf(Effect.SendMessage(o.channelId, o.content, o.nonce, o.attachmentIds)),
         )
+    }
+
+    /** Edits an own message in place (own edit wins locally; the server's reply or a later event settles it). */
+    private fun editMessage(s: AppState, channel: Long, message: Long, content: String): Reduction {
+        val trimmed = content.trim()
+        if (trimmed.isEmpty() || trimmed.codePointCount(0, trimmed.length) > MAX_MESSAGE_CHARS) return Reduction(s)
+        val next = mapMessage(s, channel, message) { it.copy(content = trimmed) }
+        return Reduction(next, listOf(Effect.EditMessage(channel, message, trimmed)))
     }
 
     /** Toggles our reaction optimistically and asks the server; the echo from the gateway changes nothing. */
