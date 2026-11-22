@@ -10,11 +10,11 @@ import com.connectrpc.ConnectException
 import com.connectrpc.MethodSpec
 import com.connectrpc.ProtocolClientConfig
 import com.connectrpc.ResponseMessage
+import com.connectrpc.StreamType
 import com.connectrpc.extensions.GoogleJavaLiteProtobufStrategy
 import com.connectrpc.impl.ProtocolClient
 import com.connectrpc.okhttp.ConnectOkHttpClient
 import com.connectrpc.protocols.NetworkProtocol
-import com.connectrpc.simpleTimeouts
 import com.thehideout.v1.AcceptInviteRequest
 import com.thehideout.v1.AcceptTermsRequest
 import com.thehideout.v1.AddReactionRequest
@@ -88,12 +88,18 @@ fun buildHttpClients(config: ApiConfig, base: OkHttpClient = OkHttpClient()): Pa
  * connect-kotlin's own default times every call out at 10 s, the gateway's Subscribe stream
  * included: it was being torn down and reopened every ~10 s regardless of the OkHttp stream
  * client's readTimeout(0) and GatewayStream's own 75 s silence watchdog. Unary calls keep that
- * 10 s default; a stream has no library-imposed timeout, only its own watchdog.
+ * 10 s default; a stream gets `null` so the library schedules no timeout for it at all (its own
+ * watchdog is the only thing that can end it) — not `Duration.INFINITE`, which `simpleTimeouts`
+ * cannot express (its two parameters are non-null) and which would still schedule a very long
+ * real timer rather than none.
  */
-internal val apiTimeoutOracle: (MethodSpec<*, *>) -> Duration? = simpleTimeouts(10.seconds, Duration.INFINITE)
+internal val apiTimeoutOracle: (MethodSpec<*, *>) -> Duration? = { spec -> if (spec.streamType == StreamType.UNARY) 10.seconds else null }
 
 /** The real [ApiClient]: connect-kotlin over OkHttp, with every failure mapped to [AppError]. */
-class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
+class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
+    /** The server this client was built for (tests check a cold start used the right one). */
+    val baseUrl: String get() = config.baseUrl
+
     private val client = ProtocolClient(
         ConnectOkHttpClient(http.first, http.second),
         ProtocolClientConfig(
