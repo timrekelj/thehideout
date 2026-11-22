@@ -167,6 +167,7 @@ class AppStore(
     fun removeAttachment(id: Long) = dispatch(Action.RemoveAttachment(id))
     fun retryAttachment(id: Long) = dispatch(Action.RetryAttachment(id))
     fun dismissNotice(id: Long) = dispatch(Action.DismissNotice(id))
+    fun setChannelForeground(visible: Boolean) = dispatch(Action.SetChannelForeground(visible))
 
     // ---- effects ------------------------------------------------------------------------------
 

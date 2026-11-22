@@ -7,8 +7,10 @@ import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
 import com.connectrpc.ConnectException
+import com.connectrpc.MethodSpec
 import com.connectrpc.ProtocolClientConfig
 import com.connectrpc.ResponseMessage
+import com.connectrpc.StreamType
 import com.connectrpc.extensions.GoogleJavaLiteProtobufStrategy
 import com.connectrpc.impl.ProtocolClient
 import com.connectrpc.okhttp.ConnectOkHttpClient
@@ -67,6 +69,8 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** What the real client needs to know about where it runs. */
 class ApiConfig(
@@ -99,9 +103,22 @@ private fun encodeUploadComponent(s: String): String = buildString {
     }
 }
 
+/**
+ * connect-kotlin's own default times every call out at 10 s, the gateway's Subscribe stream
+ * included: it was being torn down and reopened every ~10 s regardless of the OkHttp stream
+ * client's readTimeout(0) and GatewayStream's own 75 s silence watchdog. Unary calls keep that
+ * 10 s default; a stream gets `null` so the library schedules no timeout for it at all (its own
+ * watchdog is the only thing that can end it) — not `Duration.INFINITE`, which `simpleTimeouts`
+ * cannot express (its two parameters are non-null) and which would still schedule a very long
+ * real timer rather than none.
+ */
+internal val apiTimeoutOracle: (MethodSpec<*, *>) -> Duration? = { spec -> if (spec.streamType == StreamType.UNARY) 10.seconds else null }
 /** The real [ApiClient]: connect-kotlin over OkHttp, with every failure mapped to [AppError]. */
-class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
-    private val baseUrl = config.baseUrl.trimEnd('/')
+class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
+    /** The server this client was built for (tests check a cold start used the right one). */
+    val baseUrl: String get() = config.baseUrl
+    /** [baseUrl] trimmed, as the upload URL is built from it. */
+    private val uploadBaseUrl = baseUrl.trimEnd('/')
     private val uploadHttp = http.first
     private val client = ProtocolClient(
         ConnectOkHttpClient(http.first, http.second),
@@ -109,6 +126,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
             host = config.baseUrl,
             serializationStrategy = GoogleJavaLiteProtobufStrategy(),
             networkProtocol = NetworkProtocol.CONNECT,
+            timeoutOracle = apiTimeoutOracle,
         ),
     )
     private val auth = AuthServiceClient(client)
@@ -178,7 +196,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     }
 
     override suspend fun uploadAttachment(channel: Long, filename: String, contentType: String, size: Long, source: UploadSource, progress: (Long) -> Unit): PendingAttachment {
-        val url = "$baseUrl/attachments?channel_id=$channel&filename=${encodeUploadComponent(filename)}"
+        val url = "$uploadBaseUrl/attachments?channel_id=$channel&filename=${encodeUploadComponent(filename)}"
         val body = object : RequestBody() {
             override fun contentType() = contentType.toMediaTypeOrNull()
             override fun contentLength() = size

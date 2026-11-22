@@ -21,6 +21,7 @@ data class ShellActions(
     val attachFiles: (Long, List<PickedFile>) -> Unit = { _, _ -> },
     val removeAttachment: (Long) -> Unit = {},
     val retryAttachment: (Long) -> Unit = {},
+    val setChannelForeground: (Boolean) -> Unit = {},
     /** Switches tabs (set by [SignedInShell]; plain UI actions, not store intents). */
     val navigateToDms: () -> Unit = {},
     val navigateToServers: () -> Unit = {},
@@ -47,6 +48,7 @@ data class ShellActions(
             attachFiles = store::attachFiles,
             removeAttachment = store::removeAttachment,
             retryAttachment = store::retryAttachment,
+            setChannelForeground = store::setChannelForeground,
             signOut = store::signOut,
             acceptTerms = store::acceptTerms,
             dismissNotice = store::dismissNotice,

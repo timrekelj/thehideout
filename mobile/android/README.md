@@ -157,6 +157,63 @@ whether an account exists.
   UID on the AVD in use (see above). Verified end to end: the bootstrap invite → shell, sign out →
   password sign-in → shell, sign out → emailed-code sign-in → shell.
 
+## E2E check (phase 3a chat, against the real server)
+
+A manual pass with two clients signed into the same guild: the app on an emulator (the bootstrap
+admin) and `curl` against the Connect JSON API (`POST /thehideout.v1.<Service>/<Method>`,
+`Content-Type: application/json`, `Authorization: Bearer <token>`; field names from
+`proto/thehideout/v1/*.proto`) as a second, invited member. Ten checkpoints:
+
+1. Cold start restores the persisted server URL and session (not the build-default URL).
+2. Bootstrap invite → sign-up → first guild, auto-created `general` channel.
+3. Second user (curl) accepts an invite into the same guild.
+4. The gateway subscribe stream survives past 10 s (no silent drop/reconnect loop).
+5. Sign-out → sign back in restores the same place.
+6. Reactions, edits and deletes each way (app ↔ curl) appear live on the other side.
+7. A curl `@username` mention shows in the Mentions tab with an accent badge, and tapping it lands
+   in the channel's transcript.
+8. A curl-opened DM shows live with a badge; the app replies; curl sees the reply
+   (`ListMessages`).
+9. The reconnect banner recovers after the server restarts.
+10. 80 messages from curl, then scrolling up in the app: older pages load with no scroll jump.
+
+To rerun: start Docker services and `cargo run` in `server/` with a fresh keyspace
+(`THEHIDEOUT_KEYSPACE=<something_scratch>`, `CARGO_INCREMENTAL=0`), boot the AVD, `adb reverse
+tcp:8080 tcp:8080`, install the debug APK, set the server URL to `http://127.0.0.1:8080` in the
+sign-in card's sheet, accept the bootstrap invite (its code is logged on first boot and in
+Mailpit, http://127.0.0.1:8025), create a guild, and invite a second account to drive from `curl`.
+Afterwards drop the scratch keyspace (`cqlsh -e "DROP KEYSPACE IF EXISTS <keyspace>"`).
+
+Gotchas:
+
+- **Run the server from *this* checkout's `server/`, not a sibling worktree on an older branch.**
+  Mismatched server and client protos fail in confusing ways: `EditMessage`/`DeleteMessage`
+  returning `unimplemented`, or an invite's `minimum_age` reading back as `0` (the server's
+  `Policy::MIN_AGE` not existing yet on that branch) — both looked like client bugs at first and
+  were not.
+- **Reusing a shared `CARGO_TARGET_DIR` across checkouts can serve a stale build-script output**
+  (a `buf build` descriptor set missing a service that exists in this checkout's protos).
+  `cargo clean -p thehideout-server` before the first build if `cargo run` fails with
+  `file_to_generate '...' not found in descriptor set`.
+- **Only one emulator at a time if anything else on the machine drives `adb`.** `adb` is a single
+  shared daemon; a second, unrelated agent's `adb shell` calls land on the same `emulator-5554`
+  and can force-stop/clear the app or flip on `--ez fake true` mid-run. Boot a second AVD on its
+  own port (`emulator -avd <name> -port 5556`) and target it explicitly
+  (`export ANDROID_SERIAL=emulator-5556`, or `adb -s emulator-5556 ...`) to get exclusive use.
+- **`adb shell input tap`/`swipe` coordinates must come from a fresh `uiautomator dump`** (device
+  pixels), not from eyeballing a screenshot — the screenshot tool may render it scaled, and a tap
+  based on the scaled size lands on the wrong element (observed: it opened "Explore with demo
+  data" and typed into the wrong field more than once).
+- **`adb shell input text` with a full `host:port` can let Gboard autocomplete commit a
+  suggestion**, mangling what was typed (seen turning a server URL into gibberish, and once
+  routing a tap meant for the next field into "Explore with demo data"). Split such input into two
+  `input text` calls (e.g. the scheme+host, then `:port`), and take a screenshot to confirm the
+  field's contents before moving on.
+- **Switching the shell's bottom tab does not, by itself, tell the store whether the open
+  channel's transcript is actually on screen** (`AppState.currentChannel` stays set to the
+  last-selected channel in whichever tab shows it, Servers or DMs, even while a different tab is
+  in front). See `AppState.channelForeground`'s doc for how the store knows.
+
 ## Attachments and the lightbox (phase 3b)
 
 Rendering only (ATT-01..05, ATT-12): uploading, embeds and custom emoji images are later tasks.
