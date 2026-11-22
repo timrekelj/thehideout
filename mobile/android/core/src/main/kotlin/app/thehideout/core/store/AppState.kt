@@ -136,7 +136,8 @@ data class AppState(
     val nonceSeq: Long = 0,
     /** Guilds we are leaving or deleting ourselves, so their `guild_removed` is not announced as news. */
     val exiting: Set<Long> = emptySet(),
-    /** Whether the shell's Servers tab (the one that can show a transcript) is the foreground destination. */
+    /** Whether the shell's tab that can show [currentChannel]'s transcript (Servers for a guild,
+     * DMs for home) is the foreground destination. */
     val channelForeground: Boolean = true,
 ) {
     val myId: Long get() = me?.id ?: 0L

@@ -17,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.thehideout.core.store.AppState
+import app.thehideout.core.store.Place
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.theme.Hideout
@@ -49,10 +50,13 @@ fun SignedInShell(
     val navActions = remember(actions) {
         actions.copy(navigateToDms = { current = Destination.Messages }, navigateToServers = { current = Destination.Servers })
     }
-    // Unread for the open channel only counts while its tab is actually on screen: the Servers tab
-    // keeps `currentChannel` selected even after switching to DMs/Mentions/You, so the core store
-    // needs this separately to avoid treating a channel as "read" while another tab is showing.
-    LaunchedEffect(current) { actions.setChannelForeground(current == Destination.Servers) }
+    // Unread for the open channel only counts while the tab that would show it is actually on
+    // screen: `currentChannel` stays selected in the Servers tab (for a guild) or the DMs tab (for
+    // home) even after switching to another one, so the core store needs this separately to avoid
+    // treating a channel as "read" while a different tab is showing.
+    val transcriptOnScreen = (current == Destination.Servers && state.place is Place.InGuild) ||
+        (current == Destination.Messages && state.place == Place.Home)
+    LaunchedEffect(transcriptOnScreen) { actions.setChannelForeground(transcriptOnScreen) }
     val dmUnread = state.homeUnread
     val serverUnread = state.guilds.sumOf { state.guildUnread(it.id).count }
     val mentionCount = state.guilds.sumOf { state.guildUnread(it.id).mentions } + state.homeUnread.mentions

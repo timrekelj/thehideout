@@ -209,14 +209,7 @@ Gotchas:
   routing a tap meant for the next field into "Explore with demo data"). Split such input into two
   `input text` calls (e.g. the scheme+host, then `:port`), and take a screenshot to confirm the
   field's contents before moving on.
-- **Switching the shell's bottom tab (Servers/DMs/Mentions/You) does not, by itself, tell the
-  store whether the open channel's transcript is actually on screen.** `AppState.currentChannel`
-  stays set to the last-selected channel in the Servers tab even while another tab is showing, so
-  a message arriving then wouldn't count toward unread/mention badges, and re-opening that exact
-  channel (e.g. by tapping its entry in the Mentions feed) wouldn't clear what did pile up, because
-  `currentChannel` had never changed. Fixed with an explicit `channelForeground` flag in
-  `AppState`, set via `ShellActions.setChannelForeground` from a `LaunchedEffect(current)` in
-  `SignedInShell`, and consulted in `Reducer.messageCreated`'s `visible` check and in
-  `selectChannel`'s already-selected fast path (`ReducerTest`: "message_created in the open channel
-  counts unread when its tab is not on screen", "reopening the already-selected channel still
-  clears unread it piled up while its tab was not on screen").
+- **Switching the shell's bottom tab does not, by itself, tell the store whether the open
+  channel's transcript is actually on screen** (`AppState.currentChannel` stays set to the
+  last-selected channel in whichever tab shows it, Servers or DMs, even while a different tab is
+  in front). See `AppState.channelForeground`'s doc for how the store knows.

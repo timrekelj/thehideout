@@ -70,7 +70,8 @@ sealed interface Action {
     data class Notice(val kind: NoticeKind, val text: String) : Action
     /** Marks a guild as being left or deleted by us, so its `guild_removed` is not announced. */
     data class Exiting(val guild: Long) : Action
-    /** The shell's Servers tab (the one that can show a transcript) became, or stopped being, the foreground destination. */
+    /** The shell's tab that can show [AppState.currentChannel]'s transcript (Servers for a guild,
+     * DMs for home) became, or stopped being, the foreground destination. */
     data class SetChannelForeground(val visible: Boolean) : Action
 }
 
@@ -132,7 +133,13 @@ object Reducer {
         is Action.DismissNotice -> Reduction(s.copy(notices = s.notices.filter { it.id != a.id }))
         is Action.Notice -> Reduction(notice(s, a.kind, a.text))
         is Action.Exiting -> Reduction(s.copy(exiting = s.exiting + a.guild))
-        is Action.SetChannelForeground -> Reduction(s.copy(channelForeground = a.visible))
+        // Coming back into foreground is an arrival in its own right: whatever piled up in
+        // `currentChannel` while away (its `currentChannel` never changed, so `OpenChannel` would
+        // have no-opped) needs the same unread-clearing, marker-fixing treatment.
+        is Action.SetChannelForeground -> {
+            if (a.visible && !s.channelForeground) arrive(s.copy(channelForeground = true))
+            else Reduction(s.copy(channelForeground = a.visible))
+        }
     }
 
     // ---- data in ------------------------------------------------------------------------------
