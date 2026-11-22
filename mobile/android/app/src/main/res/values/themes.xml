@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws everything; this only paints the window until it does. -->
+    <style name="Theme.Hideout" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/hideout_window_bg</item>
+        <item name="android:colorBackground">@color/hideout_window_bg</item>
+    </style>
+</resources>

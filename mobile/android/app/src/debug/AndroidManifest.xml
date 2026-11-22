@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug builds only: cleartext to the host machine (10.0.2.2 from the emulator) and localhost; release is HTTPS-only. -->
+    <application android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- A second launcher entry that opens the design gallery. -->
+        <activity
+            android:name=".GalleryActivity"
+            android:exported="true"
+            android:label="Hideout gallery"
+            android:taskAffinity="si.zabit.thehideout.gallery">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
