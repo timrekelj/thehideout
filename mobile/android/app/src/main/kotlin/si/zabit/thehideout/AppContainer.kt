@@ -81,6 +81,9 @@ class AppContainer(private val context: Context) {
 
     private val probe = OkHttpClient()
 
+    /** Shared with Coil: media is public by its unguessable key, so no auth header is needed. */
+    val mediaHttpClient: OkHttpClient = OkHttpClient()
+
     /** The default server of this build (debug `http://10.0.2.2:8080`, release the public one). */
     fun defaultServer(): String = BuildConfig.DEFAULT_SERVER
 

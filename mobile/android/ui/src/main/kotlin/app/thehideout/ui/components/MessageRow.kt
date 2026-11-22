@@ -78,6 +78,7 @@ fun MessageRow(
     modifier: Modifier = Modifier,
     onReact: (Reaction) -> Unit = {},
     onRetry: () -> Unit = {},
+    onOpenLightbox: (LightboxRequest) -> Unit = {},
 ) {
     val c = Hideout.colors
     val m = ui.message
@@ -108,6 +109,7 @@ fun MessageRow(
                 MarkdownText(m.content, me = ui.me)
             }
             if (m.editedAt != null) Text("edited", style = MaterialTheme.typography.bodySmall, color = c.textFaint)
+            if (m.attachments.isNotEmpty()) MessageAttachments(m.attachments, onOpenLightbox = onOpenLightbox)
             m.embeds.forEach { EmbedCard(it) }
             if (m.reactions.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {

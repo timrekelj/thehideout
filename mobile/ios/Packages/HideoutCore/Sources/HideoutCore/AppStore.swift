@@ -13,17 +13,22 @@ public final class AppStore {
     public private(set) var bootstrapError: AppError?
     /// Whether the gateway is meant to run (the app is active).
     public private(set) var active = false
+    /// The terms gate: an `acceptTerms` call is in flight / its last error.
+    public private(set) var termsBusy = false
+    public private(set) var termsError: String?
 
     @ObservationIgnored private let api: any ApiClient
+    @ObservationIgnored private let auth: (any AuthApi)?
     @ObservationIgnored private let tokens: any TokenStore
     @ObservationIgnored private let cache: Cache?
     @ObservationIgnored private let gateway: GatewayStream
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
 
-    public init(api: any ApiClient, tokens: any TokenStore, cache: Cache? = nil,
+    public init(api: any ApiClient, auth: (any AuthApi)? = nil, tokens: any TokenStore, cache: Cache? = nil,
                 gatewayConfig: GatewayConfig = GatewayConfig(), now: @escaping @Sendable () -> Date = { Date() }) {
         self.api = api
+        self.auth = auth
         self.tokens = tokens
         self.cache = cache
         self.gateway = GatewayStream(source: api, config: gatewayConfig)
@@ -72,6 +77,31 @@ public final class AppStore {
         }
     }
 
+    /// The terms gate's "Accept and continue": accepts `version`, then loads the session.
+    public func acceptTerms() async {
+        guard case .termsRequired(let version) = state.phase, let auth, !termsBusy else { return }
+        termsBusy = true; termsError = nil
+        defer { termsBusy = false }
+        do {
+            try await auth.acceptTerms(version: version)
+            await loadSession()
+        } catch {
+            switch AppError.from(error) {
+            case .unauthenticated: signOut()
+            case .clientTooOld: state.phase = .updateRequired
+            case .precondition:
+                // The terms moved on while the prompt was up: look again.
+                termsError = "The terms were updated again. Please read the new version."
+                await loadSession()
+            case .network: termsError = "Can't reach the server. Check your connection and try again."
+            case let e: termsError = sentence(e.description)
+            }
+        }
+    }
+
+    /// An auth call found the server refuses this app version.
+    public func requireUpdate() { state.phase = .updateRequired }
+
     /// Clears the token, the cache and every bit of session state.
     public func signOut() {
         tokens.clear()
@@ -82,6 +112,7 @@ public final class AppStore {
         tasks.removeAll()
         state = AppState()
         state.phase = .signedOut
+        termsError = nil
     }
 
     // MARK: lifecycle

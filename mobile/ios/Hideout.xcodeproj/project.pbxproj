@@ -21,7 +21,9 @@
 		D3FEC7B7F80460589ECC5089 /* HideoutUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4B5D1BCEBB780A8FC9DFFA01 /* HideoutUI */; };
 		D95101ED87A9EADE6B942D25 /* HideoutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDB6E82A785697F86643FA03 /* HideoutApp.swift */; };
 		E21F236C2BF5081452CE7866 /* HideoutDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 4002172E2575A8BE5B2020F2 /* HideoutDesign */; };
+		F46AA8C2EAA3A376985E1EB3 /* AuthSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 048E997DF1C69854AC07A834 /* AuthSnapshotTests.swift */; };
 		F903BB0AF91026C0028A89D6 /* HideoutCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6F41950D4FED5F0D2F1F4908 /* HideoutCore */; };
+		FAF6A8BE3F8C409E8416E50D /* AuthUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9088CE26915B1A33F127FA46 /* AuthUITests.swift */; };
 		FD4227B170BC65459167AB9E /* LookTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34BBD606F1C5251773D08C70 /* LookTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,18 +35,29 @@
 			remoteGlobalIDString = A4DC83B97B547523287A9E11;
 			remoteInfo = Hideout;
 		};
+		BE9045822D0B6CBC12B7314C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9B61FF227A02288280F298B2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A4DC83B97B547523287A9E11;
+			remoteInfo = Hideout;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		048E997DF1C69854AC07A834 /* AuthSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthSnapshotTests.swift; sourceTree = "<group>"; };
 		164320C763F43DE669FAF1CE /* HideoutDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HideoutDesign; path = Packages/HideoutDesign; sourceTree = SOURCE_ROOT; };
 		34BBD606F1C5251773D08C70 /* LookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LookTests.swift; sourceTree = "<group>"; };
 		374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotTests.swift; sourceTree = "<group>"; };
 		57ABA67EA95E11823ADF8B59 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		880EE04C0741505D4069BFA2 /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Regular.ttf"; path = "../tokens/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		8CA3C8CB126E4ECEB54FE2A0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		9088CE26915B1A33F127FA46 /* AuthUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthUITests.swift; sourceTree = "<group>"; };
 		9E38F68D5E410FB7599A70B7 /* InstrumentSans-VF.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "InstrumentSans-VF.ttf"; path = "../tokens/fonts/instrument-sans/InstrumentSans-VF.ttf"; sourceTree = "<group>"; };
+		9EB3EF098DCAAD6663A0A7C8 /* Hideout.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Hideout.entitlements; sourceTree = "<group>"; };
 		A8BCC725A1D8E752A5E88562 /* HideoutTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HideoutTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF702D5FA0135A7A272688D4 /* HideoutUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HideoutUI; path = Packages/HideoutUI; sourceTree = SOURCE_ROOT; };
+		B15D153961D7D1DDF92BBC51 /* HideoutUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HideoutUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C15C1C6DB4C00FE0C5B9665F /* HideoutCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HideoutCore; path = Packages/HideoutCore; sourceTree = SOURCE_ROOT; };
 		C4BCB3F16214F227AB038248 /* SnapshotSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotSupport.swift; sourceTree = "<group>"; };
 		CBA0AAF20D860C0A8BCD8930 /* Hideout.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Hideout.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -102,6 +115,7 @@
 			children = (
 				CBA0AAF20D860C0A8BCD8930 /* Hideout.app */,
 				A8BCC725A1D8E752A5E88562 /* HideoutTests.xctest */,
+				B15D153961D7D1DDF92BBC51 /* HideoutUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -112,14 +126,24 @@
 				2AFC0CAB7612089ED633288D /* Fonts */,
 				F08BD28FA0F76DE3C4251EB7 /* Hideout */,
 				A51D4FBEAD99FE05A459D386 /* HideoutTests */,
+				5553FC931A765D1E41E9EFD2 /* HideoutUITests */,
 				0031D3DC2C4578160FFBBBF3 /* Packages */,
 				386D83B1C562B61349A6F361 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
+		5553FC931A765D1E41E9EFD2 /* HideoutUITests */ = {
+			isa = PBXGroup;
+			children = (
+				9088CE26915B1A33F127FA46 /* AuthUITests.swift */,
+			);
+			path = HideoutUITests;
+			sourceTree = "<group>";
+		};
 		A51D4FBEAD99FE05A459D386 /* HideoutTests */ = {
 			isa = PBXGroup;
 			children = (
+				048E997DF1C69854AC07A834 /* AuthSnapshotTests.swift */,
 				34BBD606F1C5251773D08C70 /* LookTests.swift */,
 				C4BCB3F16214F227AB038248 /* SnapshotSupport.swift */,
 				374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */,
@@ -132,6 +156,7 @@
 			children = (
 				57ABA67EA95E11823ADF8B59 /* AppContainer.swift */,
 				8CA3C8CB126E4ECEB54FE2A0 /* Assets.xcassets */,
+				9EB3EF098DCAAD6663A0A7C8 /* Hideout.entitlements */,
 				FDB6E82A785697F86643FA03 /* HideoutApp.swift */,
 			);
 			path = Hideout;
@@ -140,6 +165,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3BAEFB3F9AB1E903A0F81645 /* HideoutUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7F01419A7A983F0EE07E4D6A /* Build configuration list for PBXNativeTarget "HideoutUITests" */;
+			buildPhases = (
+				13511B09D88C0498B3CD0D0A /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				85C65C423C3D16FC44AF59F0 /* PBXTargetDependency */,
+			);
+			name = HideoutUITests;
+			packageProductDependencies = (
+			);
+			productName = HideoutUITests;
+			productReference = B15D153961D7D1DDF92BBC51 /* HideoutUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		A4DC83B97B547523287A9E11 /* Hideout */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9EB62D9F8438B23ABD61AE56 /* Build configuration list for PBXNativeTarget "Hideout" */;
@@ -194,6 +237,11 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
+					3BAEFB3F9AB1E903A0F81645 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+						TestTargetID = A4DC83B97B547523287A9E11;
+					};
 					A4DC83B97B547523287A9E11 = {
 						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
@@ -226,6 +274,7 @@
 			targets = (
 				A4DC83B97B547523287A9E11 /* Hideout */,
 				A566975EDB6C48932EAA0F54 /* HideoutTests */,
+				3BAEFB3F9AB1E903A0F81645 /* HideoutUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -245,10 +294,19 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		13511B09D88C0498B3CD0D0A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FAF6A8BE3F8C409E8416E50D /* AuthUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AF3BAC8C2C57C1BE5A8D5664 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F46AA8C2EAA3A376985E1EB3 /* AuthSnapshotTests.swift in Sources */,
 				FD4227B170BC65459167AB9E /* LookTests.swift in Sources */,
 				B476EA9AC198452C71CD4A78 /* SnapshotSupport.swift in Sources */,
 				C653AEE65EEB7BFFCAED6974 /* SnapshotTests.swift in Sources */,
@@ -267,6 +325,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		85C65C423C3D16FC44AF59F0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A4DC83B97B547523287A9E11 /* Hideout */;
+			targetProxy = BE9045822D0B6CBC12B7314C /* PBXContainerItemProxy */;
+		};
 		C9B083EB990011B01EB53C93 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = A4DC83B97B547523287A9E11 /* Hideout */;
@@ -365,6 +428,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Hideout/Hideout.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -389,6 +453,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Hideout/Hideout.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -407,6 +472,27 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		CDD648F774D1A13AF4838D4B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = si.zabit.thehideout.uitests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Hideout;
+			};
+			name = Release;
 		};
 		D1B0F4CFC8EC4F1B7F09D815 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -500,6 +586,27 @@
 			};
 			name = Debug;
 		};
+		F309BE9940CE8E4C0BD57917 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = si.zabit.thehideout.uitests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Hideout;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -508,6 +615,15 @@
 			buildConfigurations = (
 				F10F9B4530BE1C7716268B1F /* Debug */,
 				4105ACE74C04C58513EAE041 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7F01419A7A983F0EE07E4D6A /* Build configuration list for PBXNativeTarget "HideoutUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F309BE9940CE8E4C0BD57917 /* Debug */,
+				CDD648F774D1A13AF4838D4B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

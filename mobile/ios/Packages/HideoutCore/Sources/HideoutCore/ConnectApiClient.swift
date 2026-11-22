@@ -31,7 +31,8 @@ final class HeaderInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked S
 
 /// The real `ApiClient`: connect-swift (Connect protocol, protobuf codec) over `URLSession`.
 public final class ConnectApiClient: ApiClient {
-    private let auth: Thehideout_V1_AuthServiceClient
+    let auth: Thehideout_V1_AuthServiceClient
+    let invites: Thehideout_V1_InviteServiceClient
     private let guilds: Thehideout_V1_GuildServiceClient
     private let messages: Thehideout_V1_MessageServiceClient
     private let dms: Thehideout_V1_DmServiceClient
@@ -50,10 +51,10 @@ public final class ConnectApiClient: ApiClient {
         let client = ProtocolClient(httpClient: URLSessionHTTPClient(), config: config)
         auth = .init(client: client); guilds = .init(client: client); messages = .init(client: client)
         dms = .init(client: client); roles = .init(client: client); emojis = .init(client: client)
-        gateway = .init(client: client)
+        gateway = .init(client: client); invites = .init(client: client)
     }
 
-    private func value<T: ProtobufMessage>(_ r: ResponseMessage<T>) throws -> T {
+    func value<T: ProtobufMessage>(_ r: ResponseMessage<T>) throws -> T {
         switch r.result {
         case .success(let m): return m
         case .failure(let e): throw AppError(e)

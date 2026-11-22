@@ -16,6 +16,7 @@ final class GallerySnapshotTests: SnapshotCase {
     func testEverySectionOnIPhone() async {
         let (store, _) = await makeFakeStore()
         for section in GallerySection.allCases {
+            // `GalleryContent` already puts its own horizontal insets on the column, matching `GalleryView.page`.
             let content = GalleryContent(sections: [section], showHero: false)
             if [.glass, .buttons, .motion].contains(section) {
                 // Glass is composited by the render server: it needs the key window, so it is laid out as a screen.

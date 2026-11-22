@@ -49,8 +49,6 @@ struct ServerListRow: View {
                     Text("\(unread.mentions) mention\(unread.mentions == 1 ? "" : "s")").typeStyle(\.caption, color: \.accentText)
                 } else if unread.count > 0 {
                     Text("\(unread.count) new").typeStyle(\.caption, color: \.textMuted)
-                } else {
-                    Text("Up to date").typeStyle(\.caption, color: \.textFaint)
                 }
             }
             Spacer(minLength: Space.s2)

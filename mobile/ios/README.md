@@ -43,8 +43,27 @@ xcrun simctl io booted screenshot /tmp/shot.png
 | `--gallery` | Debug builds only: opens the design gallery (colours, type, components, look switcher). Also at You > Design gallery |
 | `--tab servers\|dms\|mentions\|you` | Debug builds only: the tab to open on (for screenshots) |
 | `--ui-testing` | Same as `--fake`; reserved for the XCUITest suite |
+| `--signed-out` | With `--fake`/`--ui-testing`: start signed out instead, so the sign-in flows can be driven against the fake accounts (`FakeAccounts`: `tim`/`ana`/`bruno`/`cvetka`, password `correct-horse`, invite code `WXYZ-2345`, 2FA on `ana`, suspended `cvetka`, `tooOld` for the update gate) |
+| `--demo-terms`, `--demo-update`, `--demo-suspended` | Debug builds only: opens signed in straight into the terms-required / update-required / suspended gate, for screenshots |
 
-Without arguments the app talks to `http://127.0.0.1:8080` (change `server_url` in `UserDefaults`); sign-in arrives in phase 2.
+Without arguments the app talks to `http://127.0.0.1:8080` (change `server_url` in `UserDefaults`).
+
+## Auth and onboarding (phase 2)
+
+`HideoutCore.AuthFlow` is the state machine (`AuthStep`: password, email code, second factor, passkey, reset, invite code/accept) driving every screen in `HideoutUI/Auth`; `AuthScreen` switches on its `step` inside the shared `AuthChrome` (one calm card, centred on regular width, the bare page on a phone), with the server line and a quiet "Terms · Privacy" line (`account::legal_links` on desktop) always in the footer. `Gates.swift` holds the full-screen states after a session is restored: `SplashScreen` (loading), `TermsGate`, `UpdateGate`, `SuspendedGate`, and `WelcomeSheet` (the "add a passkey after signing up" prompt, `AUTH-11`).
+
+**Passkeys.** `SystemPasskeys` (`PasskeyPlatform`) uses `ASAuthorizationPlatformPublicKeyCredentialProvider` directly when the server's host can be a WebAuthn relying party (`ServerURL.isDomain`, true for a registered domain with the `webcredentials:` associated domain, false for `127.0.0.1`/a LAN IP): `Begin*LoginOptions`/`Begin*RegistrationOptions` returns `options_json`, which becomes an `ASAuthorizationRequest`, and the resulting credential's JSON goes to `Finish*`. When the host cannot be a relying party (local dev, or a self-hosted server before it serves the AASA file), it falls back to opening the server's own ceremony page in an `SFSafariViewController` and polling for completion — the same browser-page flow desktop uses, so the dev loop and self-hosted servers without the well-known file still work.
+
+**Server requirement for native passkeys and universal invite links**: the server must serve `/.well-known/apple-app-site-association` (no file extension, `Content-Type: application/json`, no redirect):
+
+```json
+{
+  "webcredentials": { "apps": ["<TEAMID>.si.zabit.thehideout"] },
+  "applinks": { "details": [{ "appIDs": ["<TEAMID>.si.zabit.thehideout"], "components": [{ "/": "/invite/*" }] }] }
+}
+```
+
+`<TEAMID>` is the Apple Developer Team ID (`project.yml`'s `DEVELOPMENT_TEAM` once a real team is set); `Hideout.entitlements` already declares `webcredentials:thehideout.zabit.si` and `applinks:thehideout.zabit.si` for the production domain. Follow-up for a self-hosted server that cannot add that well-known file: a custom-scheme redirect (`thehideout://invite/<token>`) from the ceremony page, so the `SFSafariViewController` fallback can close itself instead of waiting purely on polling.
 
 ## Snapshot tests
 
@@ -58,6 +77,24 @@ TEST_RUNNER_RECORD_SNAPSHOTS=1 xcodebuild ... test -only-testing:HideoutTests   
 ```
 
 References are recorded on the **iPhone 18 Pro, iOS 27.2** simulator. CI does not run them (Liquid Glass renders slightly differently across simulator runtimes, which would fail GitHub's images for the wrong reason); it builds the app and runs the unit tests. Run the snapshots locally before a design PR; the glass shots allow a small pixel tolerance for the render server's highlights.
+
+A sheet (`WelcomeSheet`, `ServerSheet`) is snapshotted as its own content view, not through the `.sheet` that presents it: an offscreen `UIHostingController` cannot reliably capture a UIKit-presented sheet, so `AuthSnapshotTests.testWelcomePasskeySheet` hosts `WelcomeSheet()` directly, the same way `testServerSheet` already did for `ServerSheet()`.
+
+## UI tests
+
+`HideoutUITests/AuthUITests.swift` drives the sign-in, invite-accept and wrong-code flows against `--ui-testing` end to end (real `XCUIApplication` taps, not just view code), plus `testAuthTour` which walks every auth screen and gate and saves a screenshot of each under `TOUR_DIR` (default `/tmp/shots/tour`) for a design review:
+
+```sh
+xcodebuild -project Hideout.xcodeproj -scheme Hideout -destination 'platform=iOS Simulator,name=iPhone 18 Pro' -derivedDataPath build test -only-testing:HideoutUITests/AuthUITests
+TOUR_DIR=/tmp/shots/tour xcodebuild ... -only-testing:HideoutUITests/AuthUITests/testAuthTour   # screenshots only
+```
+
+Two things to know when touching this file:
+
+- `CheckRow`'s checkbox carries the `.isToggle` accessibility trait, so XCUITest exposes it as a `Switch`, not a `Button`; the invite accept form's Terms/Privacy row has markdown links in its label, which widens that one switch's accessible frame past its 44pt box, so tapping it needs a coordinate near the leading edge, not the element's center (see `AuthUITests.tap(_:_:)`).
+- A `.textContentType(.newPassword)` field triggers the system's "Use Strong Password?" callout as soon as it is focused; typing into the field while it is up can lose characters, so `type(_:into:secure:_:)` dismisses it and refocuses before typing.
+
+These tests are **not** run in CI (see `.github/workflows/ci.yml`, job `ios`): a headless CI runner's interaction with the keyboard and system callouts above is unreliable in a way a local run is not, and a flaky gate is worse than no gate. Run them locally before an auth-flow PR, and whenever this doc's launch arguments or `FakeAccounts` change.
 
 ## Theming rules in code
 
