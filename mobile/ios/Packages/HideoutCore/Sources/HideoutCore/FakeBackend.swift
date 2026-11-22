@@ -17,6 +17,8 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    /// The sign-in side of the fake world (see `FakeAuth.swift`).
+    let accounts = FakeAccounts()
     private var world: World
     private var subscribers: [UUID: AsyncThrowingStream<GatewayEvent, Error>.Continuation] = [:]
 
@@ -69,7 +71,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
 
     public var openStreams: Int { lock.withLock { subscribers.count } }
 
-    private func delay() async throws {
+    func delay() async throws {
         let l = latency
         if l > 0 { try await Task.sleep(for: .seconds(l)) }
     }
@@ -78,7 +80,8 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
 
     public func me() async throws -> Me {
         try await delay()
-        return lock.withLock { Me(user: world.user(world.meID), termsVersion: "2026-01-01") }
+        let terms = accounts.termsRequired
+        return lock.withLock { Me(user: world.user(world.meID), termsUpdateRequired: terms, termsVersion: terms ?? "2026-01-01") }
     }
 
     public func snapshot() async throws -> Snapshot {
