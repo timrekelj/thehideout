@@ -139,6 +139,8 @@ pub struct Outgoing {
 
 #[derive(Default)]
 pub struct Data {
+    /// The notification settings last seen on the gateway (changed on another session); no UI yet.
+    pub notification_settings: Option<thehideout_api::NotificationSettings>,
     pub guilds: Vec<Guild>,
     pub channels: HashMap<u64, Vec<Channel>>,
     pub dms: Vec<DmChannel>,
