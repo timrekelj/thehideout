@@ -205,7 +205,7 @@ Each phase ends with both apps working against a local dev server, snapshot test
 
 0. **Foundation** (this PR). Tokens, API clients, PARITY, architecture.
 1. **App skeletons and plumbing.** Xcode project with local packages and Android Gradle project with modules, theming wired (`Theme` in the environment, Material scheme), fonts registered, `AppContainer`, `ProtocolClient`, Keychain/Keystore token store, `AppStore` + `Reducer` + `GatewayStream` in `HideoutCore` / `:core` with the contract fixtures, error presenter, fake backend. Debug "gallery" screen showing tokens and components (the mobile twin of `client/gallery`).
-2. **Auth.** AUTH-01..15 including invite deep links, 2FA, native passkeys, reset, session restore, terms/update/suspended gates (once `account-lifecycle` lands).
+2. **Auth.** AUTH-01..15 including invite deep links, 2FA, native passkeys, reset, session restore, terms/update/suspended gates.
 3. **Core chat.** Tabs/split view, server list, channel list with sections, transcript (markdown, mentions, jumbo, pending/failed), composer, reactions and emoji picker, DMs, unread and the Mentions feed, reconnecting state, local cache, attachments and embeds with lightbox.
 4. **Management.** Create/join server and channel, invites, members and profiles, message edit/delete/reply, channel and section management with reordering, server settings (overview, roles, members, bans, emojis, danger zone), moderation.
 5. **Settings and security.** Appearance (all axes, live preview), account security (email, password, TOTP, recovery codes, passkeys, devices), data export and account deletion, about/licences.
