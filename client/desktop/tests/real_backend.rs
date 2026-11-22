@@ -121,6 +121,8 @@ impl Server {
             Duration::from_millis(200),
         );
         state.storage = storage;
+        // The production per-user message rate (a burst of 10) would refuse the pagination test's 60 sends.
+        state.limiter = Arc::new(thehideout_server::ratelimit::RateLimiter::new().with_message_rate(100_000, 1_000.0));
         if voice {
             let config = thehideout_server::config::LiveKitConfig::new(
                 "ws://127.0.0.1:7880",
