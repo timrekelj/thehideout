@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package thehideout.v1;
 
+import "google/protobuf/timestamp.proto";
 import "thehideout/v1/types.proto";
 
 // Guilds (Discord-style servers), their members and their channels.
@@ -35,6 +36,171 @@ service GuildService {
   // Replaces the section order and the channel order/section assignment.
   // Requires MANAGE_CHANNELS. Publishes LayoutUpdated.
   rpc UpdateLayout(UpdateLayoutRequest) returns (UpdateLayoutResponse);
+  // Removes a member. Requires KICK_MEMBERS and a top role strictly above the
+  // target's (nobody but the owner can act on the owner; you cannot kick
+  // yourself: use LeaveGuild). The member can rejoin with an invite code.
+  // Publishes guild_member_removed (reason KICKED) and guild_removed to the
+  // removed user. Audit-logged (`guild.kick`).
+  rpc KickMember(KickMemberRequest) returns (KickMemberResponse);
+  // Bans a member (or a former member): removes them like KickMember and
+  // blocks them from rejoining this guild with an invite code. Requires
+  // BAN_MEMBERS and the same hierarchy rule as KickMember. Optionally deletes
+  // their recent messages in the guild's channels, in the background (at most
+  // 7 days). Audit-logged (`guild.ban`).
+  rpc BanMember(BanMemberRequest) returns (BanMemberResponse);
+  // Lifts a ban. Requires BAN_MEMBERS. NOT_FOUND if the user is not banned.
+  // Audit-logged (`guild.unban`).
+  rpc UnbanMember(UnbanMemberRequest) returns (UnbanMemberResponse);
+  // Lists the guild's bans, newest first. Requires BAN_MEMBERS.
+  rpc ListBans(ListBansRequest) returns (ListBansResponse);
+  // Leaves a guild. The owner cannot leave (FAILED_PRECONDITION): transfer
+  // ownership or delete the guild first. Publishes guild_member_removed
+  // (reason LEFT) and guild_removed to the caller's streams.
+  rpc LeaveGuild(LeaveGuildRequest) returns (LeaveGuildResponse);
+  // Deletes a channel and, in the background, its messages and files.
+  // Requires MANAGE_CHANNELS. Reads of the channel fail with NOT_FOUND at once.
+  // Everyone in a voice channel leaves it. Publishes channel_deleted and
+  // layout_updated. Audit-logged (`channel.delete`).
+  rpc DeleteChannel(DeleteChannelRequest) returns (DeleteChannelResponse);
+  // Deletes a guild with everything in it (owner only; `confirm_name` must
+  // equal the guild's name). The guild disappears at once; channels, messages,
+  // roles, emojis, bans, invites and stored files are removed in the
+  // background. Publishes guild_removed to every member. Audit-logged
+  // (`guild.delete`).
+  rpc DeleteGuild(DeleteGuildRequest) returns (DeleteGuildResponse);
+  // Replaces the guild's invite code: the old one stops working at once.
+  // Requires MANAGE_SERVER. Publishes guild_updated. Audit-logged
+  // (`guild.rotate_invite`).
+  rpc RotateInviteCode(RotateInviteCodeRequest) returns (RotateInviteCodeResponse);
+  // Makes another current member the owner (owner only; `confirm_name` must
+  // equal the guild's name). The previous owner becomes an ordinary member.
+  // Publishes guild_updated. Audit-logged (`guild.transfer`).
+  rpc TransferOwnership(TransferOwnershipRequest) returns (TransferOwnershipResponse);
+}
+
+// Request to kick a member.
+message KickMemberRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // The member to remove.
+  uint64 user_id = 2;
+}
+
+// Result of kicking a member.
+message KickMemberResponse {}
+
+// Request to ban a member.
+message BanMemberRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // The user to ban; need not be a member.
+  uint64 user_id = 2;
+  // Why; at most 512 characters, shown in the ban list and the audit log.
+  string reason = 3;
+  // Also delete the user's messages from the last this-many seconds in the
+  // guild's channels (done in the background); at most 604800 (7 days),
+  // larger values are INVALID_ARGUMENT. Unset or 0 = keep their messages.
+  optional uint32 delete_message_seconds = 4;
+}
+
+// Result of banning a user.
+message BanMemberResponse {}
+
+// Request to lift a ban.
+message UnbanMemberRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // The banned user.
+  uint64 user_id = 2;
+}
+
+// Result of lifting a ban.
+message UnbanMemberResponse {}
+
+// A ban of a user from a guild.
+message Ban {
+  // The banned user.
+  User user = 1;
+  // The moderator who banned them (0 if unknown).
+  uint64 banned_by = 2;
+  // The reason given; "" if none.
+  string reason = 3;
+  // When the ban was made.
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// Request to list bans.
+message ListBansRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+}
+
+// The bans of a guild.
+message ListBansResponse {
+  // Bans, newest first.
+  repeated Ban bans = 1;
+}
+
+// Request to leave a guild.
+message LeaveGuildRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+}
+
+// Result of leaving a guild.
+message LeaveGuildResponse {}
+
+// Request to delete a channel.
+message DeleteChannelRequest {
+  // ID of the guild containing the channel.
+  uint64 guild_id = 1;
+  // ID of the channel.
+  uint64 channel_id = 2;
+}
+
+// Result of deleting a channel.
+message DeleteChannelResponse {
+  // The resulting layout (version bumped).
+  GuildLayout layout = 1;
+}
+
+// Request to delete a guild.
+message DeleteGuildRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // Must equal the guild's name (INVALID_ARGUMENT otherwise).
+  string confirm_name = 2;
+}
+
+// Result of deleting a guild.
+message DeleteGuildResponse {}
+
+// Request to rotate the invite code.
+message RotateInviteCodeRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+}
+
+// Result of rotating the invite code.
+message RotateInviteCodeResponse {
+  // The new invite code.
+  string invite_code = 1;
+}
+
+// Request to transfer ownership.
+message TransferOwnershipRequest {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // The new owner; must be a member other than the caller.
+  uint64 user_id = 2;
+  // Must equal the guild's name (INVALID_ARGUMENT otherwise).
+  string confirm_name = 3;
+}
+
+// Result of transferring ownership.
+message TransferOwnershipResponse {
+  // The updated guild.
+  Guild guild = 1;
 }
 
 // Request to create a guild.

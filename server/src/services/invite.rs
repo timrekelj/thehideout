@@ -647,7 +647,13 @@ impl InviteService for InviteSvc {
         let guilds = GuildSvc::new(self.state.clone());
         for guild_id in &invite.guild_ids {
             match load_guild(&self.state, id_to_db(*guild_id)).await? {
-                Some(guild) => guilds.admit(&guild, account.id).await?,
+                // `admit` refuses banned users; the account itself still gets created.
+                Some(guild) => match guilds.admit(&guild, account.id).await {
+                    Err(e) if e.code == connectrpc::ErrorCode::PermissionDenied => {
+                        tracing::info!(guild_id, user_id = account.id, "banned user not admitted by invite")
+                    }
+                    other => other?,
+                },
                 None => tracing::info!(guild_id, "invite guild no longer exists"),
             }
         }

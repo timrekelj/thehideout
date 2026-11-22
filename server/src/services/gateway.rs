@@ -212,6 +212,11 @@ impl EventStream {
                 }
                 Ok(UserControl::ProfileUpdated(user)) => Ok(Payload::UserUpdated(user.into())),
                 Ok(UserControl::VoiceMoved(moved)) => Ok(Payload::VoiceMoved(moved.into())),
+                Ok(UserControl::RemovedFromGuild(removed)) => {
+                    // Stop listening first: nothing of this guild is delivered after this.
+                    self.guilds.remove(&removed.guild_id);
+                    Ok(Payload::GuildRemoved(removed.into()))
+                }
                 Err(RecvError::Lagged(_)) => Err(lagged()),
                 Err(RecvError::Closed) => Err(internal("user control channel closed")),
             },
@@ -269,6 +274,9 @@ fn to_payload(event: &EventPayload) -> Payload {
         EventPayload::ReactionAdded(r) => Payload::ReactionAdded(r.into()),
         EventPayload::ReactionRemoved(r) => Payload::ReactionRemoved(r.into()),
         EventPayload::VoiceStateUpdate(v) => Payload::VoiceStateUpdate(v.into()),
+        EventPayload::MessageDeleted(d) => Payload::MessageDeleted(d.into()),
+        EventPayload::GuildMemberRemoved(r) => Payload::GuildMemberRemoved(r.into()),
+        EventPayload::ChannelDeleted(c) => Payload::ChannelDeleted(c.into()),
     }
 }
 

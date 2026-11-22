@@ -67,6 +67,11 @@ pub const MIGRATIONS: &[(i32, &str, &str)] = &[
         "voice",
         include_str!("../migrations/0012_voice.cql"),
     ),
+    (
+        13,
+        "moderation",
+        include_str!("../migrations/0013_moderation.cql"),
+    ),
 ];
 
 /// How the keyspace is replicated (`THEHIDEOUT_SCYLLA_REPLICATION`).

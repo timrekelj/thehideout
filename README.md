@@ -124,6 +124,25 @@ Two guards keep a development setup from sending real mail:
   `*.test`, `*.example`, `*.invalid`, `localhost`) is never sent through
   Resend: it is logged and dropped, and the flow carries on as if it was sent.
 
+## Moderation and guild structure
+
+Message edit/delete, kick, ban, leaving, deleting channels and guilds, invite-code
+rotation and ownership transfer (`GuildService`, `MessageService`; permissions
+MANAGE_MESSAGES=2048, KICK_MEMBERS=4096, BAN_MEMBERS=8192). The rules, events and
+audit-log actions are in `proto/README.md`. Operationally:
+
+- Deletions make the thing unreachable at once (message, `channels` / `guilds` and
+  membership rows) and clean up what hangs off it afterwards: reactions, embeds,
+  attachment rows and their S3 objects per message; a channel's message partitions in the
+  background after `DeleteChannel`; a deleted guild's roles, emojis, bans, sections,
+  counters and every file in its size index in the background after `DeleteGuild`.
+  Purges are best effort and are not resumed after a crash: leftovers are unreachable
+  rows or objects that the admin file list still shows and can delete.
+- Messages: `SendMessage` / `EditMessage` share a per-user token bucket (burst 10, then
+  1/s; `RESOURCE_EXHAUSTED` with `retry-after`), and a send retried with the same nonce
+  within 60 seconds is deduplicated (`message_nonces`, written with a TTL).
+- Migration `0013_moderation.cql` adds `guild_bans` and `message_nonces`.
+
 ## Voice (LiveKit)
 
 Voice channels (`Channel.kind = CHANNEL_KIND_VOICE`, chosen at creation, never
@@ -210,10 +229,10 @@ S3 keys; set a real key and a secret of 32+ characters (or unset `LIVEKIT_*`).
   seconds is dropped and their LiveKit participant removed; the server then logs a
   warning (at most every 5 minutes) that the webhook may not be reaching it. Joining the
   channel you are in again keeps the confirmed connection and does not restart that
-  timer. Deleting a channel,
-  or a member leaving, being removed or banned, must call
-  `voice::on_channel_deleted` / `voice::on_member_removed`; those RPCs do not exist yet,
-  so nothing calls them today. A reconnect of the same identity makes LiveKit send a
+  timer. Deleting a channel (`DeleteChannel`/`DeleteGuild`), or a member leaving
+  or being kicked or banned, calls `voice::on_channel_deleted` /
+  `voice::on_member_removed`: the user leaves voice and their LiveKit participant is
+  removed. A reconnect of the same identity makes LiveKit send a
   late `participant_left` for the old connection: it is ignored when its SID is not the
   one recorded from `participant_joined`, so it does not drop the fresh rejoin.
 - Production: run LiveKit with its own config (real keys of 32+ characters, TLS in front

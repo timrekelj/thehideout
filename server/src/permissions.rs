@@ -28,6 +28,12 @@ pub const VIDEO: u64 = 256;
 pub const MUTE_MEMBERS: u64 = 512;
 /// Move other members between voice channels and disconnect them.
 pub const MOVE_MEMBERS: u64 = 1024;
+/// Delete other members' messages.
+pub const MANAGE_MESSAGES: u64 = 2048;
+/// Kick members (subject to the hierarchy).
+pub const KICK_MEMBERS: u64 = 4096;
+/// Ban and unban members, list bans (subject to the hierarchy).
+pub const BAN_MEMBERS: u64 = 8192;
 /// Every defined permission bit.
 pub const ALL_PERMISSIONS: u64 = ADMINISTRATOR
     | MANAGE_SERVER
@@ -39,7 +45,10 @@ pub const ALL_PERMISSIONS: u64 = ADMINISTRATOR
     | SPEAK
     | VIDEO
     | MUTE_MEMBERS
-    | MOVE_MEMBERS;
+    | MOVE_MEMBERS
+    | MANAGE_MESSAGES
+    | KICK_MEMBERS
+    | BAN_MEMBERS;
 /// What every guild member has without any role (there is no @everyone role):
 /// the voice basics. MUTE_MEMBERS / MOVE_MEMBERS are not in it.
 pub const BASELINE: u64 = CONNECT | SPEAK | VIDEO;
@@ -213,6 +222,15 @@ mod tests {
         assert!(!st(false, ALL_PERMISSIONS, None).outranks(0));
         let owner = st(true, ALL_PERMISSIONS, None);
         assert!(owner.outranks(i32::MAX) && owner.holds_all(ALL_PERMISSIONS));
+    }
+
+    #[test]
+    fn moderation_bits_are_not_in_the_baseline() {
+        assert_eq!((MANAGE_MESSAGES, KICK_MEMBERS, BAN_MEMBERS), (2048, 4096, 8192));
+        for bit in [MANAGE_MESSAGES, KICK_MEMBERS, BAN_MEMBERS] {
+            assert_eq!(BASELINE & bit, 0);
+            assert_eq!(ALL_PERMISSIONS & bit, bit);
+        }
     }
 
     #[test]

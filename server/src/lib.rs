@@ -15,6 +15,7 @@ pub mod events;
 pub mod layout;
 pub mod media;
 pub mod migrations;
+pub mod moderation;
 pub mod passkeys;
 pub mod permissions;
 pub mod ratelimit;

@@ -249,12 +249,35 @@ pub async fn run(state: &AppState, job: &Job, urls: Vec<String>) {
     if unfurled.is_empty() {
         return;
     }
+    // The message may have been deleted (or edited again) while we fetched.
+    let still_there = state
+        .session
+        .execute_unpaged(
+            "SELECT content FROM messages WHERE channel_id = ? AND bucket = ? AND id = ?",
+            (id_to_db(job.channel_id), bucket_of(job.message_id), id_to_db(job.message_id)),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.into_rows_result().ok())
+        .and_then(|r| r.maybe_first_row::<(Option<String>,)>().ok().flatten())
+        .is_some_and(|(content,)| content.as_deref() == Some(job.content.as_str()));
+    if !still_there {
+        discard_ready(state, unfurled).await;
+        return;
+    }
     if let Err(e) = store(state, job, unfurled).await {
         tracing::warn!(message_id = job.message_id, error = %e.message.as_deref().unwrap_or("?"), "storing embeds failed");
         return;
     }
     if let Err(e) = publish_message_updated(state, job.channel_id, job.message_id).await {
         tracing::warn!(message_id = job.message_id, error = %e.message.as_deref().unwrap_or("?"), "publishing message_updated failed");
+    }
+}
+
+/// Deletes the objects downloaded for embeds that will not be stored.
+async fn discard_ready(state: &AppState, unfurled: Vec<Ready>) {
+    for item in unfurled {
+        discard(state, keys_of(&item.objects)).await;
     }
 }
 

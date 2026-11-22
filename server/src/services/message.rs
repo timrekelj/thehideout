@@ -13,6 +13,8 @@ use crate::embeds::{self, EMBED_COLUMNS, EmbedRow, MEDIA_COLUMNS, MediaRow, row_
 use crate::convert::{datetime_to_proto, id_from_db, id_to_db, snowflake_datetime};
 use crate::events::EventPayload;
 use crate::media::{self, Owner, pending};
+use crate::moderation;
+use crate::permissions::{MANAGE_MESSAGES, require_permission};
 use crate::proto::thehideout::v1::*;
 use crate::services::emoji::emoji_exists;
 use crate::snowflake::{bucket_of, current_bucket};
@@ -92,17 +94,39 @@ impl MessageService for MessageSvc {
                 "message content must be at most 4000 characters",
             ));
         }
-        // TODO: nonce-based deduplication of retried sends is not implemented; the nonce is only echoed.
         let nonce = req.nonce.unwrap_or_default();
         if nonce.chars().count() > MAX_NONCE_CHARS {
             return Err(ConnectError::invalid_argument("nonce must be at most 64 characters"));
         }
 
+        // A retried send (same user, channel and nonce within a minute) returns
+        // the message that was stored the first time. Checked before the rate
+        // limit so a retry costs nothing.
+        if !nonce.is_empty()
+            && let Some(message) = self.stored_by_nonce(user_id, req.channel_id, nonce).await?
+        {
+            return Response::ok(SendMessageResponse { message: message.into(), ..Default::default() });
+        }
+        self.state.limiter.check_message(user_id)?;
+
         let id = self.state.snowflake.next_id();
+        if !nonce.is_empty() && !self.claim_nonce(user_id, req.channel_id, nonce, id).await? {
+            // Lost a race with a retry of the same send.
+            return match self.stored_by_nonce(user_id, req.channel_id, nonce).await? {
+                Some(message) => Response::ok(SendMessageResponse { message: message.into(), ..Default::default() }),
+                None => Err(ConnectError::aborted("a send with this nonce is in progress")),
+            };
+        }
         let claimed = if attachment_ids.is_empty() {
             None
         } else {
-            Some(self.claim_attachments(user_id, &access, req.channel_id, id, &attachment_ids).await?)
+            match self.claim_attachments(user_id, &access, req.channel_id, id, &attachment_ids).await {
+                Ok(claimed) => Some(claimed),
+                Err(e) => {
+                    self.release_nonce(user_id, req.channel_id, nonce).await;
+                    return Err(e);
+                }
+            }
         };
         let inserted = self
             .state
@@ -125,6 +149,7 @@ impl MessageService for MessageSvc {
             if let Some(claimed) = &claimed {
                 self.release_attachments(req.channel_id, id, claimed).await;
             }
+            self.release_nonce(user_id, req.channel_id, nonce).await;
             return Err(internal(e));
         }
         if let Some(claimed) = &claimed {
@@ -312,6 +337,124 @@ impl MessageService for MessageSvc {
         }
         Response::ok(RemoveReactionResponse::default())
     }
+    async fn edit_message(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, EditMessageRequest>,
+    ) -> ServiceResult<EditMessageResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let access = require_channel_access(&self.state, user_id, req.channel_id).await?;
+        let guild_id = match &access {
+            ChannelAccess::Guild(guild_id) => *guild_id,
+            ChannelAccess::Dm => 0,
+        };
+        let Some(current) = self.load_message(req.channel_id, req.message_id, user_id).await? else {
+            return Err(ConnectError::not_found("message not found"));
+        };
+        if current.author_id != user_id {
+            return Err(ConnectError::permission_denied("only the author can edit a message"));
+        }
+        if req.content.trim().is_empty() && current.attachments.is_empty() {
+            return Err(ConnectError::invalid_argument("message content must not be empty"));
+        }
+        if req.content.chars().count() > MAX_CONTENT_CHARS {
+            return Err(ConnectError::invalid_argument("message content must be at most 4000 characters"));
+        }
+        self.state.limiter.check_message(user_id)?;
+        if current.content == req.content {
+            return Response::ok(EditMessageResponse { message: current.into(), ..Default::default() });
+        }
+
+        // IF EXISTS: an UPDATE would otherwise bring back a message deleted meanwhile.
+        let result = self
+            .state
+            .session
+            .execute_unpaged(
+                "UPDATE messages SET content = ?, edited_at = ? WHERE channel_id = ? AND bucket = ? AND id = ? IF EXISTS",
+                (
+                    req.content,
+                    Utc::now(),
+                    id_to_db(req.channel_id),
+                    bucket_of(req.message_id),
+                    id_to_db(req.message_id),
+                ),
+            )
+            .await
+            .map_err(internal)?;
+        if !applied(result)? {
+            return Err(ConnectError::not_found("message not found"));
+        }
+        // The old embeds belong to the old text; the new ones are resolved in the background.
+        moderation::purge_embeds(&self.state, req.channel_id, req.message_id).await?;
+        publish_message_updated(&self.state, req.channel_id, req.message_id).await?;
+        embeds::spawn(
+            &self.state,
+            embeds::Job {
+                channel_id: req.channel_id,
+                guild_id,
+                message_id: req.message_id,
+                author_id: user_id,
+                content: req.content.to_owned(),
+            },
+        );
+        let message = self
+            .load_message(req.channel_id, req.message_id, user_id)
+            .await?
+            .ok_or_else(|| ConnectError::not_found("message not found"))?;
+        Response::ok(EditMessageResponse { message: message.into(), ..Default::default() })
+    }
+
+    async fn delete_message(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, DeleteMessageRequest>,
+    ) -> ServiceResult<DeleteMessageResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let access = require_channel_access(&self.state, user_id, req.channel_id).await?;
+        let author = self
+            .state
+            .session
+            .execute_unpaged(
+                "SELECT author_id FROM messages WHERE channel_id = ? AND bucket = ? AND id = ?",
+                (id_to_db(req.channel_id), bucket_of(req.message_id), id_to_db(req.message_id)),
+            )
+            .await
+            .map_err(internal)?
+            .into_rows_result()
+            .map_err(internal)?
+            .maybe_first_row::<(i64,)>()
+            .map_err(internal)?
+            .map(|(a,)| id_from_db(a))
+            .ok_or_else(|| ConnectError::not_found("message not found"))?;
+        let guild_id = match &access {
+            ChannelAccess::Guild(guild_id) => *guild_id,
+            ChannelAccess::Dm => 0,
+        };
+        let by_moderator = author != user_id;
+        if by_moderator {
+            match &access {
+                ChannelAccess::Guild(guild_id) => {
+                    require_permission(&self.state, user_id, *guild_id, MANAGE_MESSAGES).await?;
+                }
+                ChannelAccess::Dm => {
+                    return Err(ConnectError::permission_denied("only the author can delete a direct message"));
+                }
+            }
+        }
+        moderation::purge_message(&self.state, req.channel_id, req.message_id).await?;
+        moderation::publish_message_deleted(&self.state, guild_id, req.channel_id, req.message_id);
+        if by_moderator {
+            moderation::audit(
+                &self.state,
+                user_id,
+                "message.delete",
+                &format!("guild:{guild_id}/channel:{}/message:{}", req.channel_id, req.message_id),
+                &format!("author:{author}"),
+            )
+            .await;
+        }
+        Response::ok(DeleteMessageResponse::default())
+    }
 }
 
 /// Attachment row as read back by `load_attachments`.
@@ -393,6 +536,64 @@ fn key_to_emoji(key: &str) -> Option<ReactionEmoji> {
 }
 
 impl MessageSvc {
+    /// The message a send with this `nonce` already stored, if any.
+    async fn stored_by_nonce(&self, user_id: u64, channel_id: u64, nonce: &str) -> Result<Option<Message>, ConnectError> {
+        let Some((message_id,)) = self
+            .state
+            .session
+            .execute_unpaged(
+                "SELECT message_id FROM message_nonces WHERE user_id = ? AND channel_id = ? AND nonce = ?",
+                (id_to_db(user_id), id_to_db(channel_id), nonce),
+            )
+            .await
+            .map_err(internal)?
+            .into_rows_result()
+            .map_err(internal)?
+            .maybe_first_row::<(i64,)>()
+            .map_err(internal)?
+        else {
+            return Ok(None);
+        };
+        match self.load_message(channel_id, id_from_db(message_id), user_id).await? {
+            Some(message) => Ok(Some(message)),
+            // Claimed but not stored (yet, or the message was deleted since).
+            None => Err(ConnectError::aborted("a send with this nonce is in progress or was deleted")),
+        }
+    }
+
+    /// Remembers `nonce` for a minute; `false` if someone already holds it.
+    async fn claim_nonce(&self, user_id: u64, channel_id: u64, nonce: &str, message_id: u64) -> Result<bool, ConnectError> {
+        let result = self
+            .state
+            .session
+            .execute_unpaged(
+                "INSERT INTO message_nonces (user_id, channel_id, nonce, message_id) VALUES (?, ?, ?, ?) \
+                 IF NOT EXISTS USING TTL 60",
+                (id_to_db(user_id), id_to_db(channel_id), nonce, id_to_db(message_id)),
+            )
+            .await
+            .map_err(internal)?;
+        applied(result)
+    }
+
+    /// Forgets a nonce after a failed send, best effort, so the retry is not mistaken for a duplicate.
+    async fn release_nonce(&self, user_id: u64, channel_id: u64, nonce: &str) {
+        if nonce.is_empty() {
+            return;
+        }
+        if let Err(e) = self
+            .state
+            .session
+            .execute_unpaged(
+                "DELETE FROM message_nonces WHERE user_id = ? AND channel_id = ? AND nonce = ?",
+                (id_to_db(user_id), id_to_db(channel_id), nonce),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "releasing a message nonce failed");
+        }
+    }
+
     /// Validates the caller's pending uploads for a new message, consumes them,
     /// counts their bytes and writes the message's attachment rows (in the
     /// message's partition, before the message row itself exists, so nobody

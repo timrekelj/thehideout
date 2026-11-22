@@ -95,6 +95,22 @@ pub async fn member_added(state: &AppState, guild_id: u64) {
     bump(state, &format!("guild:{guild_id}"), "members", 1).await;
 }
 
+/// A member left or was removed.
+pub async fn member_removed(state: &AppState, guild_id: u64) {
+    bump(state, &format!("guild:{guild_id}"), "members", -1).await;
+}
+
+pub async fn channel_deleted(state: &AppState, guild_id: u64) {
+    bump(state, "site", "channels", -1).await;
+    bump(state, &format!("guild:{guild_id}"), "channels", -1).await;
+}
+
+/// A guild was deleted with `channels` channels.
+pub async fn guild_deleted(state: &AppState, channels: usize) {
+    bump(state, "site", "guilds", -1).await;
+    bump(state, "site", "channels", -(channels as i64)).await;
+}
+
 /// A message was stored (`guild_id` is 0 for DMs).
 pub async fn message_sent(state: &AppState, guild_id: u64, user_id: u64) {
     bump(state, "site", "messages", 1).await;
