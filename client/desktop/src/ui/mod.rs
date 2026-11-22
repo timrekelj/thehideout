@@ -19,6 +19,7 @@ pub mod shell;
 pub mod sidebar;
 pub mod toasts;
 pub mod transcript;
+pub mod update_required;
 pub mod voice_bar;
 pub mod voice_settings;
 pub mod voice_stage;

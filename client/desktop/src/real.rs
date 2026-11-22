@@ -26,9 +26,12 @@ use crate::backend::{
     Backend, Command, GuildAccess, Initial, InviteAction, Reply, SecurityInfo, Session, device_label,
 };
 
-pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
+/// The server a debug build (and every test) talks to by default.
+pub const DEV_SERVER: &str = "http://127.0.0.1:8080";
+/// The server a release build talks to by default.
+pub const PRODUCTION_SERVER: &str = "https://thehideout.zabit.si";
 pub const SERVER_ENV: &str = "THEHIDEOUT_SERVER_URL";
-const APP_ID: &str = "thehideout";
+pub const APP_ID: &str = "thehideout";
 const PAGE: u32 = 50;
 /// A passkey ceremony is polled once a second for up to two minutes (and at once when the
 /// ceremony page redirects to the app's loopback address).
@@ -41,11 +44,16 @@ const LOOPBACK_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>thehi
 
 /// The server to talk to when the auth form's field is empty: the environment, else the default.
 pub fn default_server() -> String {
-    std::env::var(SERVER_ENV)
-        .ok()
-        .map(|s| s.trim().to_owned())
+    pick_server(std::env::var(SERVER_ENV).ok().as_deref(), cfg!(debug_assertions))
+}
+
+/// The environment's value if it is non-blank, else the production server (release builds) or the
+/// local development one (debug builds).
+fn pick_server(env: Option<&str>, debug: bool) -> String {
+    env.map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_SERVER.to_owned())
+        .unwrap_or(if debug { DEV_SERVER } else { PRODUCTION_SERVER })
+        .to_owned()
 }
 
 /// `scheme://host:port` without a trailing slash. A bare `host:port` gets `https://`,
@@ -1369,5 +1377,28 @@ mod normalize_tests {
         assert!(is_loopback_host("::1"));
         assert!(!is_loopback_host("example.com"));
         assert!(!is_loopback_host("192.168.1.5:8080"));
+    }
+}
+
+#[cfg(test)]
+mod default_server_tests {
+    use super::{DEV_SERVER, PRODUCTION_SERVER, pick_server};
+
+    #[test]
+    fn debug_builds_use_the_local_server() {
+        assert_eq!(pick_server(None, true), DEV_SERVER);
+    }
+
+    #[test]
+    fn release_builds_use_production() {
+        assert_eq!(pick_server(None, false), PRODUCTION_SERVER);
+        assert_eq!(PRODUCTION_SERVER, "https://thehideout.zabit.si");
+    }
+
+    #[test]
+    fn the_environment_overrides_both_and_blank_is_ignored() {
+        assert_eq!(pick_server(Some(" http://x:1 "), true), "http://x:1");
+        assert_eq!(pick_server(Some("http://x:1"), false), "http://x:1");
+        assert_eq!(pick_server(Some("  "), false), PRODUCTION_SERVER);
     }
 }

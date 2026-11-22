@@ -28,6 +28,8 @@ pub struct App {
     saver: Option<Saver>,
     /// The audio engine, once one is wired: it gets the state's voice intents on every flush.
     voice_sink: Option<Box<dyn VoiceSink>>,
+    /// The server refused this app version: the window shows only the "Update required" screen.
+    pub update_required: bool,
 }
 
 impl App {
@@ -38,6 +40,7 @@ impl App {
             boot: 0,
             saver: None,
             voice_sink: None,
+            update_required: false,
         }
     }
 
@@ -166,7 +169,7 @@ const HEADLESS: &[&str] = &[
     "--cpu-boot",
 ];
 
-fn headless() -> bool {
+pub fn headless() -> bool {
     std::env::args()
         .skip(1)
         .any(|a| HEADLESS.contains(&a.as_str()))
@@ -254,6 +257,10 @@ pub fn poll(a: &mut App, clock: f64, tx: &mut Tx) -> bool {
             take(&mut a.state, r, tx);
         }
     }
+    if !a.update_required && thehideout_api::update_required() {
+        a.update_required = true;
+        changed = true;
+    }
     if let Some(text) = a.state.ui.copy_request.take() {
         tx.copy(text);
     }
@@ -330,6 +337,9 @@ pub fn view(a: &App, cx: &mut Cx<App>) -> El {
     let look = a.state.ui.look;
     let dark = look.spec.is_dark(cx.system_dark());
     let (k, t) = (kit_for(&look.spec, dark), theme_for(&look.spec, dark));
+    if a.update_required {
+        return rune_kit::root(ui::update_required::build(a, k).fill(t.bg.color()), []);
+    }
     // Reduce motion follows the system unless the user forced it (the override lasts one commit,
     // so it is restated every time the view runs).
     match look.reduce_motion {
