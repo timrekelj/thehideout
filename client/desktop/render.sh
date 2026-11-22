@@ -25,6 +25,11 @@ for mode in "" "-light"; do
     $BIN --scene "$scene$mode" --size 1280x800 --at 1 --snap "$OUT/$scene$mode.png" "$@"
   done
   # The roles editor is long: a taller window shows the new voice switches at its end.
+  for scene in message-editing message-menu message-delete-confirm member-menu-moderation ban-dialog server-settings-bans delete-channel-confirm leave-server-confirm transfer-dialog invite-reset; do
+    $BIN --scene "$scene$mode" --size 1280x800 --at 1 --snap "$OUT/$scene$mode.png" "$@"
+  done
+  # The Overview page with its Danger zone is long: a taller window shows all of it.
+  $BIN --scene "server-danger-zone$mode" --size 1280x1000 --at 1 --snap "$OUT/server-danger-zone$mode.png" "$@"
   $BIN --scene "server-settings-roles-voice$mode" --size 1280x1100 --at 1 --snap "$OUT/server-settings-roles-voice$mode.png" "$@"
   $BIN --scene "main-small$mode" --size 800x600 --at 1 --snap "$OUT/main-small$mode.png" "$@"
 done

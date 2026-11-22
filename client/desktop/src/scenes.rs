@@ -901,6 +901,137 @@ fn dialog_create_voice(a: &mut App, dark: bool) {
     *a = app;
 }
 
+// ---- moderation ------------------------------------------------------------------------------
+
+/// The busy main screen with pictures, where Tim has said two things in #general: the first was
+/// edited afterwards ("(edited)"), the second is the one he is about to change or delete.
+fn moderation_screen(dark: bool) -> (App, FakeBackend, u64) {
+    let (mut app, fake) = avatars_screen(dark);
+    app.act(|s| {
+        s.send("Pushed a fix for the backoff test, it was waiting on the wrong clock.");
+    });
+    app.pump();
+    let first = last_of(&app, GENERAL, 1);
+    app.act(|s| {
+        s.edit_message(GENERAL, first, "Pushed a fix for the backoff test: it was waiting on the wrong clock.");
+    });
+    app.pump();
+    app.act(|s| {
+        s.send("Merging after lunch, shout if you want me to hold off.");
+    });
+    app.pump();
+    let second = last_of(&app, GENERAL, 1);
+    (app, fake, second)
+}
+
+/// The id of the newest message of `channel` written by `author`.
+fn last_of(app: &App, channel: u64, author: u64) -> u64 {
+    app.state
+        .log(channel)
+        .and_then(|l| l.messages.iter().rev().find(|m| m.author_id == author))
+        .map_or(0, |m| m.id)
+}
+
+fn message_editing(a: &mut App, dark: bool) {
+    let (mut app, _fake, message) = moderation_screen(dark);
+    app.act(|s| {
+        s.begin_edit(GENERAL, message);
+        if let Some(e) = s.ui.editing.as_mut() {
+            e.input.replace_text("Merging after lunch, shout if you want me to hold off until the review is in.");
+        }
+    });
+    *a = app;
+}
+
+/// The hover bar's More menu on Tim's own message: Reply, Copy text, Edit, Delete.
+fn message_menu(a: &mut App, dark: bool) {
+    let (mut app, _fake, message) = moderation_screen(dark);
+    app.state.ui.menu = Menu::Message { channel: GENERAL, message, at: None };
+    *a = app;
+}
+
+fn message_delete_confirm(a: &mut App, dark: bool) {
+    let (mut app, _fake, message) = moderation_screen(dark);
+    app.act(|s| s.delete_pressed(GENERAL, message, false));
+    *a = app;
+}
+
+/// The member panel with Bruno's row pressed: Kick and Ban for the owner.
+fn member_menu_moderation(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.state.ui.members_open = true;
+    app.state.ui.menu = Menu::Member { user: BRUNO, at: None };
+    *a = app;
+}
+
+fn ban_dialog(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.state.ui.members_open = true;
+    app.act(|s| s.ask_ban(1, BRUNO));
+    if let Some(d) = app.state.ui.dialog.as_mut() {
+        d.input.replace_text("Posting spam links in #general");
+        d.form.cleanup = 2;
+    }
+    *a = app;
+}
+
+/// The Bans page with two people on it: one with a reason, one without.
+fn server_settings_bans(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.act(|s| {
+        s.ban(1, BRUNO, "Posting spam links in #general", None);
+        s.ban(1, CVETKA, "", None);
+    });
+    app.pump();
+    app.act(|s| {
+        s.open_server_settings(1);
+        s.server_page(ServerPage::Bans);
+    });
+    app.pump();
+    app.state.data.media.settle();
+    app.state.ui.toasts.clear();
+    *a = app;
+}
+
+fn delete_channel_confirm(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.act(|s| s.open_dialog(DialogKind::DeleteChannel { guild: 1, channel: PLANS }));
+    *a = app;
+}
+
+/// Tim is a member, not the owner, of Garage Band.
+fn leave_server_confirm(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.act(|s| s.go_guild(2));
+    app.pump();
+    app.act(|s| s.open_dialog(DialogKind::LeaveGuild { guild: 2 }));
+    *a = app;
+}
+
+/// The owner's Overview page; the scene is rendered in a tall window so the Danger zone is whole.
+fn server_danger_zone(a: &mut App, dark: bool) {
+    server_settings(a, dark, ServerPage::Overview, None);
+}
+
+/// The hand-over dialog with a member picked and the name half typed.
+fn transfer_dialog(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.act(|s| s.open_dialog(DialogKind::TransferOwnership { guild: 1 }));
+    if let Some(d) = app.state.ui.dialog.as_mut() {
+        d.form.target = Some(ANA);
+        d.input.replace_text("The Hideout");
+    }
+    *a = app;
+}
+
+/// The invite dialog asking whether to reset the code.
+fn invite_reset(a: &mut App, dark: bool) {
+    let (mut app, _fake) = avatars_screen(dark);
+    app.act(|s| s.open_dialog(DialogKind::Invite { guild: 1 }));
+    app.act(|s| s.ask_reset_invite(true));
+    *a = app;
+}
+
 type Scene = (&'static str, fn(&mut App));
 
 pub const SCENES: &[Scene] = &[
@@ -1085,6 +1216,28 @@ pub const SCENES: &[Scene] = &[
     ("server-settings-roles-voice-light", |a| {
         server_settings(a, false, ServerPage::Roles, Some(HIDEOUT_MODS))
     }),
+    ("message-editing", |a| message_editing(a, true)),
+    ("message-editing-light", |a| message_editing(a, false)),
+    ("message-menu", |a| message_menu(a, true)),
+    ("message-menu-light", |a| message_menu(a, false)),
+    ("message-delete-confirm", |a| message_delete_confirm(a, true)),
+    ("message-delete-confirm-light", |a| message_delete_confirm(a, false)),
+    ("member-menu-moderation", |a| member_menu_moderation(a, true)),
+    ("member-menu-moderation-light", |a| member_menu_moderation(a, false)),
+    ("ban-dialog", |a| ban_dialog(a, true)),
+    ("ban-dialog-light", |a| ban_dialog(a, false)),
+    ("server-settings-bans", |a| server_settings_bans(a, true)),
+    ("server-settings-bans-light", |a| server_settings_bans(a, false)),
+    ("delete-channel-confirm", |a| delete_channel_confirm(a, true)),
+    ("delete-channel-confirm-light", |a| delete_channel_confirm(a, false)),
+    ("leave-server-confirm", |a| leave_server_confirm(a, true)),
+    ("leave-server-confirm-light", |a| leave_server_confirm(a, false)),
+    ("server-danger-zone", |a| server_danger_zone(a, true)),
+    ("server-danger-zone-light", |a| server_danger_zone(a, false)),
+    ("transfer-dialog", |a| transfer_dialog(a, true)),
+    ("transfer-dialog-light", |a| transfer_dialog(a, false)),
+    ("invite-reset", |a| invite_reset(a, true)),
+    ("invite-reset-light", |a| invite_reset(a, false)),
     ("main-small", |a| main_(a, true)),
     ("main-small-light", |a| main_(a, false)),
     ("admin-overview", |a| admin_overview(a, true)),

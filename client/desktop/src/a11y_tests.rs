@@ -123,10 +123,22 @@ fn every_operable_element_has_a_role_and_a_name() {
         "voice-screen-picker",
         "voice-sidebar-live",
         "dialog-create-voice",
+        "message-editing",
+        "message-delete-confirm",
+        "member-menu-moderation",
+        "ban-dialog",
+        "server-settings-bans",
+        "server-danger-zone",
+        "delete-channel-confirm",
+        "leave-server-confirm",
+        "transfer-dialog",
+        "invite-reset",
     ] {
         let n = audit(s);
+        // A small confirmation or a menu holds the focus: its few controls are all there is.
+        let min = if matches!(s, "message-delete-confirm" | "delete-channel-confirm" | "leave-server-confirm" | "invite-reset" | "member-menu-moderation") { 2 } else { 5 };
         assert!(
-            n >= 5,
+            n >= min,
             "{s}: only {n} operable elements, the scene did not build"
         );
     }
