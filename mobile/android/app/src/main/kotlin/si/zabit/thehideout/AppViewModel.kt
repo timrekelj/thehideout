@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.thehideout.core.api.ApiClient
 import app.thehideout.core.auth.AuthFlow
+import app.thehideout.core.firstOrDefault
 import app.thehideout.core.store.AppStore
 import app.thehideout.ui.theme.Look
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,7 +41,15 @@ class AppViewModel(private val container: AppContainer, fake: Boolean) : ViewMod
     var pendingInvite: String? = null
 
     init {
-        openSession(serverUrl.value)
+        // DataStore's flow needs a dispatch to emit the persisted URL; `serverUrl.value` reads its
+        // eagerly-seeded default (BuildConfig.DEFAULT_SERVER) until then. Fake mode ignores the URL
+        // entirely, so only it may start the session synchronously; the real client must await the
+        // persisted value, or a cold start silently reopens against the build default.
+        if (isFake) {
+            openSession(container.defaultServer())
+        } else {
+            viewModelScope.launch { openSession(container.server.url.firstOrDefault(container.defaultServer())) }
+        }
     }
 
     private fun openSession(url: String) {
