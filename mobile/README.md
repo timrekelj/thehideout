@@ -6,7 +6,7 @@ Native iOS (SwiftUI) and Android (Jetpack Compose) apps with the same features a
 - [`tokens/`](tokens): design tokens exported from the Rust design crate, the generator, bundled fonts.
 - [`api/`](api): `buf` generation of the Swift and Kotlin API clients from `proto/`.
 - [`ios/`](ios): the Xcode project (generated from `project.yml`), the app, `Packages/{HideoutAPI,HideoutDesign,HideoutCore,HideoutUI}`, snapshot tests. See [`ios/README.md`](ios/README.md).
-- [`android/`](android): `design/` (generated tokens) and `api/` (generated client); the Gradle project comes next.
+- [`android/`](android): the Gradle project: `:app`, `:core`, `:ui`, `:design` (generated tokens), `:api` (generated client).
 
 ## Decisions (settled)
 
@@ -41,7 +41,8 @@ mobile/
   android/
     design/src/main/kotlin/app/thehideout/design/DesignTokens.kt
     api/src/main/{java,kotlin}              generated protobuf-javalite + connect-kotlin clients
-    (next) settings.gradle.kts, app/, core/, ui/, gradle wrapper
+    settings.gradle.kts, gradle/libs.versions.toml, gradlew      the Gradle project (wrapper 9.9.2)
+    app/   core/   ui/                                          application, JVM core, Compose UI
 ```
 
 ### Token pipeline
@@ -86,9 +87,12 @@ Versions that are verified to compile together:
 | | | protobuf-javalite | 4.36.2 |
 | | | OkHttp | 5.5.0 |
 | | | Compose BOM / Material 3 | 2026.11.01 / 1.5.0 |
-| | | compileSdk / minSdk | 36 (37 installed) / 26 |
+| | | compileSdk / targetSdk / minSdk | 37 / 37 / 26 (see below) |
 
-`HideoutAPI` builds with `swift build` (macOS) and `xcodebuild -scheme HideoutAPI -destination 'generic/platform=iOS Simulator'`. The Kotlin side was compiled together with `DesignTokens.kt` in a throwaway AGP 9.3.1 library module (`compileDebugKotlin` and `compileDebugJavaWithJavac` pass); a committed Android project replaces that harness in the next phase.
+`HideoutAPI` builds with `swift build` (macOS) and `xcodebuild -scheme HideoutAPI -destination 'generic/platform=iOS Simulator'`. The Kotlin side is the committed Gradle project in `android/` (phase 1). Two deviations from the table above, both forced by what resolves:
+
+- **compileSdk 37, not 36.** Compose 1.13 (the BOM 2026.11.01 that carries Material 3 1.5.0, whose Expressive APIs the app is built on) and the adaptive libraries declare `minCompileSdk` 37 (one artifact 37.1). Only platform `android-37.0` exists in the SDK repository, so the project compiles against 37.0 and turns off AGP's `check*AarMetadata` tasks (see `android/build.gradle.kts`): the declaration is a floor for new API use, not a link-time requirement, and the libraries guard newer calls. Revisit when 37.1 ships. The older BOM 2026.09.00 has no `ToggleButton`, button groups or `LoadingIndicator` (Material 3 1.4), so it was not an option.
+- Material 3 adaptive 1.3.0, activity-compose 1.13.0, lifecycle 2.11.1, DataStore 1.2.1, Roborazzi 1.79.0 and Robolectric 4.18.1 are pinned in `android/gradle/libs.versions.toml`.
 
 ### Icons
 
@@ -146,6 +150,8 @@ settings.gradle.kts, gradle/libs.versions.toml, gradle wrapper
   :api        generated protobuf-javalite + connect-kotlin clients (done)
 ```
 
+**Modules as built (phase 1).** `:api` and `:core` are plain Kotlin/JVM libraries (protobuf-javalite and connect-kotlin are JVM libraries, so `:core` depends on `:api` directly and everything in it, including the real `ConnectApiClient`, the reducer and the cache, is tested by `./gradlew :core:test` in seconds with JUnit 5, Turbine and coroutines-test, no Android). `:design` is an Android library (Compose types, `res/font`). `:ui` holds the theme, components, the gallery, the shell and the Roborazzi tests. `:app` holds `MainActivity`, `AppContainer`, the Keystore token store and the manifest; the Android-specific `KeystoreTokenStore` is a thin key provider over `:core`'s `AesGcmBox`, which is unit tested on the JVM. Kotlin warnings are errors in `:core`, `:ui` and `:app`.
+
 **State.** One `AppStore` per session (the Kotlin twin of the iOS store, same reducer, same fixtures) exposed as `StateFlow<AppState>` immutable snapshots; screen `ViewModel`s (`androidx.lifecycle`) map slices of it with `stateIn` and call store intents. Single-source-of-truth, unidirectional: `UI event -> ViewModel -> Store intent -> RPC/gateway -> Reducer -> new state -> UI`. **DI:** manual `AppContainer` created in `Application.onCreate` and passed through a `ViewModelProvider.Factory`; Hilt is skipped because the graph is small (store, client, cache, prefs, LiveKit controller) and kapt/KSP time and indirection buy nothing here.
 
 **Networking.** connect-kotlin `ProtocolClient` over a shared `OkHttpClient` (HTTP/2, 30 s read timeout except the gateway stream), an interceptor for `authorization: Bearer`, and `UNAUTHENTICATED` handling as on iOS. Uploads: OkHttp `RequestBody` streaming from a `ContentResolver` input stream, run in a `WorkManager` expedited job for large files.
@@ -157,6 +163,20 @@ settings.gradle.kts, gradle/libs.versions.toml, gradle wrapper
 **Navigation.** `NavigationSuiteScaffold` chooses a bottom `NavigationBar` (compact) or a navigation rail (medium and expanded) for the same four destinations (Servers, DMs, Mentions, You). Servers and channels use the Material 3 adaptive `NavigableListDetailPaneScaffold` (channel list | transcript, with the member list as an extra pane on expanded widths); on phones it is a normal back stack with predictive back. Navigation 3 or Navigation Compose with type-safe routes; deep links `thehideout://invite/<token>` and the https App Link go through the same routes. The voice mini player sits above the navigation bar and expands into the call screen.
 
 **Local dev.** The emulator reaches the host at `http://10.0.2.2:8080`; allow cleartext only in a **debug** `network_security_config` for `10.0.2.2` and `localhost` (release builds are HTTPS-only). Physical devices use the LAN address or `adb reverse tcp:8080 tcp:8080` with `127.0.0.1`.
+
+### Android: running and testing (phase 1)
+
+```sh
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"   # any JDK 17+; CI uses 21
+cd mobile/android
+./gradlew :core:test :app:assembleDebug        # unit tests and the debug APK
+./gradlew :ui:recordRoborazziDebug             # re-record the references in ui/src/test/snapshots
+./gradlew :ui:verifyRoborazziDebug             # compare against them (CI)
+```
+
+Debug launch flags (intent extras, ignored by release builds): `adb shell am start -n si.zabit.thehideout/.MainActivity --ez fake true` runs the whole app on the in-memory `FakeBackend` (seeded like desktop's `fake.rs`: ana, bruno, cvetka and tim, The Hideout with sections and voice channels, two DMs, a few unread messages); `--ez gallery true` opens the design gallery; the debug build also has a second launcher entry, "Hideout gallery". The debug build talks to `http://10.0.2.2:8080` (a debug-only network security config allows cleartext to 10.0.2.2, localhost and 127.0.0.1; release is HTTPS-only). The signed-out screen has "Explore with demo data" on debug builds.
+
+The snapshot matrix is the gallery (phone, captured tall), the shell and its screens (phone and tablet, dark and light), the signed-out screen, the look controls and four extra looks (Ocean/Cool, Ember/Paper light, High contrast + Compact + text 125%). They run on Robolectric with native graphics, on the JVM, pinned to UTC and the fake world's clock. References are recorded on macOS; text anti-aliasing differs slightly between macOS and Linux, so CI compares with a small tolerance (`changeThreshold` 0.5%) and uploads the diffs when it fails.
 
 ## Theming
 
@@ -224,6 +244,6 @@ Added in this PR (`.github/workflows/ci.yml`):
 To add as the apps land:
 
 - iOS: the `ios` job (macOS 26, newest Xcode 26) runs `swift test` for `HideoutCore`, checks that `Hideout.xcodeproj` matches `project.yml`, builds the app for the simulator and runs the unit tests. The snapshot tests are skipped in CI (their references are recorded on one simulator runtime and Liquid Glass renders differently across runtimes; see `ios/README.md`). Still to add: UI tests, snapshot runs once a runner matches, diffs as artifacts, archive and TestFlight upload on tags.
-- Android (Ubuntu runner): `./gradlew :core:test :ui:verifyRoborazziDebug :app:assembleDebug :app:lintDebug`, instrumented tests on a managed device nightly; bundle and Play internal upload on tags.
+- Android (Ubuntu runner): the `android` job runs `:core:test`, `:app:assembleDebug` and `:ui:verifyRoborazziDebug` today; still to add: `:app:lintDebug`, instrumented tests on a managed device nightly, bundle and Play internal upload on tags.
 - A path filter so `mobile/**` and `client/design/**` changes run the mobile jobs and nothing else does.
 - `buf breaking` already guards the protos; the `--check` jobs guard the generated clients.
