@@ -11,6 +11,7 @@ import app.thehideout.core.attachment.imageGrid
 import app.thehideout.core.attachment.mediaUrl
 import app.thehideout.core.attachment.opensInline
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -45,11 +46,29 @@ class AttachmentLayoutTest {
     }
 
     @Test
+    fun `code and document kinds come from the extension too`() {
+        assertEquals(FileKind.Code, fileKind("", "main.rs"))
+        assertEquals(FileKind.Code, fileKind("application/json", "x"))
+        assertEquals(FileKind.Code, fileKind("", "notes.yaml"))
+        assertEquals(FileKind.Doc, fileKind("", "report.docx"))
+        assertEquals(FileKind.Doc, fileKind("application/msword", "x"))
+        assertEquals(FileKind.Doc, fileKind("", "sheet.xlsx"))
+    }
+
+    @Test
     fun `a single picture keeps its aspect within the limits`() {
         assertEquals(400f to 225f, fitSize(1600 to 900, 400f, 300f))
         assertEquals(150f to 300f, fitSize(600 to 1200, 400f, 300f))
         assertEquals(200f to 100f, fitSize(200 to 100, 400f, 300f))
         assertEquals(400f to 225f, fitSize(null, 400f, 300f))
+    }
+
+    @Test
+    fun `a tiny picture is scaled up to a legible box, keeping its aspect`() {
+        // 20x10 scaled by the max-dimension factor so neither side reads as a speck: 96x48.
+        assertEquals(96f to 48f, fitSize(20 to 10, 400f, 300f))
+        // A tiny square grows to exactly 96x96.
+        assertEquals(96f to 96f, fitSize(10 to 10, 400f, 300f))
     }
 
     @Test
@@ -74,9 +93,16 @@ class AttachmentLayoutTest {
     }
 
     @Test
-    fun `media urls join the base and the key, or pass a full uri through`() {
+    fun `media urls join the base and the key, or pass only the fake backend's bundled assets through`() {
         assertEquals("http://h:1/media/abc", mediaUrl("http://h:1", "abc"))
         assertEquals("http://h:1/media/abc", mediaUrl("http://h:1/", "abc"))
         assertEquals("file:///android_asset/x.png", mediaUrl("http://h:1", "file:///android_asset/x.png"))
+    }
+
+    @Test
+    fun `a key with a foreign scheme is refused, not passed through`() {
+        assertThrows(IllegalArgumentException::class.java) { mediaUrl("http://h:1", "https://evil.example/track.png") }
+        assertThrows(IllegalArgumentException::class.java) { mediaUrl("http://h:1", "content://com.evil/leak") }
+        assertThrows(IllegalArgumentException::class.java) { mediaUrl("http://h:1", "file:///etc/passwd") }
     }
 }

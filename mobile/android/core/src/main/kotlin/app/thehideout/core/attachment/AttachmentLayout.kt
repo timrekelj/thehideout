@@ -53,9 +53,20 @@ fun clockLabel(seconds: Double): String {
     return if (h > 0) String.format(Locale.ROOT, "%d:%02d:%02d", h, m, sec) else String.format(Locale.ROOT, "%d:%02d", m, sec)
 }
 
-/** `{base}/media/{key}`, unless `key` already names a full URI (the fake backend's bundled assets). */
-fun mediaUrl(baseUrl: String, key: String): String =
-    if (key.contains("://")) key else "${baseUrl.trimEnd('/')}/media/$key"
+/** The fake backend's bundled-asset keys pass through [mediaUrl] unprefixed; nothing else may. */
+const val FAKE_ASSET_PREFIX = "file:///android_asset/"
+
+/**
+ * `{base}/media/{key}`, unless `key` already names one of the fake backend's bundled assets
+ * ([FAKE_ASSET_PREFIX]). Any other scheme (`file://`, `content://`, a foreign host) is rejected
+ * rather than passed through, so a malicious media key can't act as a tracking pixel or read a
+ * local file in production.
+ */
+fun mediaUrl(baseUrl: String, key: String): String = when {
+    key.startsWith(FAKE_ASSET_PREFIX) -> key
+    key.contains("://") -> throw IllegalArgumentException("refusing to load an attachment key with its own scheme: $key")
+    else -> "${baseUrl.trimEnd('/')}/media/$key"
+}
 
 /** Widest and tallest an inline picture or video grows, in dp. */
 const val MEDIA_MAX_W = 400f
