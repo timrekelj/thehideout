@@ -4,7 +4,7 @@
 //! while it waits, and an error from the server (or from validation) shows under the field.
 
 use rune::{col, icon, row, text, El, Key, TextEdit, Tx};
-use rune_kit::{Kit, Select};
+use rune_kit::{Kit, Select, SelectAppearance};
 use thehideout_design::metrics_of;
 use thehideout_design::components::chat::emoji::glyph_label;
 use thehideout_design::components::chat::pickers::row_key;
@@ -14,7 +14,7 @@ use thehideout_design::components::{
     EmojiScope, IconButton, IconGrid, PickerTabs, Pick, Segmented, Size, TextInput, ToastKind,
     Variant,
 };
-use thehideout_design::icons::{catalog, CHEVRON_DOWN, COPY, HASH, SEARCH, SPEAKER, X};
+use thehideout_design::icons::{catalog, ARROWS_CLOCKWISE, CHEVRON_DOWN, COPY, HASH, SEARCH, SPEAKER, TRASH, X};
 use thehideout_design::{palette_color, radius, space, theme_of, type_};
 
 use crate::app::App;
@@ -123,6 +123,13 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
         DialogKind::DeleteEmoji { guild, emoji } => delete_emoji(a, k, layer, d, guild, emoji),
         DialogKind::Invite { guild } => invite(a, k, layer, guild),
         DialogKind::InviteByEmail { guild } => invite_by_email(a, k, layer, max_h, d, guild),
+        DialogKind::DeleteMessage { channel, message } => delete_message(a, k, layer, channel, message),
+        DialogKind::KickMember { guild, user } => kick(a, k, layer, guild, user),
+        DialogKind::BanMember { guild, user } => ban(a, k, layer, d, guild, user),
+        DialogKind::LeaveGuild { guild } => leave(a, k, layer, guild),
+        DialogKind::DeleteChannel { guild, channel } => delete_channel(a, k, layer, guild, channel),
+        DialogKind::DeleteGuild { guild } => delete_guild(a, k, layer, d, guild),
+        DialogKind::TransferOwnership { guild } => transfer(a, k, layer, d, guild),
     }
 }
 
@@ -296,15 +303,27 @@ fn channel_dialog(
             ),
     );
     let (cancel, submit) = footer(k, d, labels);
-    Dialog::new("dlg", title)
+    let mut dialog = Dialog::new("dlg", title)
         .description(description)
         .open(true)
         .body_max_h(max_h)
-        .child(body)
-        .footer(cancel)
-        .footer(submit)
-        .on_close(close)
-        .build(k, layer);
+        .child(body);
+    // A channel that exists can be deleted from its settings (after one more question).
+    if let (false, DialogKind::ChannelSettings { channel, .. }) = (creating, d.kind)
+        && a.state.can_manage_channels(guild)
+    {
+        dialog = dialog.footer_start(
+            Button::new("Delete channel\u{2026}")
+                .icon(&TRASH)
+                .variant(Variant::Ghost)
+                .on_press(move |a: &mut App| {
+                    a.act(|s| s.open_dialog(DialogKind::DeleteChannel { guild, channel }))
+                })
+                .build(k)
+                .key("channel-delete"),
+        );
+    }
+    dialog.footer(cancel).footer(submit).on_close(close).build(k, layer);
 }
 
 /// "Icon": a field-looking button showing the chosen icon; pressing it opens the picker.
@@ -622,7 +641,34 @@ fn invite(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64) {
                 .color(t.text.color())
                 .a11y_hidden(),
         );
-    Dialog::new("dlg", "Invite people")
+    let resetting = a.state.ui.dialog.as_ref().is_some_and(|d| d.form.resetting);
+    let can_reset = a.state.can_manage_server(guild);
+    if resetting {
+        Dialog::new("dlg", "Reset invite code")
+            .description(format!(
+                "{} gets a new code. The old code stops working, so anyone who hasn't joined yet will need the new one.",
+                g.name
+            ))
+            .open(true)
+            .footer(
+                Button::new("Back")
+                    .variant(Variant::Secondary)
+                    .on_press(|a: &mut App| a.act(|s| s.ask_reset_invite(false)))
+                    .build(k)
+                    .key("dialog-cancel"),
+            )
+            .footer(
+                Button::new("Reset code")
+                    .variant(Variant::Danger)
+                    .on_press(|a: &mut App| a.act(|s| s.submit_dialog()))
+                    .build(k)
+                    .key("dialog-submit"),
+            )
+            .on_close(close)
+            .build(k, layer);
+        return;
+    }
+    let mut dialog = Dialog::new("dlg", "Invite people")
         .description(format!("Anyone with this code can join {}.", g.name))
         .open(true)
         .child(
@@ -633,7 +679,18 @@ fn invite(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64) {
                 .center_y()
                 .child(shown)
                 .child(copy),
-        )
+        );
+    if can_reset {
+        dialog = dialog.footer_start(
+            Button::new("Reset code\u{2026}")
+                .icon(&ARROWS_CLOCKWISE)
+                .variant(Variant::Ghost)
+                .on_press(|a: &mut App| a.act(|s| s.ask_reset_invite(true)))
+                .build(k)
+                .key("invite-reset"),
+        );
+    }
+    dialog
         .footer(
             Button::new("Done")
                 .on_press(close)
@@ -938,6 +995,278 @@ fn delete_role(a: &App, k: &Kit, layer: &mut Vec<El>, d: &DialogState, guild: u6
             Button::new(if busy { "Deleting\u{2026}" } else { "Delete role" })
                 .variant(Variant::Danger)
                 .disabled(busy)
+                .on_press(|a: &mut App| a.act(|s| s.submit_dialog()))
+                .build(k)
+                .key("dialog-submit"),
+        )
+        .on_close(close)
+        .build(k, layer);
+}
+
+// ---- moderation ------------------------------------------------------------------------------
+
+/// A question with a Cancel and a danger button that answers it; `body` sits between.
+fn confirm(k: &Kit, layer: &mut Vec<El>, title: String, description: String, answer: &str, body: Vec<El>) {
+    let mut d = Dialog::new("dlg", title).description(description).open(true);
+    for e in body {
+        d = d.child(e);
+    }
+    d.footer(Button::new("Cancel").variant(Variant::Secondary).on_press(close).build(k).key("dialog-cancel"))
+        .footer(
+            Button::new(answer)
+                .variant(Variant::Danger)
+                .on_press(|a: &mut App| a.act(|s| s.submit_dialog()))
+                .build(k)
+                .key("dialog-submit"),
+        )
+        .on_close(close)
+        .build(k, layer);
+}
+
+fn delete_message(a: &App, k: &Kit, layer: &mut Vec<El>, channel: u64, message: u64) {
+    let t = theme_of(k);
+    let s = &a.state;
+    let Some(m) = s.log(channel).and_then(|l| l.messages.iter().find(|m| m.id == message)) else { return };
+    let name = s.user_name(m.author_id);
+    let when = {
+        let at = crate::format::unix(m.created_at);
+        format!("{} at {}", crate::format::day_label(s.day_of(at), s.today), crate::format::clock_label(s.tz, at))
+    };
+    let mut text_lines = m.content.clone();
+    if text_lines.trim().is_empty() && !m.attachments.is_empty() {
+        text_lines = if m.attachments.len() == 1 { "1 attachment".to_owned() } else { format!("{} attachments", m.attachments.len()) };
+    }
+    let preview = row()
+        .key("delete-preview")
+        .w_full()
+        .gap(12.0)
+        .padding(12.0)
+        .items_start()
+        .radius(radius::LG)
+        .fill(t.hover.color())
+        .child(Avatar::new(m.author_id.to_string(), name.clone()).size(32).image(s.avatar_pixels(m.author_id)).backdrop(t.surface_overlay.color()).build(k))
+        .child(
+            col()
+                .grow(1.0)
+                .shrink()
+                .min_w(0.0)
+                .gap(2.0)
+                .child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(text(name).font(type_::at(k, type_::BODY_STRONG)).color(t.text.color()).max_lines(1))
+                        .child(text(when).font(type_::at(k, type_::CAPTION)).color(t.text_muted.color()).max_lines(1)),
+                )
+                .child(text(text_lines).font(type_::at(k, type_::BODY)).color(t.text.color()).wrap().max_lines(4).w_full()),
+        );
+    let own = m.author_id == s.my_id();
+    confirm(
+        k,
+        layer,
+        "Delete message".to_owned(),
+        if own { "This message will be deleted for everyone. This can't be undone.".to_owned() } else { "You're deleting someone else's message. It will be deleted for everyone and this can't be undone.".to_owned() },
+        "Delete",
+        vec![preview],
+    );
+}
+
+fn kick(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64, user: u64) {
+    let s = &a.state;
+    let (who, server) = (s.user_name(user), s.guild(guild).map_or_else(String::new, |g| g.name.clone()));
+    confirm(
+        k,
+        layer,
+        format!("Kick {who}"),
+        format!("{who} will be removed from {server}. They can join again with an invite code."),
+        "Kick",
+        Vec::new(),
+    );
+}
+
+fn ban(a: &App, k: &Kit, layer: &mut Vec<El>, d: &DialogState, guild: u64, user: u64) {
+    let t = theme_of(k);
+    let s = &a.state;
+    let (who, server) = (s.user_name(user), s.guild(guild).map_or_else(String::new, |g| g.name.clone()));
+    let reason = TextInput::new(&d.input)
+        .placeholder("Optional")
+        .on_edit(dialog_edit)
+        .on_submit(|a: &mut App, _| a.act(|s| s.submit_dialog()));
+    let labels: Vec<&str> = crate::moderation_ui::CLEANUP.iter().map(|c| c.0).collect();
+    let select = Select::new("ban-cleanup", &labels)
+        .appearance(SelectAppearance::Field)
+        .width(392.0)
+        .label("Delete their recent messages")
+        .current(labels.get(d.form.cleanup).copied())
+        .open(d.form.cleanup_open)
+        .on_toggle(|a: &mut App| {
+            if let Some(d) = a.state.ui.dialog.as_mut() {
+                d.form.cleanup_open = !d.form.cleanup_open;
+            }
+        })
+        .on_close(|a: &mut App| {
+            if let Some(d) = a.state.ui.dialog.as_mut() {
+                d.form.cleanup_open = false;
+            }
+        })
+        .on_choose(|a: &mut App, label: &str, _tx| {
+            if let Some(d) = a.state.ui.dialog.as_mut() {
+                d.form.cleanup = crate::moderation_ui::CLEANUP.iter().position(|c| c.0 == label).unwrap_or(0);
+                d.form.cleanup_open = false;
+            }
+        });
+    let body = col()
+        .key("dialog-field")
+        .w_full()
+        .gap(16.0)
+        .child(dialog_field(k, "Reason", reason, d.error.as_deref()))
+        .child(
+            col()
+                .key("cleanup-field")
+                .w_full()
+                .gap(6.0)
+                .child(text("Delete their recent messages").font(type_::at(k, type_::LABEL)).color(t.text_muted.color()))
+                .child(select.build(k, layer)),
+        );
+    Dialog::new("dlg", format!("Ban {who}"))
+        .description(format!("{who} will be removed from {server} and can't join again until you unban them."))
+        .open(true)
+        .child(body)
+        .footer(Button::new("Cancel").variant(Variant::Secondary).on_press(close).build(k).key("dialog-cancel"))
+        .footer(
+            Button::new("Ban")
+                .variant(Variant::Danger)
+                .on_press(|a: &mut App| a.act(|s| s.submit_dialog()))
+                .build(k)
+                .key("dialog-submit"),
+        )
+        .on_close(close)
+        .build(k, layer);
+}
+
+fn leave(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64) {
+    let server = a.state.guild(guild).map_or_else(String::new, |g| g.name.clone());
+    confirm(
+        k,
+        layer,
+        format!("Leave {server}"),
+        "You'll need a new invite to join again.".to_owned(),
+        "Leave server",
+        Vec::new(),
+    );
+}
+
+fn delete_channel(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64, channel: u64) {
+    let s = &a.state;
+    let Some(c) = s.channel(guild, channel) else { return };
+    let (voice, name) = (c.kind == ChannelKind::Voice, c.name.clone());
+    let shown = if voice { name } else { format!("#{name}") };
+    confirm(
+        k,
+        layer,
+        "Delete channel".to_owned(),
+        if voice {
+            format!("\u{201c}{shown}\u{201d} will be deleted for everyone and anyone in it is disconnected. This can't be undone.")
+        } else {
+            format!("\u{201c}{shown}\u{201d} and all its messages will be deleted for everyone. This can't be undone.")
+        },
+        "Delete channel",
+        Vec::new(),
+    );
+}
+
+/// The field that asks for the server's name before a server is deleted or handed over.
+fn name_field(k: &Kit, d: &DialogState, server: &str) -> El {
+    let input = TextInput::new(&d.input)
+        .placeholder(server.to_owned())
+        .on_edit(dialog_edit)
+        .on_submit(|a: &mut App, _| a.act(|s| s.submit_dialog()));
+    col().key("dialog-field").w_full().child(dialog_field(k, &format!("Type {server} to confirm"), input, d.error.as_deref()))
+}
+
+fn delete_guild(a: &App, k: &Kit, layer: &mut Vec<El>, d: &DialogState, guild: u64) {
+    let server = a.state.guild(guild).map_or_else(String::new, |g| g.name.clone());
+    let ready = a.state.typed_name_matches(guild);
+    Dialog::new("dlg", "Delete server")
+        .description(format!(
+            "\u{201c}{server}\u{201d} and everything in it (channels, messages and files) will be deleted for everyone. This can't be undone."
+        ))
+        .open(true)
+        .child(name_field(k, d, &server))
+        .footer(Button::new("Cancel").variant(Variant::Secondary).on_press(close).build(k).key("dialog-cancel"))
+        .footer(
+            Button::new("Delete server")
+                .variant(Variant::Danger)
+                .disabled(!ready)
+                .on_press(|a: &mut App| a.act(|s| s.submit_dialog()))
+                .build(k)
+                .key("dialog-submit"),
+        )
+        .on_close(close)
+        .build(k, layer);
+}
+
+fn transfer(a: &App, k: &Kit, layer: &mut Vec<El>, d: &DialogState, guild: u64) {
+    let t = theme_of(k);
+    let s = &a.state;
+    let server = s.guild(guild).map_or_else(String::new, |g| g.name.clone());
+    let people = s.transfer_candidates(guild);
+    let labels: Vec<String> = people.iter().map(|(_, n)| n.clone()).collect();
+    let current = d.form.target.and_then(|u| people.iter().find(|(id, _)| *id == u)).map(|(_, n)| n.as_str());
+    let by_label = people.clone();
+    let select = Select::new("transfer-target", &labels)
+        .appearance(SelectAppearance::Field)
+        .width(392.0)
+        .label("New owner")
+        .placeholder("Choose a member")
+        .current(current)
+        .open(d.form.target_open)
+        .on_toggle(|a: &mut App| {
+            if let Some(d) = a.state.ui.dialog.as_mut() {
+                d.form.target_open = !d.form.target_open;
+            }
+        })
+        .on_close(|a: &mut App| {
+            if let Some(d) = a.state.ui.dialog.as_mut() {
+                d.form.target_open = false;
+            }
+        })
+        .on_choose(move |a: &mut App, label: &str, _tx| {
+            if let Some(d) = a.state.ui.dialog.as_mut() {
+                d.form.target = by_label.iter().find(|(_, n)| n == label).map(|(id, _)| *id);
+                d.form.target_open = false;
+                d.error = None;
+            }
+        });
+    let ready = d.form.target.is_some() && s.typed_name_matches(guild);
+    let body = col()
+        .key("dialog-field")
+        .w_full()
+        .gap(16.0)
+        .child(
+            col()
+                .key("target-field")
+                .w_full()
+                .gap(6.0)
+                .child(text("New owner").font(type_::at(k, type_::LABEL)).color(t.text_muted.color()))
+                .child(select.build(k, layer)),
+        )
+        .child({
+            let input = TextInput::new(&d.input)
+                .placeholder(server.clone())
+                .on_edit(dialog_edit)
+                .on_submit(|a: &mut App, _| a.act(|s| s.submit_dialog()));
+            dialog_field(k, &format!("Type {server} to confirm"), input, d.error.as_deref())
+        });
+    Dialog::new("dlg", "Transfer ownership")
+        .description(format!("\u{201c}{server}\u{201d} goes to the member you pick. You become an ordinary member and only they can give it back."))
+        .open(true)
+        .child(body)
+        .footer(Button::new("Cancel").variant(Variant::Secondary).on_press(close).build(k).key("dialog-cancel"))
+        .footer(
+            Button::new("Transfer ownership")
+                .variant(Variant::Danger)
+                .disabled(!ready)
                 .on_press(|a: &mut App| a.act(|s| s.submit_dialog()))
                 .build(k)
                 .key("dialog-submit"),

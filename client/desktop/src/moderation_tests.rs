@@ -420,7 +420,7 @@ fn being_removed_by_someone_else_drops_the_guild_with_a_note() {
     assert!(app.state.guild(COOKING_CLUB).is_none());
     assert_eq!(
         app.state.ui.toasts.back().unwrap().message,
-        "You're no longer in Cooking Club"
+        "Cooking Club was deleted"
     );
 }
 

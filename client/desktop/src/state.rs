@@ -243,6 +243,17 @@ pub enum Menu {
         id: u64,
         at: Option<(i32, i32)>,
     },
+    /// A message's menu (the hover bar's "More", or a right-click at `at`).
+    Message {
+        channel: u64,
+        message: u64,
+        at: Option<(i32, i32)>,
+    },
+    /// A member's menu in the member panel (a press on the row, or a right-click at `at`).
+    Member {
+        user: u64,
+        at: Option<(i32, i32)>,
+    },
     /// A voice participant's menu (a press on the row, or a right-click at `at`).
     Participant {
         user: u64,
@@ -322,6 +333,8 @@ pub struct Ui {
     pub admin: Option<crate::admin::AdminState>,
     /// Text for the next poll to put on the clipboard (a press handler has no `Tx`).
     pub copy_request: Option<String>,
+    /// The message being edited in the transcript.
+    pub editing: Option<crate::moderation_ui::Editing>,
     pub toast_seq: u64,
     /// The emoji picker, when open.
     pub picker: Option<PickerUi>,
@@ -386,6 +399,7 @@ impl Ui {
             server_settings: None,
             admin: None,
             copy_request: None,
+            editing: None,
             toast_seq: 0,
             picker: None,
             idle_picker: EmojiPickerState::new(),
@@ -1089,6 +1103,7 @@ impl AppState {
             error: None,
             phase: Phase::Idle,
             pick: Default::default(),
+            form: Default::default(),
         });
     }
 
@@ -1107,6 +1122,9 @@ impl AppState {
     /// Enter or the primary button. Validates first; an invalid form shows its error and sends
     /// nothing.
     pub fn submit_dialog(&mut self) {
+        if self.submit_moderation_dialog() {
+            return;
+        }
         if let Some((DialogKind::InviteByEmail { guild }, value)) = self
             .ui
             .dialog
@@ -1137,7 +1155,14 @@ impl AppState {
                 self.ui.dialog = None;
                 return;
             }
-            DialogKind::InviteByEmail { .. } => return,
+            DialogKind::InviteByEmail { .. }
+            | DialogKind::DeleteMessage { .. }
+            | DialogKind::KickMember { .. }
+            | DialogKind::BanMember { .. }
+            | DialogKind::LeaveGuild { .. }
+            | DialogKind::DeleteChannel { .. }
+            | DialogKind::DeleteGuild { .. }
+            | DialogKind::TransferOwnership { .. } => return,
             DialogKind::CreateGuild => match check_name(&value, 2, 32, "Give the server a name") {
                 Ok(()) => Command::CreateGuild { name: value },
                 Err(e) => return fail(d, e),

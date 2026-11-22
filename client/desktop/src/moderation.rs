@@ -332,6 +332,7 @@ impl AppState {
 
     /// `message_deleted`: the message leaves its transcript (and a send of it still pending).
     pub fn message_removed(&mut self, channel: u64, message: u64) {
+        self.editing_message_gone(message);
         if let Some(log) = self.data.logs.get_mut(&channel) {
             log.messages.retain(|m| m.id != message);
             log.breaks.retain(|b| *b != message);
@@ -374,7 +375,9 @@ impl AppState {
             Some(MemberRemovalReason::Kicked) => format!("You were removed from {name}"),
             Some(MemberRemovalReason::Banned) => format!("You were banned from {name}"),
             Some(MemberRemovalReason::Left) => format!("You left {name}"),
-            None => format!("You're no longer in {name}"),
+            // The server says nothing more when a guild is deleted (left, kicked and banned come
+            // with a `guild_member_removed` first).
+            None => format!("{name} was deleted"),
         };
         self.toast(ToastKind::Info, text);
     }
@@ -390,6 +393,9 @@ impl AppState {
             self.ui.unread.remove(c);
             self.ui.composers.remove(c);
             self.data.outgoing.retain(|o| o.channel != *c);
+        }
+        for c in &channels {
+            self.editing_channel_gone(*c);
         }
         self.data.guilds.retain(|g| g.id != guild);
         self.data.channels.remove(&guild);
@@ -418,6 +424,7 @@ impl AppState {
     /// `channel_deleted` (or our own delete's reply): the channel leaves the lists and, if it was
     /// open, the guild opens on its first text channel.
     pub fn channel_removed(&mut self, guild: u64, channel: u64) {
+        self.editing_channel_gone(channel);
         if let Some(list) = self.data.channels.get_mut(&guild) {
             list.retain(|c| c.id != channel);
         }

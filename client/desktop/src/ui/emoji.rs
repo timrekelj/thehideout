@@ -87,6 +87,14 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>) {
 /// Keys in the composer while the autocomplete is open: Up and Down move, Tab and Enter take the
 /// highlighted emoji, Escape hides the list. Everything else goes on to the field.
 pub fn composer_key(a: &mut App, ev: &rune::KeyEvent, _tx: &mut Tx) -> bool {
+    // Up in an empty box edits your last message (the autocomplete has nothing open then).
+    if ev.key == Key::Up && !ev.mods.shift && !ev.mods.alt && !ev.mods.cmd && !ev.mods.ctrl && a.state.suggestions().is_none() {
+        let mut took = false;
+        a.act(|s| took = s.edit_last());
+        if took {
+            return true;
+        }
+    }
     let Some((_, list)) = a.state.suggestions() else {
         return false;
     };

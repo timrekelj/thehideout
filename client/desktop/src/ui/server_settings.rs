@@ -17,9 +17,10 @@ use thehideout_design::icons::{
 };
 use thehideout_design::{icon as isize, palette_color, palette_text, radius, space, theme_of, type_};
 
-use super::settings::{frame, header, nav_shell, setting, PAGE_W};
+use super::settings::{frame, header, nav_shell, setting, toggle, PAGE_W};
 use crate::app::App;
 use crate::backend::ImagePurpose;
+use crate::forms::DialogKind;
 use crate::media::IMAGE_EXTENSIONS;
 use crate::server_settings::{
     has_bit, ImagePick, RoleForm, ServerPage, ServerSettings, PERMISSION_ROWS, ROLE_PITCH,
@@ -42,6 +43,7 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32) -> El {
         ServerPage::Overview => overview(a, k, ss),
         ServerPage::Roles => roles(a, k, ss),
         ServerPage::Members => members(a, k, layer, ss),
+        ServerPage::Bans => bans(a, k, ss),
         ServerPage::Emojis => super::emoji_settings::page(a, k, ss),
     };
     frame(
@@ -60,6 +62,7 @@ fn nav(a: &App, k: &Kit, ss: &ServerSettings, name: &str) -> El {
         (ServerPage::Overview, "Overview", &icons::INFO),
         (ServerPage::Roles, "Roles", &SHIELD),
         (ServerPage::Members, "Members", &USERS),
+        (ServerPage::Bans, "Bans", &icons::PROHIBIT),
         (ServerPage::Emojis, "Emojis", &icons::SMILEY),
     ] {
         if !a.state.settings_page_allowed(guild, page) {
@@ -308,6 +311,44 @@ fn overview(a: &App, k: &Kit, ss: &ServerSettings) -> El {
             "A picture for the server rail. Without one the server shows its initials.",
             zone,
         ))
+        .children(danger_zone(a, k, guild))
+}
+
+/// The owner's last section: hand the server over, or delete it. Each opens its own dialog,
+/// which asks for the server's name.
+fn danger_zone(a: &App, k: &Kit, guild: u64) -> Option<El> {
+    if !a.state.can_delete_guild(guild) {
+        return None;
+    }
+    let t = theme_of(k);
+    let transfer = Button::new("Transfer\u{2026}")
+        .variant(Variant::Secondary)
+        .on_press(move |a: &mut App| a.act(|s| s.open_dialog(DialogKind::TransferOwnership { guild })))
+        .build(k)
+        .key("server-transfer");
+    let delete = Button::new("Delete server\u{2026}")
+        .variant(Variant::Danger)
+        .on_press(move |a: &mut App| a.act(|s| s.open_dialog(DialogKind::DeleteGuild { guild })))
+        .build(k)
+        .key("server-delete");
+    Some(
+        col()
+            .key("danger-zone")
+            .w_full()
+            .mt(16.0)
+            .gap(8.0)
+            .child(text("Danger zone").font(type_::at(k, type_::CONTROL_STRONG)).color(t.danger.color()))
+            .child(
+                col()
+                    .w_full()
+                    .px(16.0)
+                    .py(4.0)
+                    .radius(radius::LG)
+                    .border(1.0, t.danger_border.color())
+                    .child(toggle(k, "Transfer ownership", "Hand this server to another member. You become an ordinary member.", transfer))
+                    .child(toggle(k, "Delete server", "Delete the server and everything in it for everyone. This can't be undone.", delete)),
+            ),
+    )
 }
 
 fn name_edit(a: &mut App) -> &mut rune::TextEdit {
@@ -815,7 +856,7 @@ fn members(a: &App, k: &Kit, layer: &mut Vec<El>, ss: &ServerSettings) -> El {
         );
     }
     page_col(k, "Members")
-        .child(col().w_full().gap(12.0).py(8.0).child(text("Give people roles for a name colour and permissions. You can only hand out roles below your own highest role.").font(type_::at(k, type_::CAPTION)).color(t.text_muted.color()).wrap().w_full()).child(search.build(k)))
+        .child(col().w_full().gap(12.0).py(8.0).child(text(if a.state.can_manage_roles(guild) { "Give people roles for a name colour and permissions. You can only hand out roles below your own highest role." } else { "Remove people from the server. You can only act on members whose roles are below yours." }).font(type_::at(k, type_::CAPTION)).color(t.text_muted.color()).wrap().w_full()).child(search.build(k)))
         .children(errors(k, &ss.member_error, "member-error"))
         .child(list)
 }
@@ -894,6 +935,7 @@ fn member_row(a: &App, k: &Kit, layer: &mut Vec<El>, ss: &ServerSettings, user: 
         .on_press(move |a: &mut App| a.act(|s| s.toggle_member_menu(user)))
         .build(k)
         .key(format!("member-add-{user}"));
+    let can_roles = s.can_manage_roles(guild);
     let mut menu = Menu::new(format!("member-menu-{user}")).trigger(trigger);
     for r in &assignable {
         let rid = r.id;
@@ -914,7 +956,32 @@ fn member_row(a: &App, k: &Kit, layer: &mut Vec<El>, ss: &ServerSettings, user: 
             })
         })
         .build(k, layer);
-    chips = chips.child(menu);
+    if can_roles {
+        chips = chips.child(menu);
+    }
+    let mut actions = row().key(format!("member-actions-{user}")).gap(6.0).h(32.0).center_y();
+    if s.can_kick(guild, user) {
+        actions = actions.child(
+            Button::new("Kick")
+                .icon(&icons::USER_MINUS)
+                .size(Size::Sm)
+                .variant(Variant::Secondary)
+                .on_press(move |a: &mut App| a.act(|s| s.ask_kick(guild, user)))
+                .build(k)
+                .key(format!("member-kick-{user}")),
+        );
+    }
+    if s.can_ban(guild, user) {
+        actions = actions.child(
+            Button::new("Ban\u{2026}")
+                .icon(&icons::PROHIBIT)
+                .size(Size::Sm)
+                .variant(Variant::Secondary)
+                .on_press(move |a: &mut App| a.act(|s| s.ask_ban(guild, user)))
+                .build(k)
+                .key(format!("member-ban-{user}")),
+        );
+    }
 
     row()
         .key(format!("member-roles-{user}"))
@@ -946,4 +1013,85 @@ fn member_row(a: &App, k: &Kit, layer: &mut Vec<El>, ss: &ServerSettings, user: 
                 )
                 .child(chips),
         )
+        .child(actions)
+}
+
+// ---- bans ------------------------------------------------------------------------------------
+
+fn bans(a: &App, k: &Kit, ss: &ServerSettings) -> El {
+    let t = theme_of(k);
+    let s = &a.state;
+    let guild = ss.guild;
+    let loaded = s.data.bans.contains_key(&guild);
+    let mut list = col().key("ban-list").w_full();
+    for b in s.bans_of(guild) {
+        let user = b.user.id;
+        let name = s.user_name(user);
+        let by = if b.banned_by == 0 { String::new() } else { format!("Banned by {}", s.user_name(b.banned_by)) };
+        let day = crate::format::day_of(s.tz, crate::format::unix(b.created_at));
+        let when = crate::format::day_label(day, s.today);
+        let detail = if by.is_empty() { when } else { format!("{by} \u{b7} {when}") };
+        let reason = if b.reason.trim().is_empty() {
+            text("No reason given").font(type_::at(k, type_::CONTROL)).color(t.text_faint.color()).wrap().w_full()
+        } else {
+            text(b.reason.clone()).font(type_::at(k, type_::CONTROL)).color(t.text.color()).wrap().w_full()
+        };
+        list = list.child(
+            row()
+                .key(format!("ban-{user}"))
+                .w_full()
+                .py(10.0)
+                .gap(12.0)
+                .items_start()
+                .child(
+                    Avatar::new(user.to_string(), name.clone())
+                        .size(32)
+                        .image(s.avatar_pixels(user))
+                        .backdrop(t.surface.color())
+                        .build(k),
+                )
+                .child(
+                    col()
+                        .grow(1.0)
+                        .shrink()
+                        .min_w(0.0)
+                        .gap(2.0)
+                        .child(row().h(32.0).center_y().child(text(name).font(type_::at(k, type_::BODY_STRONG)).color(t.text.color()).max_lines(1)))
+                        .child(reason)
+                        .child(text(detail).font(type_::at(k, type_::CAPTION)).color(t.text_muted.color()).max_lines(1)),
+                )
+                .child(
+                    row().h(32.0).center_y().child(
+                        Button::new("Unban")
+                            .size(Size::Sm)
+                            .variant(Variant::Secondary)
+                            .on_press(move |a: &mut App| a.act(|s| {
+                                s.unban(guild, user);
+                            }))
+                            .build(k)
+                            .key(format!("unban-{user}")),
+                    ),
+                ),
+        );
+    }
+    if s.bans_of(guild).is_empty() {
+        list = list.child(
+            text(if loaded { "No one is banned." } else { "Loading\u{2026}" })
+                .key("bans-empty")
+                .font(type_::at(k, type_::CONTROL))
+                .color(t.text_muted.color())
+                .py(16.0),
+        );
+    }
+    page_col(k, "Bans")
+        .child(
+            col().w_full().py(8.0).child(
+                text("People who were banned can't join again until you unban them.")
+                    .font(type_::at(k, type_::CAPTION))
+                    .color(t.text_muted.color())
+                    .wrap()
+                    .w_full(),
+            ),
+        )
+        .child(list)
 }

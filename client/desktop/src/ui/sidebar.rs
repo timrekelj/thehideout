@@ -156,7 +156,19 @@ fn header(a: &App, k: &Kit, layer: &mut Vec<El>, width: f32) -> El {
                 .icon(&thehideout_design::icons::GEAR_SIX)
                 .disabled(!a.state.can_open_server_settings(id))
                 .on_select(move |a: &mut App| a.act(|s| s.open_server_settings(id))),
+        );
+    // Members may leave; the owner must hand the server over or delete it first.
+    let menu = if a.state.can_leave_guild(id) {
+        menu.separator().item(
+            MenuItem::new("Leave server\u{2026}")
+                .icon(&thehideout_design::icons::SIGN_OUT)
+                .danger(true)
+                .on_select(move |a: &mut App| a.act(|s| s.open_dialog(DialogKind::LeaveGuild { guild: id }))),
         )
+    } else {
+        menu
+    };
+    let menu = menu
         .open(a.state.ui.menu == MenuState::Guild)
         .min_width(width - 16.0)
         .on_close(|a: &mut App| a.state.ui.menu = MenuState::None)

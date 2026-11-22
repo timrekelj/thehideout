@@ -90,10 +90,10 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, lay: Layout) -> El
                     .h_full()
                     .child(header(a, k, lay))
                     .children(email_banner(a, k))
-                    .child(transcript::build(a, k))
+                    .child(transcript::build(a, k, layer))
                     .child(composer::build(a, k)),
             )
-            .child(members::build(a, k, lay.members))
+            .child(members::build(a, k, layer, lay.members))
     }
     .child(frame_over(1.0, t.border_subtle.color(), radius::LG));
     let body = row()
