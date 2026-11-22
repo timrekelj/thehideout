@@ -19,28 +19,40 @@ fn code<T>(r: Result<T, ConnectError>) -> ErrorCode {
     r.err().unwrap_or_else(|| panic!("expected an error")).code
 }
 
+/// The admin row of `id`, walking the pages (the shared keyspace holds many users).
 async fn row(app: &TestApp, admin: &Account, id: u64) -> AdminUserRow {
-    admin_client(app, admin)
-        .list_users(ListUsersRequest { limit: 200, ..Default::default() })
-        .await
-        .unwrap()
-        .into_owned()
-        .users
-        .into_iter()
-        .find(|u| u.user.as_option().unwrap().id == id)
-        .expect("user row")
+    let mut token = String::new();
+    loop {
+        let page = admin_client(app, admin)
+            .list_users(ListUsersRequest { limit: 200, page_token: token.clone(), ..Default::default() })
+            .await
+            .unwrap()
+            .into_owned();
+        if let Some(found) = page.users.into_iter().find(|u| u.user.as_option().unwrap().id == id) {
+            return found;
+        }
+        assert!(!page.next_page_token.is_empty(), "user row {id} not listed");
+        token = page.next_page_token;
+    }
 }
 
+/// Audit entries (action, target, reason), newest first, across pages.
 async fn audit_actions(app: &TestApp, admin: &Account) -> Vec<(String, String, String)> {
-    admin_client(app, admin)
-        .list_audit_log(ListAuditLogRequest { limit: 200, ..Default::default() })
-        .await
-        .unwrap()
-        .into_owned()
-        .entries
-        .into_iter()
-        .map(|e| (e.action, e.target, e.reason))
-        .collect()
+    let mut out = Vec::new();
+    let mut token = String::new();
+    for _ in 0..10 {
+        let page = admin_client(app, admin)
+            .list_audit_log(ListAuditLogRequest { limit: 200, page_token: token.clone(), ..Default::default() })
+            .await
+            .unwrap()
+            .into_owned();
+        out.extend(page.entries.into_iter().map(|e| (e.action, e.target, e.reason)));
+        if page.next_page_token.is_empty() {
+            break;
+        }
+        token = page.next_page_token;
+    }
+    out
 }
 
 async fn wait_deleted(app: &TestApp, id: u64) {

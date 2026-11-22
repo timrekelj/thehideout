@@ -321,8 +321,8 @@ async fn deletion_anonymizes_everywhere() {
     );
 
     // The pending invite was withdrawn.
-    let listed = invites(&app, Some(&admin.token))
-        .list_invites(ListInvitesRequest::default())
+    let listed = invites(&app, Some(&bob.token))
+        .list_invites(ListInvitesRequest { guild_id: Some(g.id), ..Default::default() })
         .await
         .unwrap()
         .into_owned()
@@ -330,13 +330,21 @@ async fn deletion_anonymizes_everywhere() {
     assert_eq!(listed.iter().find(|i| i.id == invite.id).unwrap().status, InviteStatus::INVITE_STATUS_REVOKED);
 
     // The audit entry names only the user id.
-    let entries = app
-        .client(AdminServiceClient::new, Some(&admin.token))
-        .list_audit_log(ListAuditLogRequest { limit: 200, ..Default::default() })
-        .await
-        .unwrap()
-        .into_owned()
-        .entries;
+    let mut entries = Vec::new();
+    let mut token = String::new();
+    for _ in 0..10 {
+        let page = app
+            .client(AdminServiceClient::new, Some(&admin.token))
+            .list_audit_log(ListAuditLogRequest { limit: 200, page_token: token.clone(), ..Default::default() })
+            .await
+            .unwrap()
+            .into_owned();
+        entries.extend(page.entries);
+        if page.next_page_token.is_empty() {
+            break;
+        }
+        token = page.next_page_token;
+    }
     let entry = entries.iter().find(|e| e.action == "account.delete" && e.target == format!("user:{}", alice.id)).expect("audited");
     assert_eq!(entry.reason, "");
 
