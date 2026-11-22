@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -95,11 +97,11 @@ fun EmbedCard(
         modifier
             .padding(top = 4.dp)
             .widthIn(max = EMBED_MAX_WIDTH_DP.dp)
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            // IntrinsicSize.Min (as in MessageRow) so the rail matches the card's height instead of the whole incoming constraint.
+            .height(IntrinsicSize.Min),
     ) {
-        Box(Modifier.width(3.dp).padding(vertical = 2.dp)) {
-            Box(Modifier.fillMaxHeight().clip(RoundedCornerShape(Radius.xs)).background(railColor))
-        }
+        Box(Modifier.width(3.dp).fillMaxHeight().padding(vertical = 2.dp).clip(RoundedCornerShape(Radius.xs)).background(railColor))
         Column(Modifier.weight(1f).clip(RoundedCornerShape(Radius.lg)).background(c.hover).padding(start = 7.dp, end = 5.dp, top = 2.dp, bottom = 2.dp)) {
             Row(
                 Modifier
