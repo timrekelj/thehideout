@@ -4,6 +4,7 @@ import XCTest
 /// inline error of a wrong code. `testAuthTour` additionally drives every auth screen and gate and writes a
 /// screenshot of each to `TOUR_DIR` (default `/tmp/shots/tour`) for the design review; run it with
 /// `-only-testing:HideoutUITests/AuthUITests/testAuthTour`.
+@MainActor
 final class AuthUITests: XCTestCase {
     private let password = "correct-horse"
     private let emailCode = "424242"
