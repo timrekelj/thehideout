@@ -281,6 +281,10 @@ fn participant(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64, user: u64) -> 
 /// Whether pressing `user`'s row has anything to offer: not for yourself unless you may move
 /// yourself (the server lets a mover disconnect themself).
 fn participant_has_menu(s: &AppState, user: u64) -> bool {
+    // Nothing to do with the placeholder of a deleted account.
+    if s.data.users.get(&user).is_some_and(|u| u.deleted) {
+        return false;
+    }
     user != s.my_id() || s.can_move_member(user)
 }
 

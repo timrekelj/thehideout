@@ -131,6 +131,8 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, bar: f32, compact: bool) -> 
         .child(nav(k, page))
         .child(col().grow(1.0).min_w(0.0).h_full().pr(INSET).child(panel));
     confirm(k, layer, ad);
+    super::account::admin_user_menu(a, k, layer);
+    super::account::admin_dialogs(a, k, layer);
     col()
         .key("admin")
         .w_full()
@@ -1149,6 +1151,8 @@ fn file_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
 const USER_ADMIN_W: f32 = 64.0;
 const USER_NUM_W: f32 = 80.0;
 const USER_LAST_W: f32 = 120.0;
+/// The row's actions button (the "..." that opens Suspend, Unsuspend and Delete).
+const USER_ACTIONS_W: f32 = 32.0;
 
 fn users(k: &Kit, ad: &AdminState, compact: bool) -> Parts {
     let feed = &ad.users;
@@ -1164,6 +1168,7 @@ fn users(k: &Kit, ad: &AdminState, compact: bool) -> Parts {
     if !compact {
         head.push(head_cell(k, "Last active", Some(USER_LAST_W), false).ml(COL_GAP));
     }
+    head.push(row().w(USER_ACTIONS_W).shrink().a11y_hidden());
     let body = if !feed.loaded && feed.error.is_none() {
         loading(k)
     } else if feed.items.is_empty() && feed.error.is_none() {
@@ -1228,12 +1233,32 @@ fn user_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
     let name = r.user.username.clone();
     let busy = ad.busy_users.contains(&id);
     let on = r.user.is_admin;
+    // A deleted account is dimmed: its row is a record, nothing to act on.
+    let gone = r.deleted;
+    let name = if gone { thehideout_design::components::avatar::DELETED_USER.to_owned() } else { name };
     let mut who = row().gap(8.0).center_y().child(
         text(name.clone())
             .font(type_::at(k, type_::CONTROL_STRONG))
-            .color(t.text.color())
+            .color(if gone { t.text_faint } else { t.text }.color())
             .max_lines(1),
     );
+    if gone {
+        who = who.child(Badge::new("Deleted").variant(BadgeVariant::Neutral).build(k).key(format!("user-deleted-{id}")));
+    }
+    if r.suspended {
+        let until = match r.suspended_until {
+            Some(at) => format!("Until {}", day_label(day_of(a.state.tz, unix(at)), a.state.today)),
+            None => "Indefinitely".to_owned(),
+        };
+        let tip = if r.suspended_reason.trim().is_empty() { until } else { format!("{until}\nReason: {}", r.suspended_reason.trim()) };
+        who = who.child(
+            Badge::new("Suspended")
+                .variant(BadgeVariant::Warning)
+                .build(k)
+                .key(format!("user-suspended-{id}"))
+                .help(tip),
+        );
+    }
     if on {
         who = who.child(
             Badge::new("Admin")
@@ -1256,7 +1281,7 @@ fn user_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
     let toggle = thehideout_design::components::switch(on)
         .label(format!("{name} is an admin"))
         .hide_label()
-        .disabled(busy)
+        .disabled(busy || gone)
         .on_toggle(move |a: &mut App| a.act(|s| s.ask_set_admin(id, !on)))
         .build(k)
         .key(format!("user-admin-{id}"));
@@ -1264,7 +1289,9 @@ fn user_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
         .key(format!("user-row-{id}"))
         .role("row")
         .label(format!(
-            "{name}, {} servers, {} stored",
+            "{name}{}{}, {} servers, {} stored",
+            if gone { ", deleted" } else { "" },
+            if r.suspended { ", suspended" } else { "" },
             r.guild_count,
             bytes(r.storage_bytes)
         ))
@@ -1313,7 +1340,37 @@ fn user_row(a: &App, k: &Kit, i: usize, compact: bool) -> El {
             ),
         );
     }
-    line
+    line.child(actions_cell(a, k, id, &name, busy, gone))
+}
+
+/// The row's "..." button. Admins and yourself are out of reach (the server refuses suspending
+/// or deleting them), so theirs is disabled and says why; a deleted account has none. The menu
+/// itself is built with the page's other layers (`account::admin_user_menu`) and anchors here.
+fn actions_cell(a: &App, k: &Kit, id: u64, name: &str, busy: bool, gone: bool) -> El {
+    let cell = row()
+        .key(format!("user-menu-{id}-trigger"))
+        .w(USER_ACTIONS_W)
+        .shrink()
+        .justify_end();
+    if gone {
+        return cell;
+    }
+    let allowed = a.state.admin_can_act_on(id);
+    let button = IconButton::new(&icons::DOTS_THREE, format!("Actions for {name}"))
+        .disabled(busy || !allowed)
+        .on_press(move |a: &mut App| a.act(|s| s.toggle_admin_menu(id)))
+        .build(k)
+        .key(format!("user-actions-{id}"));
+    if allowed {
+        cell.child(button)
+    } else {
+        let why = if id == a.state.my_id() {
+            "You can't suspend or delete yourself."
+        } else {
+            "Site admins can't be suspended or deleted. Remove their admin rights first."
+        };
+        cell.help(why).child(button)
+    }
 }
 
 // ---- invites ---------------------------------------------------------------------------------

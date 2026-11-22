@@ -362,6 +362,8 @@ pub fn view(a: &App, cx: &mut Cx<App>) -> El {
     let screen = match a.state.screen {
         Screen::Loading => el().key("screen-loading"),
         Screen::Auth => el().key("screen-auth").child(ui::auth::build(a, k)),
+        // New terms to accept: nothing of the app is reachable until they are.
+        Screen::Main if a.state.terms_prompt_due() => el().key("screen-terms").child(ui::account::terms_screen(a, k)),
         Screen::Main => el().key("screen-main").child(ui::shell::build(
             a,
             k,
@@ -374,6 +376,7 @@ pub fn view(a: &App, cx: &mut Cx<App>) -> El {
     ui::dialogs::build(a, k, &mut layer, lay.height);
     ui::voice_stage::picker(a, k, &mut layer);
     ui::security::dialogs(a, k, &mut layer, lay.height);
+    ui::account::dialogs(a, k, &mut layer, lay.height);
     ui::emoji::build(a, k, &mut layer);
     ui::attach::lightbox_layer(a, k, &mut layer, (lay.width, lay.height));
     layer.push(ui::toasts::build(a, k));
