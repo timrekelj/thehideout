@@ -1,0 +1,5 @@
+thehideout — sample attachment
+
+This is a generated, original sample file bundled with the fake backend so the
+attachment viewer, file card "Open" and "Save to Downloads" actions work
+offline, without a real server.

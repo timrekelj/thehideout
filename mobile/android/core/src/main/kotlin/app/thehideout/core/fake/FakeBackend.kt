@@ -530,11 +530,70 @@ class FakeBackend(
         if (i >= 0) list[i] = f(list[i])
     }
 
-    private fun push(channel: Long, author: Long, content: String, at: Instant, nonce: String = ""): Message {
+    private fun push(channel: Long, author: Long, content: String, at: Instant, nonce: String = "", attachments: List<Attachment> = emptyList()): Message {
         val guild = channels.firstOrNull { it.id == channel }?.guildId
-        val m = Message(nextId++, channel, guild, author, content, at, nonce = nonce)
+        val m = Message(nextId++, channel, guild, author, content, at, nonce = nonce, attachments = attachments)
         messages.getOrPut(channel) { mutableListOf() }.add(m)
         return m
+    }
+
+    /**
+     * A generated attachment: `displayName` is what the message shows (unique per attachment, like a
+     * real upload's name); `asset` is which bundled file it points to (`ui/src/main/assets/fake_media`,
+     * several attachments can share one, as several real uploads could share a generated thumbnail).
+     */
+    private fun asset(displayName: String, asset: String, contentType: String, size: Long, width: Int? = null, height: Int? = null, thumbnail: String? = null, removed: Boolean = false) =
+        Attachment(
+            id = nextId++,
+            filename = displayName,
+            contentType = contentType,
+            size = size,
+            file = if (removed) "" else "file:///android_asset/fake_media/$asset",
+            width = width,
+            height = height,
+            thumbnail = thumbnail?.let { "file:///android_asset/fake_media/$it" },
+            removed = removed,
+        )
+
+    /**
+     * Pictures (1, 2, 3 and 4+ up, for every grid layout), a video, an audio note, a file and one
+     * an admin removed — desktop's `fake_files.rs::seed_attachments`, into the empty #design channel.
+     */
+    private fun seedAttachments() {
+        var t = now - Duration.ofDays(3)
+        push(DESIGN, BRUNO, "the new dashboard, before the polish pass", t, attachments = listOf(asset("dashboard.jpg", "square-1.jpg", "image/jpeg", 420_000, 1000, 1000)))
+        t = t.plusSeconds(360)
+        push(
+            DESIGN, TIM, "shots from the hike", t,
+            attachments = listOf(asset("hike-1.jpg", "landscape-3.jpg", "image/jpeg", 480_000, 1200, 800), asset("hike-2.jpg", "square-1.jpg", "image/jpeg", 410_000, 1000, 1000)),
+        )
+        t = t.plusSeconds(360)
+        push(
+            DESIGN, ANA, "Photos from Saturday", t,
+            attachments = listOf(
+                asset("saturday-1.jpg", "landscape-1.jpg", "image/jpeg", 840_000, 1200, 800),
+                asset("saturday-2.jpg", "portrait-1.jpg", "image/jpeg", 910_000, 900, 1200),
+                asset("saturday-3.jpg", "landscape-2.jpg", "image/jpeg", 1_200_000, 1200, 800),
+            ),
+        )
+        t = t.plusSeconds(360)
+        push(
+            DESIGN, CVETKA, "moodboard", t,
+            attachments = listOf(
+                asset("mood-1.jpg", "landscape-4.jpg", "image/jpeg", 300_000, 1200, 800),
+                asset("mood-2.jpg", "landscape-5.jpg", "image/jpeg", 300_000, 1200, 800),
+                asset("mood-3.jpg", "portrait-1.jpg", "image/jpeg", 300_000, 900, 1200),
+                asset("mood-4.jpg", "square-1.jpg", "image/jpeg", 300_000, 1000, 1000),
+            ),
+        )
+        t = t.plusSeconds(360)
+        push(DESIGN, ANA, "screen recording of the bug", t, attachments = listOf(asset("demo.mp4", "clip-1.mp4", "video/mp4", 590_746, 960, 540, thumbnail = "clip-1-poster.jpg")))
+        t = t.plusSeconds(360)
+        push(DESIGN, ANA, "", t, attachments = listOf(asset("voice-note.m4a", "tone-1.m4a", "audio/mp4", 98_808)))
+        t = t.plusSeconds(360)
+        push(DESIGN, BRUNO, "notes from the planning session", t, attachments = listOf(asset("meeting-notes.txt", "notes-1.txt", "text/plain", 218)))
+        t = t.plusSeconds(360)
+        push(DESIGN, CVETKA, "this was the wrong sheet", t, attachments = listOf(asset("invoice.xlsx", "notes-1.txt", "application/vnd.ms-excel", 88_000, removed = true)))
     }
 
     private fun seed() {
@@ -571,6 +630,7 @@ class FakeBackend(
         DM_BRUNO_LINES.forEachIndexed { i, (who, line) -> push(DM_BRUNO, who, line, now - Duration.ofDays(5) + Duration.ofSeconds(i * 120L)) }
         push(20, ANA, "rehearsal moved to Thursday", now - Duration.ofDays(6))
         push(30, BRUNO, "sourdough starter is alive", now - Duration.ofDays(7))
+        seedAttachments()
     }
 
     companion object {
