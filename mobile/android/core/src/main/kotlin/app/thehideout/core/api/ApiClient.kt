@@ -1,5 +1,9 @@
 package app.thehideout.core.api
 
+import app.thehideout.core.auth.InvitePreview
+import app.thehideout.core.auth.PasskeyCeremony
+import app.thehideout.core.auth.PasskeyFinish
+import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.model.*
 import kotlinx.coroutines.flow.Flow
 
@@ -7,7 +11,8 @@ data class Session(val token: String, val me: User)
 
 sealed interface LoginResult {
     data class SignedIn(val session: Session) : LoginResult
-    data class SecondFactor(val challengeId: String) : LoginResult
+    /** The first factor passed; answer the challenge (valid for 5 minutes). */
+    data class SecondFactor(val challengeId: String, val methods: Set<app.thehideout.core.auth.SecondFactorMethod>, val expiresAt: java.time.Instant) : LoginResult
 }
 
 data class Me(val user: User, val termsUpdateRequired: String?, val termsVersion: String)
@@ -45,6 +50,44 @@ interface ApiClient {
     suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji)
     suspend fun removeReaction(channel: Long, message: Long, emoji: ReactionEmoji)
     suspend fun logout()
+
+    // ---- authentication and onboarding (the unauthenticated RPCs; the rest need the token) ----
+
+    /** Emails a one-time sign-in code; always succeeds unless rate limited. */
+    suspend fun requestEmailCode(email: String)
+    /** Signs in with an emailed code; may answer with a second-factor challenge. */
+    suspend fun verifyEmailCode(email: String, code: String, deviceName: String): LoginResult
+    /** Answers a second-factor challenge with a TOTP or a recovery code. */
+    suspend fun completeSecondFactor(challengeId: String, totpCode: String, recoveryCode: String): Session
+    /** Starts answering a second-factor challenge with a passkey. */
+    suspend fun beginSecondFactorPasskey(challengeId: String): PasskeyCeremony
+    /** Finishes it: a session, or `pending` while the ceremony page runs (poll with ""). */
+    suspend fun finishSecondFactorPasskey(ceremonyId: String, credentialJson: String): PasskeyFinish
+    /** Emails a password-reset code; always succeeds unless rate limited. */
+    suspend fun requestPasswordReset(email: String)
+    /** Sets a new password with the emailed code; signs out every session. */
+    suspend fun resetPassword(email: String, code: String, newPassword: String)
+    /** Starts signing in with a passkey. */
+    suspend fun beginPasskeyLogin(username: String, deviceName: String): PasskeyCeremony
+    /** Finishes it: a session, or `pending` while the ceremony page runs (poll with ""). */
+    suspend fun finishPasskeyLogin(ceremonyId: String, credentialJson: String): PasskeyFinish
+    /** Starts adding a passkey to the signed-in account. */
+    suspend fun beginPasskeyRegistration(name: String): PasskeyCeremony
+    /** Finishes adding one: the passkey, or `pending`. */
+    suspend fun finishPasskeyRegistration(ceremonyId: String, credentialJson: String): PasskeyRegistered
+    /** What an invite (its code or link token) is for. */
+    suspend fun lookupInvite(tokenOrCode: String): InvitePreview
+    /** Creates the invite's account and its first session. */
+    suspend fun acceptInvite(
+        tokenOrCode: String,
+        username: String,
+        password: String?,
+        deviceName: String,
+        acceptedTermsVersion: String,
+        ageConfirmed: Boolean,
+    ): Session
+    /** Accepts the current terms version. */
+    suspend fun acceptTerms(version: String)
 
     /**
      * One subscription to the event stream: emits until the stream ends, then completes; fails with
