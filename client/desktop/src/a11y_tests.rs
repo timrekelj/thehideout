@@ -133,10 +133,19 @@ fn every_operable_element_has_a_role_and_a_name() {
         "leave-server-confirm",
         "transfer-dialog",
         "invite-reset",
+        "auth-invite-accept-terms",
+        "terms-update",
+        "auth-suspended",
+        "settings-account",
+        "delete-account-dialog",
+        "delete-account-owns-guilds",
+        "admin-users-actions",
+        "admin-suspend-dialog",
+        "message-deleted-user",
     ] {
         let n = audit(s);
         // A small confirmation or a menu holds the focus: its few controls are all there is.
-        let min = if matches!(s, "message-delete-confirm" | "delete-channel-confirm" | "leave-server-confirm" | "invite-reset" | "member-menu-moderation") { 2 } else { 5 };
+        let min = if matches!(s, "message-delete-confirm" | "delete-channel-confirm" | "leave-server-confirm" | "invite-reset" | "member-menu-moderation" | "terms-update" | "auth-suspended" | "delete-account-dialog" | "delete-account-owns-guilds" | "admin-suspend-dialog" | "admin-users-actions") { 2 } else { 5 };
         assert!(
             n >= min,
             "{s}: only {n} operable elements, the scene did not build"
