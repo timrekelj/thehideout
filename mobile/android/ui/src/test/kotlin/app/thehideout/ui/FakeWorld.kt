@@ -24,6 +24,8 @@ fun fakeWorldState(): AppState = runBlocking {
     s = s.reduce(Action.AccessLoaded(FakeBackend.HIDEOUT, Result.success(fake.listRoles(FakeBackend.HIDEOUT))))
     // DM history too, so the list can preview the last message.
     for (dm in listOf(FakeBackend.DM_ANA, FakeBackend.DM_BRUNO)) {
+        // A page only lands in a log that exists (the app creates it when a channel is first opened).
+        s = s.copy(logs = s.logs + (dm to app.thehideout.core.store.ChannelLog()))
         s = s.reduce(Action.MessagesLoaded(dm, null, Result.success(fake.listMessages(dm, null))))
     }
     fun event(e: GatewayEvent) { s = s.reduce(Action.Gateway(GatewayUpdate.Event(e))) }

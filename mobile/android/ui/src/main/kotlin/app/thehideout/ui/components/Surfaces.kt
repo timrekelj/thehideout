@@ -37,7 +37,7 @@ fun HideoutCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) 
 fun GroupLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text.uppercase(),
-        modifier = modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        modifier = modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp),
         style = MaterialTheme.typography.labelMedium,
         color = Hideout.colors.textMuted,
     )

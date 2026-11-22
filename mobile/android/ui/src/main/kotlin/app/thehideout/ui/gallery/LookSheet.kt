@@ -19,9 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -67,7 +66,7 @@ fun LookControls(look: Look, onChange: (Look) -> Unit, modifier: Modifier = Modi
     val spec = look.spec
     fun spec(f: ThemeSpec.() -> ThemeSpec) = onChange(look.copy(spec = spec.f()))
     val c = Hideout.colors
-    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 24.dp)) {
+    Column(modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Look", style = MaterialTheme.typography.headlineSmall, color = c.text, modifier = Modifier.weight(1f))
             TextButton(onClick = { onChange(Look()) }, enabled = look != Look()) { Text("Reset") }
@@ -98,8 +97,8 @@ fun LookControls(look: Look, onChange: (Look) -> Unit, modifier: Modifier = Modi
         GroupLabel("Text size")
         TextSizeSlider(spec.textSize) { t -> spec { copy(textSize = t) } }
 
-        GroupLabel("Motion")
-        SegmentedChoice(ReduceMotion.entries, look.reduceMotion, { "Reduce: ${it.displayName}" }, null) { m -> onChange(look.copy(reduceMotion = m)) }
+        GroupLabel("Reduce motion")
+        SegmentedChoice(ReduceMotion.entries, look.reduceMotion, { it.displayName }, null) { m -> onChange(look.copy(reduceMotion = m)) }
     }
 }
 
@@ -162,17 +161,34 @@ private fun BackgroundChips(selected: BackgroundPreset, dark: Boolean, onPick: (
     }
 }
 
+/**
+ * One choice of a few as a connected group of toggle buttons (the Expressive answer to segmented
+ * buttons: the selected one rounds into a pill). Each option may carry an icon.
+ */
 @Composable
 private fun <T> SegmentedChoice(options: List<T>, selected: T, label: (T) -> String, icon: ((T) -> Sym)?, onPick: (T) -> Unit) {
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+    ) {
         options.forEachIndexed { i, option ->
-            SegmentedButton(
-                selected = option == selected,
-                onClick = { onPick(option) },
-                shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                icon = { SegmentedButtonDefaults.Icon(option == selected, activeContent = { SymIcon(Sym.Check, null, size = 18.dp) }, inactiveContent = icon?.let { f -> { SymIcon(f(option), null, size = 18.dp) } } ?: {}) },
-                label = { Text(label(option), maxLines = 1) },
-            )
+            val shapes = when (i) {
+                0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+            }
+            ToggleButton(
+                checked = option == selected,
+                onCheckedChange = { onPick(option) },
+                modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
+                shapes = shapes,
+            ) {
+                if (icon != null) {
+                    SymIcon(icon(option), null, size = 18.dp)
+                    Box(Modifier.width(6.dp))
+                }
+                Text(label(option), maxLines = 1)
+            }
         }
     }
 }

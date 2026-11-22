@@ -157,7 +157,7 @@ private fun Section(title: String, note: String? = null, content: @Composable ()
 // ---- colour ------------------------------------------------------------------------------------
 
 @Composable
-private fun Swatch(name: String, color: Color, modifier: Modifier = Modifier, on: Color? = null, onLabel: String = "Aa", shown: Color = on?.takeIf { color == Hideout.colors.bg } ?: color) {
+private fun Swatch(name: String, color: Color, modifier: Modifier = Modifier, on: Color? = null, onLabel: String = "Aa", shown: Color = color) {
     val c = Hideout.colors
     Column(modifier) {
         Box(
@@ -192,7 +192,9 @@ private fun Swatches(vararg items: Triple<String, Color, Color?>) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        items.forEach { (n, col, on) -> Swatch(n, col, Modifier.weight(1f), on) }
+        // Foreground tokens are shown as text on the page background; their hex is the text's, not the page's.
+        val foreground = setOf("text", "textMuted", "textFaint", "accentText")
+        items.forEach { (n, col, on) -> Swatch(n, col, Modifier.weight(1f), on, shown = if (n in foreground && on != null) on else col) }
         repeat((3 - items.size % 3) % 3) { Box(Modifier.weight(1f)) }
     }
 }

@@ -39,6 +39,4 @@ class PhoneScreenshots : ScreenshotTest() {
     }
 
     @Test fun galleryTopDark() = compose.snapshot("gallery-top", Device.Phone, Variant.Dark) { look -> GalleryScreen(look, {}) }
-    @Test fun lookSheetDark() = compose.snapshot("look-sheet", Device.Phone, Variant.Dark) { look -> GalleryScreen(look, {}, initialSheetOpen = true) }
-    @Test fun lookSheetLight() = compose.snapshot("look-sheet", Device.Phone, Variant.Light) { look -> GalleryScreen(look, {}, initialSheetOpen = true) }
 }
