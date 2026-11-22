@@ -499,5 +499,26 @@ public interface EventOrBuilder extends
    */
   com.thehideout.v1.ChannelDeleted getChannelDeleted();
 
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   * @return Whether the notificationSettingsUpdated field is set.
+   */
+  boolean hasNotificationSettingsUpdated();
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   * @return The notificationSettingsUpdated.
+   */
+  com.thehideout.v1.NotificationSettings getNotificationSettingsUpdated();
+
   public com.thehideout.v1.Event.PayloadCase getPayloadCase();
 }
