@@ -1,6 +1,8 @@
 package app.thehideout.ui.shell
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -119,8 +121,13 @@ fun TranscriptPane(
     val log = state.log(channelId)
     val today = LocalToday.current ?: LocalDate.now(zone)
     val listState = rememberLazyListState()
+    // Opening a channel reads it; the keyboard comes up when the reader taps the composer, not before.
+    // The adaptive scaffold moves focus into a pane it navigates to, and the only focusable thing
+    // in touch mode is the composer's text field: park focus on an inert target instead.
+    val sink = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(channelId) { sink.requestFocus() }
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.focusRequester(sink).focusable(),
         containerColor = c.bg,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {

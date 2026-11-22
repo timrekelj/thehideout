@@ -27,11 +27,15 @@ import app.thehideout.ui.theme.HideoutTheme
  */
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
+    private var mode = false to false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val fake = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_FAKE, false)
-        val gallery = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_GALLERY, false)
+        // A relaunch of this activity (rotation, `recreate()`) comes back with the original launch intent, not the
+        // one `onNewIntent` saw, so the debug flags of the latest launch are kept in the process.
+        if (savedInstanceState == null) debugMode = isFake(intent) to isGallery(intent)
+        val (fake, gallery) = debugMode
+        mode = debugMode
         val container = (application as HideoutApp).container
         // One ViewModel per mode, so a debug relaunch with fake=true never reuses the real session.
         viewModel = ViewModelProvider(this, AppViewModel.Factory(container, fake))[if (fake) "fake" else "real", AppViewModel::class.java]
@@ -64,8 +68,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // singleTask delivers a new launch here; a debug relaunch with other flags starts over in that mode.
+        val next = isFake(intent) to isGallery(intent)
+        if (next != mode) {
+            debugMode = next
+            recreate()
+            return
+        }
         handleLink(intent)
     }
+
+    private fun isFake(intent: Intent) = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_FAKE, false)
+    private fun isGallery(intent: Intent) = BuildConfig.DEBUG && intent.getBooleanExtra(EXTRA_GALLERY, false)
 
     private fun handleLink(intent: Intent) {
         invitePath(intent.data)?.let { viewModel.pendingInvite = it }
@@ -77,6 +91,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        @Volatile private var debugMode = false to false
+
         const val EXTRA_FAKE = "fake"
         const val EXTRA_GALLERY = "gallery"
 

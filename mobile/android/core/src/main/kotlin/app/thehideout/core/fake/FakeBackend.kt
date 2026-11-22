@@ -110,6 +110,7 @@ class FakeBackend(
 
     private val messages = mutableMapOf<Long, MutableList<Message>>()
     private var nextId = 10_000L
+    private var unreadDemoSent = false
     private val events = MutableSharedFlow<GatewayEvent>(extraBufferCapacity = 256)
 
     /** The next [n] sends fail with a network error (for tests of the failed-send state). */
@@ -218,7 +219,9 @@ class FakeBackend(
         emit(GatewayEvent.Heartbeat)
         // Someone is in voice: the snapshot follows the first heartbeat, as on the real stream.
         emit(GatewayEvent.VoiceSnapshot(guilds.map { it.id }, voiceStates))
-        if (unreadDemo) {
+        // Once per backend: a resubscribe (rotation, foreground) must not deliver them again.
+        if (unreadDemo && !unreadDemoSent) {
+            unreadDemoSent = true
             for ((channel, author, text) in UNREAD_DEMO) emit(GatewayEvent.MessageCreated(push(channel, author, text, now + Duration.ofMinutes(1))))
         }
         events.collect { emit(it) }
