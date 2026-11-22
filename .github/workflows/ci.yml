@@ -130,7 +130,10 @@ jobs:
         run: |
           cd deploy
           cp .env.production.example .env.production
-          sed -i 's/^SCYLLA_SUPERUSER_PASSWORD=$/SCYLLA_SUPERUSER_PASSWORD=ci/; s/^THEHIDEOUT_SCYLLA_PASSWORD=$/THEHIDEOUT_SCYLLA_PASSWORD=ci/; s/^LIVEKIT_API_KEY=$/LIVEKIT_API_KEY=ci/; s/^LIVEKIT_API_SECRET=$/LIVEKIT_API_SECRET=ci/' .env.production
+          # Fill every variable compose requires (${VAR:?...}) that the example leaves empty.
+          grep -oE '\$\{[A-Z0-9_]+:\?' compose.yml | sed 's/^\${//; s/:?$//' | sort -u | while read -r var; do
+            sed -i "s/^${var}=\$/${var}=ci/" .env.production
+          done
           docker compose --env-file .env.production config -q
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -e THEHIDEOUT_DOMAIN=hideout.example.com -e LIVEKIT_DOMAIN=voice.example.com -e ACME_EMAIL=a@example.com \
