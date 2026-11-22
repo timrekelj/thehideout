@@ -5,8 +5,10 @@ import app.thehideout.core.api.AppError
 import app.thehideout.core.api.ConnectApiClient
 import app.thehideout.core.api.UploadSource
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.SocketEffect
 import okhttp3.Headers.Companion.toHeaders
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
@@ -61,6 +63,28 @@ class ConnectApiClientUploadTest {
         server.enqueue(MockResponse.Builder().code(413).body("""{"code":"invalid_argument","message":"files may be at most 1 bytes"}""").build())
         val e = assertThrows(AppError::class.java) { runBlocking { client().uploadAttachment(1, "x", "text/plain", 2, UploadSource { ByteArrayInputStream(byteArrayOf(1, 2)) }) {} } }
         assertEquals(AppError.TooLarge, e)
+    }
+
+    @Test fun `a response body that fails mid-read resumes with a retryable Unavailable instead of hanging`() = runBlocking {
+        // A 200 whose socket is closed as the body starts: `r.body.bytes()` in the callback throws.
+        server.enqueue(
+            MockResponse.Builder()
+                .code(200)
+                .headers(mapOf("Content-Type" to "application/json").toHeaders())
+                .body("""{"id":"123","filename":"x","contentType":"text/plain","size":"1","expiresAt":"2026-01-02T03:04:05Z"}""")
+                .onResponseBody(SocketEffect.CloseSocket())
+                .build(),
+        )
+        val e = assertThrows(AppError::class.java) {
+            runBlocking {
+                // Bounded: with the leak, the coroutine never resumes and this times out instead of returning.
+                withTimeout(10_000) {
+                    client().uploadAttachment(1, "x", "text/plain", 1, UploadSource { ByteArrayInputStream(byteArrayOf(1)) }) {}
+                }
+            }
+        }
+        assertTrue(e is AppError.Unavailable, "expected a transient Unavailable, got $e")
+        assertTrue(e.isTransient, "the store's uploadWithRetry must retry it")
     }
 
     @Test fun `a 429 maps to RateLimited and a 401 to Unauthenticated`() = runBlocking {

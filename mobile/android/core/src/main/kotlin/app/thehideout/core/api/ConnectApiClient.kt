@@ -206,9 +206,15 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
                 }
 
                 override fun onResponse(call: Call, response: Response) {
+                    // Reading the body can itself throw (truncated stream, reset connection): map that to a
+                    // retryable Unavailable and resume, so the waiting coroutine never hangs in this callback.
                     val result = response.use { r ->
-                        val bytes = r.body.bytes()
-                        if (!r.isSuccessful) Result.failure(httpAttachmentError(r.code, bytes)) else runCatching { parsePendingAttachment(bytes) }
+                        runCatching { r.body.bytes() }.fold(
+                            onSuccess = { bytes ->
+                                if (!r.isSuccessful) Result.failure(httpAttachmentError(r.code, bytes)) else runCatching { parsePendingAttachment(bytes) }
+                            },
+                            onFailure = { e -> Result.failure(AppError.Unavailable(e.message ?: "couldn't read the upload response")) },
+                        )
                     }
                     if (!cont.isActive) return
                     result.fold(cont::resume, cont::resumeWithException)
