@@ -64,6 +64,7 @@ struct ChannelListScreen: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
     let guildID: ID
+    @State private var showVoiceComingSoon = false
 
     var body: some View {
         let state = store.state
@@ -86,6 +87,11 @@ struct ChannelListScreen: View {
         .navigationTitle(state.guild(guildID)?.name ?? "Server")
         .navigationBarTitleDisplayMode(.large)
         .task { store.enterGuild(guildID) }
+        .alert("Voice channels", isPresented: $showVoiceComingSoon) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Voice, video and screen share are coming to thehideout for iOS soon.")
+        }
     }
 
     @ViewBuilder
@@ -99,7 +105,8 @@ struct ChannelListScreen: View {
                 .listRowInsets(EdgeInsets(top: 0, leading: Space.s2, bottom: 0, trailing: Space.s3))
             } else {
                 VStack(spacing: 0) {
-                    ChannelRow(channel)
+                    Button { showVoiceComingSoon = true } label: { ChannelRow(channel) }
+                        .buttonStyle(.plain)
                     ForEach(store.state.participants(of: channel.id, in: guildID), id: \.userID) { p in
                         if let user = store.state.users[p.userID] { VoiceParticipantRow(user: user, state: p) }
                     }

@@ -14,11 +14,16 @@ struct MainShell: View {
     var body: some View {
         let selection = Binding(get: { tab ?? initialTab }, set: { tab = $0 })
         let home = store.state.homeUnread
+        let serverMentions = store.state.guilds.reduce(0) { $0 + store.state.guildUnread($1.id).mentions }
         TabView(selection: selection) {
             Tab("Servers", systemImage: "square.grid.2x2.fill", value: ShellTab.servers) { ServersTab() }
+                .badge(serverMentions)
             Tab("DMs", systemImage: "bubble.left.and.bubble.right.fill", value: ShellTab.dms) { DMsTab() }
                 .badge(home.mentions)
+            // Mentions badges use the accent (never red, which is errors only): the system tab badge is
+            // already accent-tinted via `.tint(theme.colors.accent)` at the root (`ThemedRoot`).
             Tab("Mentions", systemImage: "at", value: ShellTab.mentions) { MentionsTab() }
+                .badge(store.state.mentionFeed().count)
             Tab("You", systemImage: "person.crop.circle.fill", value: ShellTab.you) { YouTab() }
         }
         .tabViewStyle(.sidebarAdaptable)

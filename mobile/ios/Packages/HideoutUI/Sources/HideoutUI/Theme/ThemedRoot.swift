@@ -1,5 +1,6 @@
 import HideoutDesign
 import SwiftUI
+import UIKit
 
 extension EnvironmentValues {
     /// Whether motion is reduced: the system setting, or the app's own choice.
@@ -43,7 +44,18 @@ private struct ThemeModifier: ViewModifier {
     func body(content: Content) -> some View {
         let r = resolve()
         let theme = r.theme
-        content
+        // `.tint(_:)` does not reach a tab bar's `.badge()`: SwiftUI's `Tab` badge always renders in the
+        // system's red regardless of the environment tint, which would read as an error state (mention
+        // badges are never red; red is errors only). Only `badgeBackgroundColor` on each layout's item
+        // appearance is touched (background/blur left nil) so the Liquid Glass bar itself is untouched.
+        let badge = UITabBarAppearance()
+        for item in [badge.stackedLayoutAppearance, badge.inlineLayoutAppearance, badge.compactInlineLayoutAppearance] {
+            item.normal.badgeBackgroundColor = UIColor(theme.colors.accent)
+            item.selected.badgeBackgroundColor = UIColor(theme.colors.accent)
+        }
+        UITabBar.appearance().standardAppearance = badge
+        UITabBar.appearance().scrollEdgeAppearance = badge
+        return content
             .environment(\.theme, theme)
             .environment(\.motionReduced, r.reduced)
             .environment(\.transparencyReduced, systemReduceTransparency || theme.spec.contrast == .high)
