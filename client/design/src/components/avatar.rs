@@ -2,7 +2,7 @@
 //! presence dot. Rounded squares (not circles) so avatars share the radius scale:
 //! 20/24 use `radius-sm`, 32 `radius-md`, 40 `radius-lg`.
 
-use rune::{el, text, El};
+use rune::{el, icon, text, El};
 use rune_kit::Kit;
 
 use crate::theme_of;
@@ -16,6 +16,10 @@ use crate::tokens::{radius, type_};
 pub fn avatar_tones(accent: AccentPreset) -> [Tone; 8] {
     accent.palette().avatars
 }
+
+/// What a deleted account is called. Its avatar is neutral: no initials, and a colour that
+/// belongs to no one (the id would give it a hue, which would tie it to a name that is gone).
+pub const DELETED_USER: &str = "Deleted user";
 
 /// Ink on every avatar fill.
 pub const AVATAR_INK: Tone = Tone::new(0.985, 0.006, 75.0);
@@ -123,19 +127,28 @@ impl Avatar {
         } else {
             initials(&self.name)
         };
+        let deleted = self.name == DELETED_USER;
         let mut e = el()
             .role("img")
             .label(self.name.clone())
             .size(s, s)
             .center()
-            .radius(r)
-            .fill(avatar_tones(t.spec.accent)[tone_index(&self.id)].color())
-            .child(
-                text(label)
-                    .font(font)
-                    .color(AVATAR_INK.color())
+            .radius(r);
+        e = if deleted {
+            e.fill(t.border.color()).child(
+                icon(&crate::icons::USER_CIRCLE, (s * 0.62).round())
+                    .color(t.text_muted.color())
                     .a11y_hidden(),
-            );
+            )
+        } else {
+            e.fill(avatar_tones(t.spec.accent)[tone_index(&self.id)].color())
+                .child(
+                    text(label)
+                        .font(font)
+                        .color(AVATAR_INK.color())
+                        .a11y_hidden(),
+                )
+        };
         if let Some(p) = &self.image {
             e = e.child(picture(p, s, r));
         }
