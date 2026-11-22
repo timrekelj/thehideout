@@ -32,16 +32,21 @@ public enum ServerURL {
         return s
     }
 
+    /// The host part of typed text, for the local-vs-domain check before a scheme is added. A bracketed IPv6
+    /// literal (`[::1]:8080`) has colons of its own, so it cannot just split on the first `:`.
     private static func hostOf(_ text: String) -> String {
-        let h = text.split(separator: "/").first.map(String.init) ?? text
+        let h = text.split(separator: "/", maxSplits: 1).first.map(String.init) ?? text
+        if h.hasPrefix("["), let end = h.firstIndex(of: "]") { return String(h[h.index(after: h.startIndex)..<end]) }
         return h.split(separator: ":").first.map(String.init) ?? h
     }
 
     private static func isLocal(hostOf text: String) -> Bool { isLocal(host: hostOf(text)) }
 
-    /// localhost, `*.local`, loopback and the private IPv4 ranges.
+    /// localhost, `*.local`, loopback and the private IPv4 ranges. `host` may be `URLComponents.host` for a
+    /// bracketed IPv6 literal, which keeps the brackets (`[::1]`, unlike a browser's unbracketed `::1`).
     public static func isLocal(host: String) -> Bool {
-        let h = host.lowercased()
+        var h = host.lowercased()
+        if h.hasPrefix("["), h.hasSuffix("]") { h = String(h.dropFirst().dropLast()) }
         if h == "localhost" || h.hasSuffix(".local") || h == "::1" { return true }
         let parts = h.split(separator: ".").compactMap { Int($0) }
         guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }

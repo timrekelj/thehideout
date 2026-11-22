@@ -8,9 +8,10 @@ import UIKit
 /// The server's `options_json` is webauthn-rs' `{"publicKey": {...}}` (base64url binary fields); the credential that
 /// goes back is the browser's `PublicKeyCredential` shape (base64url), exactly what its ceremony page posts.
 /// The system sheet only works when the app is associated with the server's domain (`webcredentials:` in the
-/// entitlements plus `/.well-known/apple-app-site-association` on the server): `canUseNative` is false for a dev
-/// server on localhost or an IP, and a refusal ("not associated with domain") becomes `.unavailable` so the caller
-/// falls back to the page.
+/// entitlements plus `/.well-known/apple-app-site-association` on the server): `canUseNative` checks the host
+/// against `associatedDomains` (false for a dev server on localhost or an IP, and for a domain not on the list,
+/// even a real one), and a refusal that means "not associated with this domain" becomes `.unavailable` so the
+/// caller falls back to the page.
 @MainActor
 public final class SystemPasskeys: NSObject, PasskeyPlatform {
     private var controller: ASAuthorizationController?
@@ -20,7 +21,12 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
 
     public override init() { super.init() }
 
-    public func canUseNative(host: String) -> Bool { ServerURL.isDomain(host: host) }
+    /// The domains this app is associated with (`Hideout.entitlements`' `webcredentials:` list, kept in sync by
+    /// hand with `project.yml`). The system sheet fails for any other host, so skip straight to the browser page
+    /// for one instead of round-tripping a request we already know will be refused.
+    static let associatedDomains: Set<String> = ["thehideout.zabit.si"]
+
+    public func canUseNative(host: String) -> Bool { Self.associatedDomains.contains(host.lowercased()) }
 
     // MARK: system sheet
 
@@ -53,6 +59,13 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
         else { throw PasskeyFailure.failed("bad options") }
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: rp)
         let request = provider.createCredentialRegistrationRequest(challenge: challenge, name: name, userID: userID)
+        // `authenticatorSelection.userVerification` (registration), not the top-level field assertion options use.
+        let authenticatorSelection = pk["authenticatorSelection"] as? [String: Any]
+        request.userVerificationPreference = Self.verification(authenticatorSelection?["userVerification"] as? String)
+        request.attestationPreference = Self.attestation(pk["attestation"] as? String)
+        // There is no public API to pass `excludeCredentials` to a platform registration request (only the web
+        // browser and security-key variants take one): a re-registration on an already-enrolled device is left to
+        // the server to reject, same as it would for a duplicate from any other client.
         let result = try await perform(request)
         guard let c = result.credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration, let attestation = c.rawAttestationObject
         else { throw PasskeyFailure.failed("unexpected credential") }
@@ -62,7 +75,8 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
             "response": [
                 "attestationObject": Self.b64url(attestation),
                 "clientDataJSON": Self.b64url(c.rawClientDataJSON),
-                "transports": ["internal", "hybrid"],
+                // Optional per the WebAuthn spec; this is always a platform (built-in) authenticator here, and
+                // there is no public API on this credential type to report whether hybrid was actually used.
             ],
         ])
     }
@@ -74,6 +88,12 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
         self.controller = controller
         defer { self.controller = nil }
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<ASAuthorization, Error>) in
+            // A pending continuation here would mean two ceremonies overlapped; reject the older one instead of
+            // silently dropping it (a `CheckedContinuation` resumed twice, or never, is a crash / a hung caller).
+            if let previous = continuation {
+                continuation = nil
+                previous.resume(throwing: PasskeyFailure.cancelled)
+            }
             continuation = c
             controller.performRequests()
         }
@@ -112,6 +132,15 @@ public final class SystemPasskeys: NSObject, PasskeyPlatform {
         }
     }
 
+    private static func attestation(_ s: String?) -> ASAuthorizationPublicKeyCredentialAttestationKind {
+        switch s {
+        case "direct": .direct
+        case "indirect": .indirect
+        case "enterprise": .enterprise
+        default: .none
+        }
+    }
+
     static func data(_ any: Any?) -> Data? {
         guard var s = any as? String else { return nil }
         s = s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -147,22 +176,40 @@ extension SystemPasskeys: ASAuthorizationControllerDelegate {
         if let e = error as? ASAuthorizationError {
             switch e.code {
             case .canceled: failure = .cancelled
-            // Not associated with the domain, no passkey provider, or not supported here: the page can still do it.
-            case .failed, .notHandled, .unknown, .notInteractive, .invalidResponse: failure = .unavailable(e.localizedDescription)
-            default: failure = .failed(e.localizedDescription)
+            // No passkey provider, or not a supported context here: the page can still do it.
+            case .notHandled, .unknown, .notInteractive, .invalidResponse: failure = .unavailable(e.localizedDescription)
+            // `.failed` covers everything from "not associated with this domain" to a real authenticator refusal;
+            // only the former should fall back quietly, so look at what is actually wrong before deciding.
+            case .failed where Self.isDomainAssociationFailure(e): failure = .unavailable(e.localizedDescription)
+            case .failed: failure = .failed("That passkey wasn't accepted.")
+            default: failure = .failed("That passkey wasn't accepted.")
             }
         } else {
-            failure = .failed(error.localizedDescription)
+            failure = .failed("That passkey wasn't accepted.")
         }
         continuation?.resume(throwing: failure)
         continuation = nil
+    }
+
+    /// Whether `error` means "this app isn't associated with the relying party's domain" rather than a real
+    /// authenticator refusal (a wrong/missing passkey, user declined, hardware issue, ...), which should surface
+    /// to the person instead of silently falling back to the browser page.
+    private static func isDomainAssociationFailure(_ error: ASAuthorizationError) -> Bool {
+        let ns = error as NSError
+        let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError
+        let text = (underlying?.localizedDescription ?? ns.localizedDescription).lowercased()
+        return text.contains("not associated with domain") || text.contains("webcredentials") || text.contains("not eligible")
     }
 }
 
 extension SystemPasskeys: ASAuthorizationControllerPresentationContextProviding {
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes[0]
+        // Prefer the foreground-active scene, but a brief gap during a scene transition should not crash on an
+        // out-of-bounds `scenes[0]`: fall back to any connected scene.
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else {
+            preconditionFailure("no window scene to present the passkey sheet on")
+        }
         return scene.keyWindow ?? UIWindow(windowScene: scene)
     }
 }

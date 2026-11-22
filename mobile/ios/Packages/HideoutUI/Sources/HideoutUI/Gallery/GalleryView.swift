@@ -27,9 +27,8 @@ public enum GallerySection: String, CaseIterable, Identifiable, Sendable {
 public struct GalleryView: View {
     @Environment(\.theme) private var theme
     @State private var showLook = false
-    let embedded: Bool
 
-    public init(embedded: Bool = false) { self.embedded = embedded }
+    public init() {}
 
     public var body: some View {
         page

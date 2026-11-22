@@ -59,6 +59,13 @@ public final class FakeAccounts: @unchecked Sendable {
         set { lock.withLock { _pendingPolls = newValue } }
     }
 
+    /// The next `acceptTerms` call throws this instead of succeeding (for `AppStore.acceptTerms`'s error branches).
+    public var nextAcceptTermsError: AppError? {
+        get { lock.withLock { _nextAcceptTermsError } }
+        set { lock.withLock { _nextAcceptTermsError = newValue } }
+    }
+    private var _nextAcceptTermsError: AppError?
+
     func record(_ s: String) { lock.withLock { _log.append(s) } }
 
     func currentPassword() -> String { lock.withLock { _password } }
@@ -201,6 +208,7 @@ extension FakeBackend: AuthApi {
 
     public func acceptTerms(version: String) async throws {
         try await delay(); try accounts.gate()
+        if let e = accounts.nextAcceptTermsError { accounts.nextAcceptTermsError = nil; throw e }
         accounts.record("acceptTerms:\(version)")
         accounts.termsRequired = nil
     }

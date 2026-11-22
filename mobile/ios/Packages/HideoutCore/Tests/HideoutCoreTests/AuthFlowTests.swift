@@ -34,11 +34,14 @@ final class Harness {
     let fake = FakeBackend()
     let passkeys = FakePasskeys()
     let calls = Callbacks()
+    let server: ServerSelection
     let flow: AuthFlow
 
     init() {
         let calls = self.calls
-        flow = AuthFlow(server: ServerSelection(fixed: fake), deviceName: "iPhone", passkeys: passkeys, pollInterval: .milliseconds(1),
+        fake.accounts.now = calls.now // the same clock as AuthFlow's, so a challenge's `expiresAt` lines up
+        server = ServerSelection(fixed: fake)
+        flow = AuthFlow(server: server, deviceName: "iPhone", passkeys: passkeys, pollInterval: .milliseconds(1),
                         now: { calls.now }, onSession: { calls.add($0) }, onClientTooOld: { calls.old() })
     }
 
@@ -426,7 +429,9 @@ struct AuthFlowTests {
         #expect(h.flow.issue == AuthIssue(.username, "That username is taken. Try another."))
         guard case .inviteAccept = h.flow.step else { Issue.record("still on the accept step"); return }
         #expect(h.flow.acceptTerms && h.flow.confirmAge && h.flow.username == "ana")
-        h.flow.username = "anna2"; h.flow.password = "long enough pw"
+        // Only the username was wrong: the password is not retyped for a one-field fix.
+        #expect(h.flow.password == "long enough pw")
+        h.flow.username = "anna2"
         h.flow.submit(); await h.flow.settle()
         #expect(h.calls.tokens == ["fake-anna2"])
     }
@@ -500,6 +505,37 @@ struct AuthFlowTests {
         #expect(h.flow.step == .password)
     }
 
+    @Test func aUniversalLinkForADifferentServerAsksBeforeLookingItUp() async {
+        let h = Harness()
+        #expect(h.flow.handle(url: URL(string: "https://thehideout.zabit.si/invite/WXYZ-2345")!))
+        #expect(h.flow.pendingInviteLink?.host == "thehideout.zabit.si")
+        #expect(h.flow.step == .password, "nothing is looked up on the current server until the switch is confirmed")
+        #expect(h.fake.accounts.log.isEmpty)
+
+        h.flow.switchServerForPendingInviteLink()
+        await h.flow.settle()
+        #expect(h.flow.pendingInviteLink == nil)
+        #expect(h.server.url.host == "thehideout.zabit.si")
+        guard case .inviteAccept(_, let code) = h.flow.step else { Issue.record("expected the accept step"); return }
+        #expect(code == "WXYZ-2345")
+    }
+
+    @Test func dismissingTheServerSwitchLeavesTheStepUnchanged() {
+        let h = Harness()
+        h.flow.handle(url: URL(string: "https://thehideout.zabit.si/invite/WXYZ-2345")!)
+        h.flow.dismissPendingInviteLink()
+        #expect(h.flow.pendingInviteLink == nil && h.flow.step == .password)
+    }
+
+    @Test func theCustomSchemeNeverAsksToSwitchServers() async {
+        // "invite" is the authority component of `thehideout://invite/<token>`, not a real host to compare.
+        let h = Harness()
+        #expect(h.flow.handle(url: URL(string: "thehideout://invite/WXYZ-2345")!))
+        #expect(h.flow.pendingInviteLink == nil)
+        await h.flow.settle()
+        guard case .inviteAccept = h.flow.step else { Issue.record("expected the accept step"); return }
+    }
+
     // MARK: navigation
 
     @Test func movingBetweenStepsClearsErrorsAndSecrets() async {
@@ -514,7 +550,9 @@ struct AuthFlowTests {
         #expect(h.flow.inviteMode && h.flow.topLevel)
     }
 
-    @Test func aSlowAnswerToAnAbandonedStepIsDropped() async {
+    /// A password sign-in that would otherwise succeed, abandoned by "Join with a code" before its reply lands:
+    /// the generation guard (not just task cancellation: see the next two tests) drops it, so nobody is signed in.
+    @Test func aSlowPasswordSignInSuccessIsDroppedAfterGoingBack() async {
         let h = Harness()
         h.fake.latency = 0.05
         h.flow.login = "tim"; h.flow.password = FakeAccounts.password
@@ -523,6 +561,30 @@ struct AuthFlowTests {
         await h.flow.settle()
         try? await Task.sleep(for: .milliseconds(120))
         #expect(h.flow.step == .inviteCode)
+        #expect(h.calls.tokens.isEmpty, "the stale success must not sign anyone in")
+    }
+
+    @Test func aSlowEmailCodeRequestSuccessIsDroppedAfterGoingBack() async {
+        let h = Harness()
+        h.fake.latency = 0.05
+        h.flow.startEmailCode(); h.flow.email = "tim@example.com"
+        h.flow.submit()
+        h.flow.showSignIn()
+        await h.flow.settle()
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(h.flow.step == .password, "the stale reply must not flip the step to \"code sent\"")
+        #expect(h.flow.notice == nil)
+    }
+
+    @Test func aSlowInviteLookupSuccessIsDroppedAfterSigningIn() async {
+        let h = Harness()
+        h.fake.latency = 0.05
+        h.flow.startInvite(); h.flow.invite = FakeAccounts.inviteCode
+        h.flow.submit()
+        h.flow.showSignIn()
+        await h.flow.settle()
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(h.flow.step == .password, "the stale lookup must not land on the invite accept step")
     }
 }
 
@@ -534,6 +596,16 @@ struct ServerURLTests {
         #expect(ServerURL.parse("127.0.0.1:8080")?.absoluteString == "http://127.0.0.1:8080")
         #expect(ServerURL.parse("http://192.168.1.20:8080")?.absoluteString == "http://192.168.1.20:8080")
         #expect(ServerURL.parse("localhost:8080")?.absoluteString == "http://localhost:8080")
+    }
+
+    @Test func parsesIPv6Addresses() {
+        #expect(ServerURL.parse("[::1]:8080")?.absoluteString == "http://[::1]:8080")
+        #expect(ServerURL.parse("http://[::1]:8080")?.absoluteString == "http://[::1]:8080")
+    }
+
+    @Test func dropsPastedPathUserAndPassword() {
+        #expect(ServerURL.parse("https://user:pass@thehideout.zabit.si/invite/abc?x=1#y")?.absoluteString == "https://thehideout.zabit.si")
+        #expect(ServerURL.parse("http://ana:hunter2@127.0.0.1:8080/some/path")?.absoluteString == "http://127.0.0.1:8080")
     }
 
     @Test func refusesCleartextToTheInternetAndNonsense() {
@@ -604,6 +676,28 @@ struct SessionGateTests {
         await store.acceptTerms()
         #expect(store.state.phase == .termsRequired(version: "2026-06-01"))
         #expect(store.termsError == "Can't reach the server. Check your connection and try again.")
+    }
+
+    @Test func aPreconditionFailureAsksToReadTheNewTermsAgain() async {
+        let fake = FakeBackend()
+        fake.accounts.termsRequired = "2026-06-01"
+        let store = AppStore(api: fake, auth: fake, tokens: MemoryTokenStore(token: "t"))
+        await store.bootstrap()
+        fake.accounts.nextAcceptTermsError = .precondition("terms moved on")
+        await store.acceptTerms()
+        // The terms are still required (the fake never cleared them): the gate looks again, same version.
+        #expect(store.state.phase == .termsRequired(version: "2026-06-01"))
+        #expect(store.termsError == "The terms were updated again. Please read the new version.")
+    }
+
+    @Test func aTooOldClientOnAcceptShowsTheUpdateGate() async {
+        let fake = FakeBackend()
+        fake.accounts.termsRequired = "2026-06-01"
+        let store = AppStore(api: fake, auth: fake, tokens: MemoryTokenStore(token: "t"))
+        await store.bootstrap()
+        fake.accounts.nextAcceptTermsError = .clientTooOld
+        await store.acceptTerms()
+        #expect(store.state.phase == .updateRequired)
     }
 
     @Test func signingOutOfTheTermsGateClearsTheToken() async {

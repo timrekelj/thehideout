@@ -15,6 +15,9 @@ public struct SecondFactorState: Sendable, Hashable {
     public var methods: [SecondFactorMethod]
     /// Showing the recovery-code field instead of the authenticator code.
     public var recovery = false
+    /// When the challenge stops accepting answers (`SecondFactorChallenge.expiresAt`); checked locally so a stale
+    /// code is refused without a round trip.
+    public var expiresAt: Date? = nil
     /// Tries the server says are left after a wrong answer.
     public var remaining: Int?
     /// The challenge is used up or expired: only "Start again" is left.
@@ -33,6 +36,12 @@ public enum AuthStep: Sendable, Hashable {
     case reset(sent: Bool)
     case inviteCode
     case inviteAccept(preview: InvitePreview, code: String)
+}
+
+/// A universal invite link whose host is not the selected server: `AuthFlow.pendingInviteLink`.
+public struct PendingInviteLink: Sendable, Hashable {
+    public var url: URL
+    public var host: String
 }
 
 public struct AuthSuspension: Sendable, Hashable {
@@ -156,6 +165,7 @@ public final class AuthFlow {
 
     private func go(_ next: AuthStep) {
         cancelPasskey()
+        task?.cancel()
         generation += 1
         step = next
         issue = nil; notice = nil; suspension = nil; busy = false
@@ -188,31 +198,38 @@ public final class AuthFlow {
             let name = login.trimmingCharacters(in: .whitespaces)
             if name.isEmpty { return invalid(.login, "Enter your username or email.") }
             if password.isEmpty { return invalid(.password, "Enter your password.") }
-            start { me in
-                let r = try await me.api.login(username: name, password: me.password, deviceName: me.deviceName)
+            // Captured now, not read from `me.password` inside the task: `go()` (a "Back"/navigation tap while
+            // this call is in flight) clears `password` right away, before the task body gets a turn to run.
+            let pass = password
+            start { me, g in
+                let r = try await me.api.login(username: name, password: pass, deviceName: me.deviceName)
+                guard g == me.generation else { return }
                 try await me.signedIn(r)
             }
         case .emailCode(sent: false), .reset(sent: false):
             let address = email.trimmingCharacters(in: .whitespaces)
             guard ServerURLCheck.looksLikeEmail(address) else { return invalid(.email, "Enter the email address of your account.") }
             let reset = if case .reset = step { true } else { false }
-            start { me in
+            start { me, g in
                 if reset { try await me.api.requestPasswordReset(email: address) } else { try await me.api.requestEmailCode(email: address) }
+                guard g == me.generation else { return }
                 me.codeSent(to: address, reset: reset)
             }
         case .emailCode(sent: true):
             guard code.count == 6 else { return invalid(.code, "Enter the 6-digit code from the email.") }
             let address = email.trimmingCharacters(in: .whitespaces), typed = code
-            start { me in
+            start { me, g in
                 let r = try await me.api.verifyEmailCode(email: address, code: typed, deviceName: me.deviceName)
+                guard g == me.generation else { return }
                 try await me.signedIn(r)
             }
         case .reset(sent: true):
             guard code.count == 6 else { return invalid(.code, "Enter the 6-digit code from the email.") }
             guard password.count >= Self.minPassword else { return invalid(.password, "Use at least \(Self.minPassword) characters.") }
             let address = email.trimmingCharacters(in: .whitespaces), typed = code, new = password
-            start { me in
+            start { me, g in
                 try await me.api.resetPassword(email: address, code: typed, newPassword: new)
+                guard g == me.generation else { return }
                 me.passwordWasReset(address)
             }
         case .passkey(waiting: true):
@@ -222,8 +239,14 @@ public final class AuthFlow {
             if name.isEmpty { return invalid(.login, "Enter your username.") }
             runPasskey(register: false, begin: { me in try await me.api.beginPasskeyLogin(username: name, deviceName: me.deviceName) },
                        finish: { me, c, cred in try await me.api.finishPasskeyLogin(ceremony: c, credentialJSON: cred) })
-        case .secondFactor(let s):
+        case .secondFactor(var s):
             guard !s.locked, !s.passkey else { return }
+            if let expiresAt = s.expiresAt, now() > expiresAt {
+                s.locked = true
+                step = .secondFactor(s)
+                issue = AuthIssue(.form, "This sign-in expired. Start again.")
+                return
+            }
             let typed: String
             if s.recovery {
                 typed = recovery.trimmingCharacters(in: .whitespaces)
@@ -232,8 +255,9 @@ public final class AuthFlow {
                 typed = code
                 if typed.count != 6 { return invalid(.code, "Enter the 6-digit code from your authenticator app.") }
             }
-            start { me in
+            start { me, g in
                 let session = try await me.api.completeSecondFactor(challenge: s.challenge, totpCode: s.recovery ? nil : typed, recoveryCode: s.recovery ? typed : nil)
+                guard g == me.generation else { return }
                 await me.finish(session)
             }
         case .inviteCode:
@@ -248,8 +272,9 @@ public final class AuthFlow {
             if !acceptTerms { return invalid(.form, "Accept the terms and privacy notice to continue.") }
             if !confirmAge { return invalid(.form, "Confirm that you are at least \(preview.minimumAge) years old.") }
             let new = password, add = addPasskey
-            start { me in
+            start { me, g in
                 let session = try await me.api.acceptInvite(code: code, username: name, password: new, deviceName: me.deviceName, termsVersion: preview.termsVersion, ageConfirmed: true)
+                guard g == me.generation else { return }
                 if add { me.welcome = .prompt }
                 await me.finish(session)
             }
@@ -269,8 +294,9 @@ public final class AuthFlow {
         default: return
         }
         code = ""
-        start { me in
+        start { me, g in
             if reset { try await me.api.requestPasswordReset(email: address) } else { try await me.api.requestEmailCode(email: address) }
+            guard g == me.generation else { return }
             me.codeSent(to: address, reset: reset)
         }
     }
@@ -282,19 +308,54 @@ public final class AuthFlow {
     @discardableResult
     public func handle(url: URL) -> Bool {
         guard let token = InviteCode.token(fromLink: url.absoluteString), !token.isEmpty else { return false }
+        // A universal link's host is the server that minted the invite; the custom scheme (`thehideout://invite/…`)
+        // has no real host to compare (its authority component is "invite"), only the universal link does.
+        if url.scheme == "https", let linkHost = url.host, !linkHost.isEmpty, linkHost.lowercased() != server.host.lowercased() {
+            pendingInviteLink = PendingInviteLink(url: url, host: linkHost)
+            return true
+        }
         go(.inviteCode)
         invite = ""
         lookUp(token)
         return true
     }
 
-    private func lookUp(_ token: String) {
-        start { me in
-            let preview = try await me.api.lookupInvite(code: token)
-            if let problem = Self.problem(with: preview.status) { me.fail(.invite, problem); return }
-            me.step = .inviteAccept(preview: preview, code: token)
-            me.issue = nil; me.notice = nil; me.busy = false
+    /// Set by `handle(url:)` when a universal invite link's host is not the selected server: looking the invite up
+    /// there would just fail with "couldn't find that invite", so ask first instead.
+    public private(set) var pendingInviteLink: PendingInviteLink?
+
+    public func dismissPendingInviteLink() { pendingInviteLink = nil }
+
+    /// Switches to the invite link's server, then opens and looks up the invite there. Does not go through `go()`:
+    /// that would cancel this very task (it cancels whatever `task` currently is) before the lookup below runs.
+    public func switchServerForPendingInviteLink() {
+        guard let pending = pendingInviteLink, let token = InviteCode.token(fromLink: pending.url.absoluteString) else { return }
+        pendingInviteLink = nil
+        start { me, g in
+            do { try await me.server.change(to: pending.host) }
+            catch {
+                guard g == me.generation else { return }
+                me.issue = AuthIssue(.form, (error as? ServerSelection.ChangeError)?.message ?? "Couldn't switch servers.")
+                return
+            }
+            guard g == me.generation else { return }
+            me.step = .inviteCode
+            me.issue = nil; me.notice = nil; me.suspension = nil
+            me.invite = ""
+            try await me.performLookup(token: token, generation: g)
         }
+    }
+
+    private func lookUp(_ token: String) {
+        start { me, g in try await me.performLookup(token: token, generation: g) }
+    }
+
+    private func performLookup(token: String, generation g: Int) async throws {
+        let preview = try await api.lookupInvite(code: token)
+        guard g == generation else { return }
+        if let problem = Self.problem(with: preview.status) { fail(.invite, problem); return }
+        step = .inviteAccept(preview: preview, code: token)
+        issue = nil; notice = nil; busy = false
     }
 
     static func problem(with status: InvitePreviewStatus) -> String? {
@@ -353,14 +414,19 @@ public final class AuthFlow {
                 if let platform = self.passkeys, platform.canUseNative(host: self.server.host) {
                     do {
                         let cred = try await platform.registration(optionsJSON: ceremony.optionsJSON)
-                        pending = try await self.api.finishPasskeyRegistration(ceremony: ceremony.id, credentialJSON: cred)
+                        _ = try await self.api.finishPasskeyRegistration(ceremony: ceremony.id, credentialJSON: cred)
                         pending = false
                     } catch PasskeyFailure.cancelled { self.welcome = .prompt; return }
                     catch PasskeyFailure.unavailable { pending = true }
                 }
                 if pending {
                     let api = self.api
-                    let _: Bool = try await self.pollPage(ceremony) { c, cred in try await api.finishPasskeyRegistration(ceremony: c, credentialJSON: cred) ? nil : true }
+                    // `onDismiss` cancels this task directly (not `cancelPasskey()`, which only knows the sign-in
+                    // and second-factor passkey steps and would otherwise leave `welcome` stuck at `.busy` with
+                    // Skip and the sheet's own dismiss disabled until the server's 5-minute ceremony expires).
+                    let _: Bool = try await self.pollPage(ceremony, onDismiss: { [weak self] in self?.task?.cancel() }) {
+                        c, cred in try await api.finishPasskeyRegistration(ceremony: c, credentialJSON: cred) ? nil : true
+                    }
                 }
                 if g == self.generation { self.welcome = .hidden }
             } catch is CancellationError {
@@ -377,7 +443,7 @@ public final class AuthFlow {
                             finish: @escaping @MainActor (AuthFlow, String, String) async throws -> PasskeyOutcome) {
         if case .passkey = step { step = .passkey(waiting: true) }
         issue = nil
-        start { me in
+        start { me, g in
             let ceremony = try await begin(me)
             var outcome: PasskeyOutcome?
             if let platform = me.passkeys, platform.canUseNative(host: me.server.host) {
@@ -385,7 +451,8 @@ public final class AuthFlow {
                     let cred = try await platform.assertion(optionsJSON: ceremony.optionsJSON)
                     outcome = try await finish(me, ceremony.id, cred)
                 } catch PasskeyFailure.cancelled {
-                    me.endPasskey(); return
+                    if g == me.generation { me.endPasskey() }
+                    return
                 } catch PasskeyFailure.unavailable {
                     outcome = nil // the system cannot serve this server: the browser page can
                 }
@@ -396,6 +463,7 @@ public final class AuthFlow {
                 }
                 outcome = .session(s)
             }
+            guard g == me.generation else { return }
             if case .session(let s)? = outcome { await me.finish(s) } else { me.endPasskey() }
         }
     }
@@ -410,9 +478,13 @@ public final class AuthFlow {
     }
 
     /// The browser fallback: open the ceremony page and ask `Finish*` with an empty credential until it is done.
-    private func pollPage<T>(_ ceremony: PasskeyCeremony, finish: (String, String) async throws -> T?) async throws -> T {
+    /// `onDismiss` runs instead of the default `cancelPasskey()` when given (the welcome add-passkey flow is not
+    /// a sign-in step `cancelPasskey()` knows about).
+    private func pollPage<T>(_ ceremony: PasskeyCeremony, onDismiss: (@MainActor () -> Void)? = nil, finish: (String, String) async throws -> T?) async throws -> T {
         guard let platform = passkeys, let url = ceremony.url else { throw PasskeyFailure.failed("no passkey support") }
-        platform.openCeremonyPage(url, onDismiss: { [weak self] in self?.cancelPasskey() })
+        platform.openCeremonyPage(url, onDismiss: { [weak self] in
+            if let onDismiss { onDismiss() } else { self?.cancelPasskey() }
+        })
         defer { platform.closeCeremonyPage() }
         // The server keeps a ceremony for five minutes.
         let deadline = now().addingTimeInterval(300)
@@ -427,13 +499,18 @@ public final class AuthFlow {
 
     // MARK: effects
 
-    private func start(_ body: @escaping @MainActor (AuthFlow) async throws -> Void) {
+    /// `body` gets its own generation `g`, snapshotted before the call starts: a step change (`go`) bumps
+    /// `generation` and cancels `task`, but a reply already in flight can still land after that (the cancellation
+    /// is cooperative, and a fast reply can race it), so `body` must check `g == me.generation` itself before
+    /// applying anything after an `await` — the catch blocks below only cover the error path.
+    private func start(_ body: @escaping @MainActor (AuthFlow, Int) async throws -> Void) {
         busy = true; issue = nil; notice = nil
+        task?.cancel()
         generation += 1
         let g = generation
         task = Task { [weak self] in
             guard let self else { return }
-            do { try await body(self) }
+            do { try await body(self, g) }
             catch is CancellationError { if g == self.generation { self.busy = false } }
             catch {
                 guard g == self.generation else { return }
@@ -471,7 +548,7 @@ public final class AuthFlow {
         case .secondFactor(let c):
             busy = false
             password = ""; code = ""; recovery = ""
-            step = .secondFactor(SecondFactorState(challenge: c.id, methods: c.methods.isEmpty ? [.totp, .recoveryCode] : c.methods))
+            step = .secondFactor(SecondFactorState(challenge: c.id, methods: c.methods.isEmpty ? [.totp, .recoveryCode] : c.methods, expiresAt: c.expiresAt))
         }
     }
 
@@ -490,7 +567,10 @@ public final class AuthFlow {
     private func refused(_ error: Error) {
         let e = AppError.from(error)
         busy = false
-        password = ""
+        // On the invite accept step a taken username is a one-field fix: keep the password typed so it is not
+        // retyped. Every other refusal clears it, since it is the secret and the step may have been wrong about it.
+        let keepsPassword = { if case .inviteAccept = self.step, case .alreadyExists = e { return true }; return false }()
+        if !keepsPassword { password = "" }
         if case .clientTooOld = e { onClientTooOld(); return }
         if case .suspended(let reason, let until) = e { suspension = AuthSuspension(reason: reason, until: until); issue = nil; return }
         if let f = error as? PasskeyFailure {

@@ -27,9 +27,11 @@ public struct LaunchOptions: Sendable, Equatable {
     }
 
     public init(arguments: [String]) {
+        // A release build must never swap the network for the fake world or skip sign-in on an argument alone:
+        // these are debug/test harness switches, same as the gallery and the demo states below.
+        #if DEBUG
         fake = arguments.contains("--fake") || arguments.contains("--ui-testing")
         signedOut = arguments.contains("--signed-out")
-        #if DEBUG
         gallery = arguments.contains("--gallery")
         demoTerms = arguments.contains("--demo-terms")
         demoUpdate = arguments.contains("--demo-update")

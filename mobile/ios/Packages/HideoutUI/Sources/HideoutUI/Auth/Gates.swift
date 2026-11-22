@@ -136,6 +136,7 @@ struct UpdateGate: View {
 public struct WelcomeSheet: View {
     @Environment(AuthFlow.self) private var flow
     @Environment(\.theme) private var theme
+    @State private var registered = false
 
     public init() {}
 
@@ -163,7 +164,10 @@ public struct WelcomeSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.colors.bg.ignoresSafeArea())
         .interactiveDismissDisabled(flow.welcome == .busy)
-        .sensoryFeedback(.success, trigger: flow.welcome == .hidden)
+        // Only a successful registration goes from `.busy` to `.hidden`; Skip goes straight from `.prompt`/
+        // `.failed`, so comparing `welcome == .hidden` directly would also buzz on a skip.
+        .onChange(of: flow.welcome) { old, new in if old == .busy, new == .hidden { registered.toggle() } }
+        .sensoryFeedback(.success, trigger: registered)
     }
 }
 

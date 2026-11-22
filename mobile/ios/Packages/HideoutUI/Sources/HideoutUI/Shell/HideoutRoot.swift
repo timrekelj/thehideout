@@ -47,6 +47,14 @@ public struct HideoutRoot: View {
         // A sign-out starts the next sign-in from a clean first step.
         .onChange(of: store.state.phase) { old, new in if new == .signedOut && old != .loading { auth.showSignIn() } }
         .sensoryFeedback(.success, trigger: auth.signInCount)
+        .confirmationDialog("Switch to \(auth.pendingInviteLink?.host ?? "")?",
+                            isPresented: Binding(get: { auth.pendingInviteLink != nil }, set: { if !$0 { auth.dismissPendingInviteLink() } }),
+                            titleVisibility: .visible) {
+            Button("Switch and open the invite") { auth.switchServerForPendingInviteLink() }
+            Button("Cancel", role: .cancel) { auth.dismissPendingInviteLink() }
+        } message: {
+            Text("This invite is for a different server than the one you're using.")
+        }
     }
 }
 
