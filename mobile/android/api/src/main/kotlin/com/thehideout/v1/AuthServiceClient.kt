@@ -454,4 +454,77 @@ public class AuthServiceClient(
     ),
   )
 
+
+  /**
+   *  Emails the caller a 6-digit code (10 minutes) that DeleteAccount accepts
+   *  instead of a password. For accounts without a password; rate limited.
+   */
+  override suspend fun requestAccountDeletionCode(request: RequestAccountDeletionCodeRequest, headers: Headers): ResponseMessage<RequestAccountDeletionCodeResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AuthService/RequestAccountDeletionCode",
+      com.thehideout.v1.RequestAccountDeletionCodeRequest::class,
+      com.thehideout.v1.RequestAccountDeletionCodeResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
+
+  /**
+   *  Deletes the caller's account (anonymized, see below). Re-authenticates with
+   *  the password, or the emailed code for accounts without one, plus a TOTP or
+   *  recovery code when two-factor authentication is on. Fails with
+   *  FAILED_PRECONDITION and a `thehideout.v1.OwnedGuilds` detail while the
+   *  caller owns guilds (transfer or delete them first). The account is unusable
+   *  at once (sessions revoked, sign-in refused); the cleanup runs in the
+   *  background and resumes after a restart. Wrong credentials: PERMISSION_DENIED
+   *  (password) or the CodeError detail (codes). Rate limited.
+   */
+  override suspend fun deleteAccount(request: DeleteAccountRequest, headers: Headers): ResponseMessage<DeleteAccountResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AuthService/DeleteAccount",
+      com.thehideout.v1.DeleteAccountRequest::class,
+      com.thehideout.v1.DeleteAccountResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
+
+  /**
+   *  Queues an export of the caller's own data (JSON) and returns at once; the
+   *  download link is emailed when it is ready and works for 7 days.
+   *  RESOURCE_EXHAUSTED when one was requested in the last 24 hours;
+   *  FAILED_PRECONDITION without an email address; UNAVAILABLE without object
+   *  storage.
+   */
+  override suspend fun exportData(request: ExportDataRequest, headers: Headers): ResponseMessage<ExportDataResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AuthService/ExportData",
+      com.thehideout.v1.ExportDataRequest::class,
+      com.thehideout.v1.ExportDataResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
+
+  /**
+   *  Accepts the current terms and privacy notice. `version` must equal the
+   *  server's current version (`GetMe.terms_version`), else FAILED_PRECONDITION.
+   */
+  override suspend fun acceptTerms(request: AcceptTermsRequest, headers: Headers): ResponseMessage<AcceptTermsResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AuthService/AcceptTerms",
+      com.thehideout.v1.AcceptTermsRequest::class,
+      com.thehideout.v1.AcceptTermsResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
 }

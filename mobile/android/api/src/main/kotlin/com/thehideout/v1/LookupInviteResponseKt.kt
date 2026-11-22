@@ -265,6 +265,58 @@ public object LookupInviteResponseKt {
     public fun clearStatus() {
       _builder.clearStatus()
     }
+
+    /**
+     * ```
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * ```
+     *
+     * `string terms_version = 6 [json_name = "termsVersion"];`
+     */
+    public var termsVersion: kotlin.String
+      @kotlin.jvm.JvmName("getTermsVersion")
+        get() = _builder.termsVersion
+      @kotlin.jvm.JvmName("setTermsVersion")
+        set(value) {
+        _builder.termsVersion = value
+      }
+    /**
+     * ```
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * ```
+     *
+     * `string terms_version = 6 [json_name = "termsVersion"];`
+     */
+    public fun clearTermsVersion() {
+      _builder.clearTermsVersion()
+    }
+
+    /**
+     * ```
+     * The minimum age (16) the invitee confirms with `age_confirmed`.
+     * ```
+     *
+     * `uint32 minimum_age = 7 [json_name = "minimumAge"];`
+     */
+    public var minimumAge: kotlin.Int
+      @kotlin.jvm.JvmName("getMinimumAge")
+        get() = _builder.minimumAge
+      @kotlin.jvm.JvmName("setMinimumAge")
+        set(value) {
+        _builder.minimumAge = value
+      }
+    /**
+     * ```
+     * The minimum age (16) the invitee confirms with `age_confirmed`.
+     * ```
+     *
+     * `uint32 minimum_age = 7 [json_name = "minimumAge"];`
+     */
+    public fun clearMinimumAge() {
+      _builder.clearMinimumAge()
+    }
   }
 }
 public inline fun com.thehideout.v1.LookupInviteResponse.copy(block: `com.thehideout.v1`.LookupInviteResponseKt.Dsl.() -> kotlin.Unit): com.thehideout.v1.LookupInviteResponse =

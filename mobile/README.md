@@ -91,7 +91,7 @@ Versions that are verified to compile together:
 
 ### Icons
 
-Both apps take their icons from `branding/out` (`ios/AppIcon-1024.png`; `android/` adaptive foreground and background, monochrome, legacy mipmaps, Play Store 512), produced from the owner's pixel art in `branding/TheHideout.png` on branch `app-icon`. The art is pixel art: **only nearest-neighbour scaling**, never smoothed. Do not recreate or resize icons by hand; copy from `branding/out` into the asset catalog / `res/` and regenerate there if the art changes.
+Both apps take their icons from `branding/out` (`ios/AppIcon-1024.png`; `android/` adaptive foreground and background, monochrome, legacy mipmaps, Play Store 512), produced from the owner's pixel art in `branding/TheHideout.png` (both on `main`). The art is pixel art: **only nearest-neighbour scaling**, never smoothed. Do not recreate or resize icons by hand; copy from `branding/out` into the asset catalog / `res/` and regenerate there if the art changes.
 
 ## Architecture: iOS
 
@@ -114,7 +114,7 @@ Hideout.xcodeproj
 
 **Networking.** `ProtocolClient` (connect-swift) with an interceptor that adds `authorization: Bearer <token>` and maps `UNAUTHENTICATED` to sign-out. Unary calls are `async`; uploads are `POST /attachments` with a background `URLSession` (`Authorization: Bearer`, raw body). Errors become a typed `AppError` (wrong code with attempts left, `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, ...) via the `CodeError` detail.
 
-**Gateway.** `actor GatewayStream` owns the server stream: opens `Subscribe`, forwards events to the store on the main actor, watches heartbeats for a dead stream, reconnects with backoff, and marks the stream `Interrupted`; the store then refetches the open channel and lists because the server does not replay. It runs only while the app is active (`scenePhase`); on foreground it reconnects and refetches. While backgrounded, push notifications (once the server has them, MOB-01) wake the user, not a socket.
+**Gateway.** `actor GatewayStream` owns the server stream: opens `Subscribe`, forwards events to the store on the main actor, watches heartbeats for a dead stream, reconnects with backoff, and marks the stream `Interrupted`; the store then refetches the open channel and lists because the server does not replay. It runs only while the app is active (`scenePhase`); on foreground it reconnects and refetches. While backgrounded, push notifications wake the user, not a socket; the server is gaining them on branch `push-notifications` (a device-token registration RPC, APNs + FCM; MOB-01), so regenerate `mobile/api` when it merges.
 
 **Offline cache.** A small file cache, not SwiftData: the data is a mirror the server owns and the gateway keeps current, so schema migrations and a query layer would cost more than they give. `Cache` writes the guild/channel/layout/user lists and the last 100 messages of each recently opened channel as SwiftProtobuf binary blobs under `Caches/` (one file per channel, atomic writes, size-capped like desktop's 64 MB media budget), loads them before the first network answer, and drops them on sign-out. Drafts, look, collapsed sections and recents live in `UserDefaults`; the session token lives in the Keychain (`AfterFirstUnlock`, no iCloud sync).
 

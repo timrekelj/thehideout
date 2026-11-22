@@ -333,14 +333,122 @@ public nonisolated struct Thehideout_V1_ListUsersRequest: Sendable {
 }
 
 /// A user with usage numbers.
-public nonisolated struct Thehideout_V1_AdminUserRow: Sendable {
+public nonisolated struct Thehideout_V1_AdminUserRow: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   /// The user (includes `is_admin`).
   public var user: Thehideout_V1_User {
-    get {_user ?? Thehideout_V1_User()}
+    get {_storage._user ?? Thehideout_V1_User()}
+    set {_uniqueStorage()._user = newValue}
+  }
+  /// Returns true if `user` has been explicitly set.
+  public var hasUser: Bool {_storage._user != nil}
+  /// Clears the value of `user`. Subsequent reads from it will return its default value.
+  public mutating func clearUser() {_uniqueStorage()._user = nil}
+
+  /// Guilds the user is a member of.
+  public var guildCount: UInt64 {
+    get {_storage._guildCount}
+    set {_uniqueStorage()._guildCount = newValue}
+  }
+
+  /// Messages the user has sent.
+  public var messageCount: UInt64 {
+    get {_storage._messageCount}
+    set {_uniqueStorage()._messageCount = newValue}
+  }
+
+  /// Bytes of media owned by the user (their avatar).
+  public var storageBytes: UInt64 {
+    get {_storage._storageBytes}
+    set {_uniqueStorage()._storageBytes = newValue}
+  }
+
+  /// Last time the user sent a message or opened a gateway stream; unset if never.
+  public var lastActiveAt: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_storage._lastActiveAt ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_uniqueStorage()._lastActiveAt = newValue}
+  }
+  /// Returns true if `lastActiveAt` has been explicitly set.
+  public var hasLastActiveAt: Bool {_storage._lastActiveAt != nil}
+  /// Clears the value of `lastActiveAt`. Subsequent reads from it will return its default value.
+  public mutating func clearLastActiveAt() {_uniqueStorage()._lastActiveAt = nil}
+
+  /// The user is currently suspended.
+  public var suspended: Bool {
+    get {_storage._suspended}
+    set {_uniqueStorage()._suspended = newValue}
+  }
+
+  /// When the suspension ends; unset = indefinite (only with `suspended`).
+  public var suspendedUntil: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_storage._suspendedUntil ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_uniqueStorage()._suspendedUntil = newValue}
+  }
+  /// Returns true if `suspendedUntil` has been explicitly set.
+  public var hasSuspendedUntil: Bool {_storage._suspendedUntil != nil}
+  /// Clears the value of `suspendedUntil`. Subsequent reads from it will return its default value.
+  public mutating func clearSuspendedUntil() {_uniqueStorage()._suspendedUntil = nil}
+
+  /// The suspension reason (only with `suspended`).
+  public var suspendedReason: String {
+    get {_storage._suspendedReason}
+    set {_uniqueStorage()._suspendedReason = newValue}
+  }
+
+  /// The account was deleted (anonymized) or is being deleted.
+  public var deleted: Bool {
+    get {_storage._deleted}
+    set {_uniqueStorage()._deleted = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+/// Request to suspend a user.
+public nonisolated struct Thehideout_V1_SuspendUserRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The user; NOT_FOUND if unknown.
+  public var userID: UInt64 = 0
+
+  /// Shown to the user on sign-in and kept in the audit log (≤ 512 chars).
+  public var reason: String = String()
+
+  /// When it ends; unset = until lifted. Must be in the future.
+  public var until: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_until ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_until = newValue}
+  }
+  /// Returns true if `until` has been explicitly set.
+  public var hasUntil: Bool {self._until != nil}
+  /// Clears the value of `until`. Subsequent reads from it will return its default value.
+  public mutating func clearUntil() {self._until = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _until: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+}
+
+/// The user after suspension.
+public nonisolated struct Thehideout_V1_SuspendUserResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The suspended user's row.
+  public var user: Thehideout_V1_AdminUserRow {
+    get {_user ?? Thehideout_V1_AdminUserRow()}
     set {_user = newValue}
   }
   /// Returns true if `user` has been explicitly set.
@@ -348,31 +456,79 @@ public nonisolated struct Thehideout_V1_AdminUserRow: Sendable {
   /// Clears the value of `user`. Subsequent reads from it will return its default value.
   public mutating func clearUser() {self._user = nil}
 
-  /// Guilds the user is a member of.
-  public var guildCount: UInt64 = 0
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  /// Messages the user has sent.
-  public var messageCount: UInt64 = 0
+  public init() {}
 
-  /// Bytes of media owned by the user (their avatar).
-  public var storageBytes: UInt64 = 0
+  fileprivate var _user: Thehideout_V1_AdminUserRow? = nil
+}
 
-  /// Last time the user sent a message or opened a gateway stream; unset if never.
-  public var lastActiveAt: SwiftProtobuf.Google_Protobuf_Timestamp {
-    get {_lastActiveAt ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
-    set {_lastActiveAt = newValue}
+/// Request to lift a suspension.
+public nonisolated struct Thehideout_V1_UnsuspendUserRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The user; NOT_FOUND if unknown.
+  public var userID: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The user after the change.
+public nonisolated struct Thehideout_V1_UnsuspendUserResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The user's row.
+  public var user: Thehideout_V1_AdminUserRow {
+    get {_user ?? Thehideout_V1_AdminUserRow()}
+    set {_user = newValue}
   }
-  /// Returns true if `lastActiveAt` has been explicitly set.
-  public var hasLastActiveAt: Bool {self._lastActiveAt != nil}
-  /// Clears the value of `lastActiveAt`. Subsequent reads from it will return its default value.
-  public mutating func clearLastActiveAt() {self._lastActiveAt = nil}
+  /// Returns true if `user` has been explicitly set.
+  public var hasUser: Bool {self._user != nil}
+  /// Clears the value of `user`. Subsequent reads from it will return its default value.
+  public mutating func clearUser() {self._user = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _user: Thehideout_V1_User? = nil
-  fileprivate var _lastActiveAt: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+  fileprivate var _user: Thehideout_V1_AdminUserRow? = nil
+}
+
+/// Request to delete a user's account.
+public nonisolated struct Thehideout_V1_AdminDeleteUserRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The user; NOT_FOUND if unknown or already deleted.
+  public var userID: UInt64 = 0
+
+  /// Hand guilds over or delete them (see the RPC).
+  public var forceTransfer: Bool = false
+
+  /// Kept in the audit log (≤ 512 chars).
+  public var reason: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The deletion was accepted.
+public nonisolated struct Thehideout_V1_AdminDeleteUserResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// A page of users.
@@ -1140,7 +1296,177 @@ nonisolated extension Thehideout_V1_ListUsersRequest: SwiftProtobuf.Message, Swi
 
 nonisolated extension Thehideout_V1_AdminUserRow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AdminUserRow"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}user\0\u{3}guild_count\0\u{3}message_count\0\u{3}storage_bytes\0\u{3}last_active_at\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}user\0\u{3}guild_count\0\u{3}message_count\0\u{3}storage_bytes\0\u{3}last_active_at\0\u{1}suspended\0\u{3}suspended_until\0\u{3}suspended_reason\0\u{1}deleted\0")
+
+  fileprivate class _StorageClass {
+    var _user: Thehideout_V1_User? = nil
+    var _guildCount: UInt64 = 0
+    var _messageCount: UInt64 = 0
+    var _storageBytes: UInt64 = 0
+    var _lastActiveAt: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+    var _suspended: Bool = false
+    var _suspendedUntil: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+    var _suspendedReason: String = String()
+    var _deleted: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _user = source._user
+      _guildCount = source._guildCount
+      _messageCount = source._messageCount
+      _storageBytes = source._storageBytes
+      _lastActiveAt = source._lastActiveAt
+      _suspended = source._suspended
+      _suspendedUntil = source._suspendedUntil
+      _suspendedReason = source._suspendedReason
+      _deleted = source._deleted
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._user) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._guildCount) }()
+        case 3: try { try decoder.decodeSingularUInt64Field(value: &_storage._messageCount) }()
+        case 4: try { try decoder.decodeSingularUInt64Field(value: &_storage._storageBytes) }()
+        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._lastActiveAt) }()
+        case 6: try { try decoder.decodeSingularBoolField(value: &_storage._suspended) }()
+        case 7: try { try decoder.decodeSingularMessageField(value: &_storage._suspendedUntil) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._suspendedReason) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._deleted) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._user {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if _storage._guildCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._guildCount, fieldNumber: 2)
+      }
+      if _storage._messageCount != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._messageCount, fieldNumber: 3)
+      }
+      if _storage._storageBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._storageBytes, fieldNumber: 4)
+      }
+      try { if let v = _storage._lastActiveAt {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      } }()
+      if _storage._suspended != false {
+        try visitor.visitSingularBoolField(value: _storage._suspended, fieldNumber: 6)
+      }
+      try { if let v = _storage._suspendedUntil {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+      } }()
+      if !_storage._suspendedReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._suspendedReason, fieldNumber: 8)
+      }
+      if _storage._deleted != false {
+        try visitor.visitSingularBoolField(value: _storage._deleted, fieldNumber: 9)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_AdminUserRow, rhs: Thehideout_V1_AdminUserRow) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._user != rhs_storage._user {return false}
+        if _storage._guildCount != rhs_storage._guildCount {return false}
+        if _storage._messageCount != rhs_storage._messageCount {return false}
+        if _storage._storageBytes != rhs_storage._storageBytes {return false}
+        if _storage._lastActiveAt != rhs_storage._lastActiveAt {return false}
+        if _storage._suspended != rhs_storage._suspended {return false}
+        if _storage._suspendedUntil != rhs_storage._suspendedUntil {return false}
+        if _storage._suspendedReason != rhs_storage._suspendedReason {return false}
+        if _storage._deleted != rhs_storage._deleted {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_SuspendUserRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SuspendUserRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}user_id\0\u{1}reason\0\u{1}until\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.userID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._until) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.userID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.userID, fieldNumber: 1)
+    }
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 2)
+    }
+    try { if let v = self._until {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_SuspendUserRequest, rhs: Thehideout_V1_SuspendUserRequest) -> Bool {
+    if lhs.userID != rhs.userID {return false}
+    if lhs.reason != rhs.reason {return false}
+    if lhs._until != rhs._until {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_SuspendUserResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SuspendUserResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}user\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1149,10 +1475,6 @@ nonisolated extension Thehideout_V1_AdminUserRow: SwiftProtobuf.Message, SwiftPr
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularMessageField(value: &self._user) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.guildCount) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.messageCount) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.storageBytes) }()
-      case 5: try { try decoder.decodeSingularMessageField(value: &self._lastActiveAt) }()
       default: break
       }
     }
@@ -1166,27 +1488,134 @@ nonisolated extension Thehideout_V1_AdminUserRow: SwiftProtobuf.Message, SwiftPr
     try { if let v = self._user {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
     } }()
-    if self.guildCount != 0 {
-      try visitor.visitSingularUInt64Field(value: self.guildCount, fieldNumber: 2)
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_SuspendUserResponse, rhs: Thehideout_V1_SuspendUserResponse) -> Bool {
+    if lhs._user != rhs._user {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_UnsuspendUserRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UnsuspendUserRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}user_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.userID) }()
+      default: break
+      }
     }
-    if self.messageCount != 0 {
-      try visitor.visitSingularUInt64Field(value: self.messageCount, fieldNumber: 3)
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.userID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.userID, fieldNumber: 1)
     }
-    if self.storageBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.storageBytes, fieldNumber: 4)
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_UnsuspendUserRequest, rhs: Thehideout_V1_UnsuspendUserRequest) -> Bool {
+    if lhs.userID != rhs.userID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_UnsuspendUserResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UnsuspendUserResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}user\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._user) }()
+      default: break
+      }
     }
-    try { if let v = self._lastActiveAt {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._user {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
     } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Thehideout_V1_AdminUserRow, rhs: Thehideout_V1_AdminUserRow) -> Bool {
+  public static func ==(lhs: Thehideout_V1_UnsuspendUserResponse, rhs: Thehideout_V1_UnsuspendUserResponse) -> Bool {
     if lhs._user != rhs._user {return false}
-    if lhs.guildCount != rhs.guildCount {return false}
-    if lhs.messageCount != rhs.messageCount {return false}
-    if lhs.storageBytes != rhs.storageBytes {return false}
-    if lhs._lastActiveAt != rhs._lastActiveAt {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_AdminDeleteUserRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AdminDeleteUserRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}user_id\0\u{3}force_transfer\0\u{1}reason\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.userID) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.forceTransfer) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.userID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.userID, fieldNumber: 1)
+    }
+    if self.forceTransfer != false {
+      try visitor.visitSingularBoolField(value: self.forceTransfer, fieldNumber: 2)
+    }
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_AdminDeleteUserRequest, rhs: Thehideout_V1_AdminDeleteUserRequest) -> Bool {
+    if lhs.userID != rhs.userID {return false}
+    if lhs.forceTransfer != rhs.forceTransfer {return false}
+    if lhs.reason != rhs.reason {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_AdminDeleteUserResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AdminDeleteUserResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_AdminDeleteUserResponse, rhs: Thehideout_V1_AdminDeleteUserResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

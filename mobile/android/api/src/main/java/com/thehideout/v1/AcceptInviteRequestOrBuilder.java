@@ -98,4 +98,36 @@ public interface AcceptInviteRequestOrBuilder extends
    */
   com.google.protobuf.ByteString
       getDeviceNameBytes();
+
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   * @return The acceptedTermsVersion.
+   */
+  java.lang.String getAcceptedTermsVersion();
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   * @return The bytes for acceptedTermsVersion.
+   */
+  com.google.protobuf.ByteString
+      getAcceptedTermsVersionBytes();
+
+  /**
+   * <pre>
+   * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+   * @return The ageConfirmed.
+   */
+  boolean getAgeConfirmed();
 }

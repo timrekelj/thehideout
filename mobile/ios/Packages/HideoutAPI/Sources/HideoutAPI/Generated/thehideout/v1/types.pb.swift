@@ -349,6 +349,10 @@ public nonisolated struct Thehideout_V1_User: Sendable {
   /// Clears the value of `email`. Subsequent reads from it will return its default value.
   public mutating func clearEmail() {self._email = nil}
 
+  /// The account was deleted and anonymized: `username` is "Deleted user" and
+  /// `avatar` is empty. The id stays valid so messages keep their author.
+  public var deleted: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1165,7 +1169,7 @@ nonisolated extension Thehideout_V1_Permission: SwiftProtobuf._ProtoNameProvidin
 
 nonisolated extension Thehideout_V1_User: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".User"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}username\0\u{3}created_at\0\u{1}avatar\0\u{3}is_admin\0\u{1}email\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}username\0\u{3}created_at\0\u{1}avatar\0\u{3}is_admin\0\u{1}email\0\u{1}deleted\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1179,6 +1183,7 @@ nonisolated extension Thehideout_V1_User: SwiftProtobuf.Message, SwiftProtobuf._
       case 4: try { try decoder.decodeSingularStringField(value: &self.avatar) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.isAdmin) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self._email) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.deleted) }()
       default: break
       }
     }
@@ -1207,6 +1212,9 @@ nonisolated extension Thehideout_V1_User: SwiftProtobuf.Message, SwiftProtobuf._
     try { if let v = self._email {
       try visitor.visitSingularStringField(value: v, fieldNumber: 6)
     } }()
+    if self.deleted != false {
+      try visitor.visitSingularBoolField(value: self.deleted, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1217,6 +1225,7 @@ nonisolated extension Thehideout_V1_User: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.avatar != rhs.avatar {return false}
     if lhs.isAdmin != rhs.isAdmin {return false}
     if lhs._email != rhs._email {return false}
+    if lhs.deleted != rhs.deleted {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

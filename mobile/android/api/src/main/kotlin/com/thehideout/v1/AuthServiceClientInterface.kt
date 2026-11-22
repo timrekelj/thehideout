@@ -169,4 +169,37 @@ public interface AuthServiceClientInterface {
    *  Signs out every session of the caller except the current one.
    */
   public suspend fun revokeOtherSessions(request: RevokeOtherSessionsRequest, headers: Headers = emptyMap()): ResponseMessage<RevokeOtherSessionsResponse>
+
+  /**
+   *  Emails the caller a 6-digit code (10 minutes) that DeleteAccount accepts
+   *  instead of a password. For accounts without a password; rate limited.
+   */
+  public suspend fun requestAccountDeletionCode(request: RequestAccountDeletionCodeRequest, headers: Headers = emptyMap()): ResponseMessage<RequestAccountDeletionCodeResponse>
+
+  /**
+   *  Deletes the caller's account (anonymized, see below). Re-authenticates with
+   *  the password, or the emailed code for accounts without one, plus a TOTP or
+   *  recovery code when two-factor authentication is on. Fails with
+   *  FAILED_PRECONDITION and a `thehideout.v1.OwnedGuilds` detail while the
+   *  caller owns guilds (transfer or delete them first). The account is unusable
+   *  at once (sessions revoked, sign-in refused); the cleanup runs in the
+   *  background and resumes after a restart. Wrong credentials: PERMISSION_DENIED
+   *  (password) or the CodeError detail (codes). Rate limited.
+   */
+  public suspend fun deleteAccount(request: DeleteAccountRequest, headers: Headers = emptyMap()): ResponseMessage<DeleteAccountResponse>
+
+  /**
+   *  Queues an export of the caller's own data (JSON) and returns at once; the
+   *  download link is emailed when it is ready and works for 7 days.
+   *  RESOURCE_EXHAUSTED when one was requested in the last 24 hours;
+   *  FAILED_PRECONDITION without an email address; UNAVAILABLE without object
+   *  storage.
+   */
+  public suspend fun exportData(request: ExportDataRequest, headers: Headers = emptyMap()): ResponseMessage<ExportDataResponse>
+
+  /**
+   *  Accepts the current terms and privacy notice. `version` must equal the
+   *  server's current version (`GetMe.terms_version`), else FAILED_PRECONDITION.
+   */
+  public suspend fun acceptTerms(request: AcceptTermsRequest, headers: Headers = emptyMap()): ResponseMessage<AcceptTermsResponse>
 }

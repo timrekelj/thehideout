@@ -49,6 +49,25 @@ public protocol Thehideout_V1_AdminServiceClientInterface: Sendable {
     /// Lists audit entries, newest first.
     @available(iOS 13, *)
     func `listAuditLog`(request: Thehideout_V1_ListAuditLogRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_ListAuditLogResponse>
+
+    /// Suspends a user: sessions are revoked and sign-in is refused with a
+    /// `thehideout.v1.AccountSuspended` detail until `until` (or unsuspended).
+    /// Site admins cannot be suspended (FAILED_PRECONDITION). Audit-logged.
+    @available(iOS 13, *)
+    func `suspendUser`(request: Thehideout_V1_SuspendUserRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_SuspendUserResponse>
+
+    /// Lifts a suspension. Audit-logged.
+    @available(iOS 13, *)
+    func `unsuspendUser`(request: Thehideout_V1_UnsuspendUserRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_UnsuspendUserResponse>
+
+    /// Deletes (anonymizes) a user's account like the user's own DeleteAccount.
+    /// Refused for site admins and the bootstrap admin (FAILED_PRECONDITION).
+    /// Without `force_transfer` it fails with FAILED_PRECONDITION and an
+    /// `OwnedGuilds` detail while the user owns guilds; with it, ownership of each
+    /// guild passes to its member with the highest role (ties: the longest
+    /// member) and guilds where the user is alone are deleted. Audit-logged.
+    @available(iOS 13, *)
+    func `adminDeleteUser`(request: Thehideout_V1_AdminDeleteUserRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_AdminDeleteUserResponse>
 }
 
 /// Concrete implementation of `Thehideout_V1_AdminServiceClientInterface`.
@@ -99,6 +118,21 @@ public final class Thehideout_V1_AdminServiceClient: Thehideout_V1_AdminServiceC
         return await self.client.unary(path: "/thehideout.v1.AdminService/ListAuditLog", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    public func `suspendUser`(request: Thehideout_V1_SuspendUserRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_SuspendUserResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AdminService/SuspendUser", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `unsuspendUser`(request: Thehideout_V1_UnsuspendUserRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_UnsuspendUserResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AdminService/UnsuspendUser", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `adminDeleteUser`(request: Thehideout_V1_AdminDeleteUserRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_AdminDeleteUserResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AdminService/AdminDeleteUser", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
     public enum Metadata {
         public enum Methods {
             public static let getOverview = Connect.MethodSpec(name: "GetOverview", service: "thehideout.v1.AdminService", type: .unary)
@@ -109,6 +143,9 @@ public final class Thehideout_V1_AdminServiceClient: Thehideout_V1_AdminServiceC
             public static let listFiles = Connect.MethodSpec(name: "ListFiles", service: "thehideout.v1.AdminService", type: .unary)
             public static let deleteFile = Connect.MethodSpec(name: "DeleteFile", service: "thehideout.v1.AdminService", type: .unary)
             public static let listAuditLog = Connect.MethodSpec(name: "ListAuditLog", service: "thehideout.v1.AdminService", type: .unary)
+            public static let suspendUser = Connect.MethodSpec(name: "SuspendUser", service: "thehideout.v1.AdminService", type: .unary)
+            public static let unsuspendUser = Connect.MethodSpec(name: "UnsuspendUser", service: "thehideout.v1.AdminService", type: .unary)
+            public static let adminDeleteUser = Connect.MethodSpec(name: "AdminDeleteUser", service: "thehideout.v1.AdminService", type: .unary)
         }
     }
 }

@@ -142,6 +142,35 @@ public protocol Thehideout_V1_AuthServiceClientInterface: Sendable {
     /// Signs out every session of the caller except the current one.
     @available(iOS 13, *)
     func `revokeOtherSessions`(request: Thehideout_V1_RevokeOtherSessionsRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_RevokeOtherSessionsResponse>
+
+    /// Emails the caller a 6-digit code (10 minutes) that DeleteAccount accepts
+    /// instead of a password. For accounts without a password; rate limited.
+    @available(iOS 13, *)
+    func `requestAccountDeletionCode`(request: Thehideout_V1_RequestAccountDeletionCodeRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_RequestAccountDeletionCodeResponse>
+
+    /// Deletes the caller's account (anonymized, see below). Re-authenticates with
+    /// the password, or the emailed code for accounts without one, plus a TOTP or
+    /// recovery code when two-factor authentication is on. Fails with
+    /// FAILED_PRECONDITION and a `thehideout.v1.OwnedGuilds` detail while the
+    /// caller owns guilds (transfer or delete them first). The account is unusable
+    /// at once (sessions revoked, sign-in refused); the cleanup runs in the
+    /// background and resumes after a restart. Wrong credentials: PERMISSION_DENIED
+    /// (password) or the CodeError detail (codes). Rate limited.
+    @available(iOS 13, *)
+    func `deleteAccount`(request: Thehideout_V1_DeleteAccountRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_DeleteAccountResponse>
+
+    /// Queues an export of the caller's own data (JSON) and returns at once; the
+    /// download link is emailed when it is ready and works for 7 days.
+    /// RESOURCE_EXHAUSTED when one was requested in the last 24 hours;
+    /// FAILED_PRECONDITION without an email address; UNAVAILABLE without object
+    /// storage.
+    @available(iOS 13, *)
+    func `exportData`(request: Thehideout_V1_ExportDataRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_ExportDataResponse>
+
+    /// Accepts the current terms and privacy notice. `version` must equal the
+    /// server's current version (`GetMe.terms_version`), else FAILED_PRECONDITION.
+    @available(iOS 13, *)
+    func `acceptTerms`(request: Thehideout_V1_AcceptTermsRequest, headers: Connect.Headers) async -> ResponseMessage<Thehideout_V1_AcceptTermsResponse>
 }
 
 /// Concrete implementation of `Thehideout_V1_AuthServiceClientInterface`.
@@ -292,6 +321,26 @@ public final class Thehideout_V1_AuthServiceClient: Thehideout_V1_AuthServiceCli
         return await self.client.unary(path: "/thehideout.v1.AuthService/RevokeOtherSessions", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    public func `requestAccountDeletionCode`(request: Thehideout_V1_RequestAccountDeletionCodeRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_RequestAccountDeletionCodeResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AuthService/RequestAccountDeletionCode", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `deleteAccount`(request: Thehideout_V1_DeleteAccountRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_DeleteAccountResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AuthService/DeleteAccount", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `exportData`(request: Thehideout_V1_ExportDataRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_ExportDataResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AuthService/ExportData", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `acceptTerms`(request: Thehideout_V1_AcceptTermsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Thehideout_V1_AcceptTermsResponse> {
+        return await self.client.unary(path: "/thehideout.v1.AuthService/AcceptTerms", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
     public enum Metadata {
         public enum Methods {
             public static let signUp = Connect.MethodSpec(name: "SignUp", service: "thehideout.v1.AuthService", type: .unary)
@@ -322,6 +371,10 @@ public final class Thehideout_V1_AuthServiceClient: Thehideout_V1_AuthServiceCli
             public static let listSessions = Connect.MethodSpec(name: "ListSessions", service: "thehideout.v1.AuthService", type: .unary)
             public static let revokeSession = Connect.MethodSpec(name: "RevokeSession", service: "thehideout.v1.AuthService", type: .unary)
             public static let revokeOtherSessions = Connect.MethodSpec(name: "RevokeOtherSessions", service: "thehideout.v1.AuthService", type: .unary)
+            public static let requestAccountDeletionCode = Connect.MethodSpec(name: "RequestAccountDeletionCode", service: "thehideout.v1.AuthService", type: .unary)
+            public static let deleteAccount = Connect.MethodSpec(name: "DeleteAccount", service: "thehideout.v1.AuthService", type: .unary)
+            public static let exportData = Connect.MethodSpec(name: "ExportData", service: "thehideout.v1.AuthService", type: .unary)
+            public static let acceptTerms = Connect.MethodSpec(name: "AcceptTerms", service: "thehideout.v1.AuthService", type: .unary)
         }
     }
 }

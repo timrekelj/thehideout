@@ -19,6 +19,8 @@ public  final class GetMeResponse extends
     // @@protoc_insertion_point(message_implements:thehideout.v1.GetMeResponse)
     GetMeResponseOrBuilder {
   private GetMeResponse() {
+    termsUpdateRequired_ = "";
+    termsVersion_ = "";
   }
   private int bitField0_;
   public static final int USER_FIELD_NUMBER = 1;
@@ -86,6 +88,158 @@ public  final class GetMeResponse extends
   private void clearUser() {
     user_ = null;
     bitField0_ = (bitField0_ & ~0x00000001);
+  }
+
+  public static final int TERMS_UPDATE_REQUIRED_FIELD_NUMBER = 2;
+  private java.lang.String termsUpdateRequired_;
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @return Whether the termsUpdateRequired field is set.
+   */
+  @java.lang.Override
+  public boolean hasTermsUpdateRequired() {
+    return ((bitField0_ & 0x00000002) != 0);
+  }
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @return The termsUpdateRequired.
+   */
+  @java.lang.Override
+  public java.lang.String getTermsUpdateRequired() {
+    return termsUpdateRequired_;
+  }
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @return The bytes for termsUpdateRequired.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getTermsUpdateRequiredBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(termsUpdateRequired_);
+  }
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @param value The termsUpdateRequired to set.
+   */
+  private void setTermsUpdateRequired(
+      java.lang.String value) {
+    java.util.Objects.requireNonNull(value);
+    bitField0_ |= 0x00000002;
+    termsUpdateRequired_ = value;
+  }
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   */
+  private void clearTermsUpdateRequired() {
+    bitField0_ = (bitField0_ & ~0x00000002);
+    termsUpdateRequired_ = getDefaultInstance().getTermsUpdateRequired();
+  }
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @param value The bytes for termsUpdateRequired to set.
+   */
+  private void setTermsUpdateRequiredBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    termsUpdateRequired_ = value.toStringUtf8();
+    bitField0_ |= 0x00000002;
+  }
+
+  public static final int TERMS_VERSION_FIELD_NUMBER = 3;
+  private java.lang.String termsVersion_;
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   * @return The termsVersion.
+   */
+  @java.lang.Override
+  public java.lang.String getTermsVersion() {
+    return termsVersion_;
+  }
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   * @return The bytes for termsVersion.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getTermsVersionBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(termsVersion_);
+  }
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   * @param value The termsVersion to set.
+   */
+  private void setTermsVersion(
+      java.lang.String value) {
+    java.util.Objects.requireNonNull(value);
+
+    termsVersion_ = value;
+  }
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   */
+  private void clearTermsVersion() {
+
+    termsVersion_ = getDefaultInstance().getTermsVersion();
+  }
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   * @param value The bytes for termsVersion to set.
+   */
+  private void setTermsVersionBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    termsVersion_ = value.toStringUtf8();
+
   }
 
   public static com.thehideout.v1.GetMeResponse parseFrom(
@@ -260,6 +414,162 @@ public  final class GetMeResponse extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * </pre>
+     *
+     * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+     * @return Whether the termsUpdateRequired field is set.
+     */
+    @java.lang.Override
+    public boolean hasTermsUpdateRequired() {
+      return instance.hasTermsUpdateRequired();
+    }
+    /**
+     * <pre>
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * </pre>
+     *
+     * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+     * @return The termsUpdateRequired.
+     */
+    @java.lang.Override
+    public java.lang.String getTermsUpdateRequired() {
+      return instance.getTermsUpdateRequired();
+    }
+    /**
+     * <pre>
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * </pre>
+     *
+     * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+     * @return The bytes for termsUpdateRequired.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTermsUpdateRequiredBytes() {
+      return instance.getTermsUpdateRequiredBytes();
+    }
+    /**
+     * <pre>
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * </pre>
+     *
+     * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+     * @param value The termsUpdateRequired to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTermsUpdateRequired(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setTermsUpdateRequired(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * </pre>
+     *
+     * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearTermsUpdateRequired() {
+      copyOnWrite();
+      instance.clearTermsUpdateRequired();
+      return this;
+    }
+    /**
+     * <pre>
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * </pre>
+     *
+     * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+     * @param value The bytes for termsUpdateRequired to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTermsUpdateRequiredBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setTermsUpdateRequiredBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * The server's current terms version (also the date of /terms and /privacy).
+     * </pre>
+     *
+     * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+     * @return The termsVersion.
+     */
+    @java.lang.Override
+    public java.lang.String getTermsVersion() {
+      return instance.getTermsVersion();
+    }
+    /**
+     * <pre>
+     * The server's current terms version (also the date of /terms and /privacy).
+     * </pre>
+     *
+     * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+     * @return The bytes for termsVersion.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTermsVersionBytes() {
+      return instance.getTermsVersionBytes();
+    }
+    /**
+     * <pre>
+     * The server's current terms version (also the date of /terms and /privacy).
+     * </pre>
+     *
+     * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+     * @param value The termsVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTermsVersion(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setTermsVersion(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The server's current terms version (also the date of /terms and /privacy).
+     * </pre>
+     *
+     * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearTermsVersion() {
+      copyOnWrite();
+      instance.clearTermsVersion();
+      return this;
+    }
+    /**
+     * <pre>
+     * The server's current terms version (also the date of /terms and /privacy).
+     * </pre>
+     *
+     * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+     * @param value The bytes for termsVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTermsVersionBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setTermsVersionBytes(value);
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:thehideout.v1.GetMeResponse)
   }
   @java.lang.Override
@@ -278,9 +588,12 @@ public  final class GetMeResponse extends
           java.lang.Object[] objects = new java.lang.Object[] {
             "bitField0_",
             "user_",
+            "termsUpdateRequired_",
+            "termsVersion_",
           };
           java.lang.String info =
-              "\u0000\u0001\u0000\u0001\u0001\u0001\u0001\u0000\u0000\u0000\u0001\u1009\u0000";
+              "\u0000\u0003\u0000\u0001\u0001\u0003\u0003\u0000\u0000\u0000\u0001\u1009\u0000\u0002" +
+              "\u1208\u0001\u0003\u0208";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

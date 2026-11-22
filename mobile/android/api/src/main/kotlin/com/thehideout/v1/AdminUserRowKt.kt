@@ -185,6 +185,120 @@ public object AdminUserRowKt {
 
     public val AdminUserRowKt.Dsl.lastActiveAtOrNull: com.google.protobuf.Timestamp?
       get() = _builder.lastActiveAtOrNull
+
+    /**
+     * ```
+     * The user is currently suspended.
+     * ```
+     *
+     * `bool suspended = 6 [json_name = "suspended"];`
+     */
+    public var suspended: kotlin.Boolean
+      @kotlin.jvm.JvmName("getSuspended")
+        get() = _builder.suspended
+      @kotlin.jvm.JvmName("setSuspended")
+        set(value) {
+        _builder.suspended = value
+      }
+    /**
+     * ```
+     * The user is currently suspended.
+     * ```
+     *
+     * `bool suspended = 6 [json_name = "suspended"];`
+     */
+    public fun clearSuspended() {
+      _builder.clearSuspended()
+    }
+
+    /**
+     * ```
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * ```
+     *
+     * `optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];`
+     */
+    public var suspendedUntil: com.google.protobuf.Timestamp
+      @kotlin.jvm.JvmName("getSuspendedUntil")
+        get() = _builder.suspendedUntil
+      @kotlin.jvm.JvmName("setSuspendedUntil")
+        set(value) {
+        _builder.suspendedUntil = value
+      }
+    /**
+     * ```
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * ```
+     *
+     * `optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];`
+     */
+    public fun clearSuspendedUntil() {
+      _builder.clearSuspendedUntil()
+    }
+    /**
+     * ```
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * ```
+     *
+     * `optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];`
+     * @return Whether the suspendedUntil field is set.
+     */
+    public fun hasSuspendedUntil(): kotlin.Boolean {
+      return _builder.hasSuspendedUntil()
+    }
+
+    public val AdminUserRowKt.Dsl.suspendedUntilOrNull: com.google.protobuf.Timestamp?
+      get() = _builder.suspendedUntilOrNull
+
+    /**
+     * ```
+     * The suspension reason (only with `suspended`).
+     * ```
+     *
+     * `string suspended_reason = 8 [json_name = "suspendedReason"];`
+     */
+    public var suspendedReason: kotlin.String
+      @kotlin.jvm.JvmName("getSuspendedReason")
+        get() = _builder.suspendedReason
+      @kotlin.jvm.JvmName("setSuspendedReason")
+        set(value) {
+        _builder.suspendedReason = value
+      }
+    /**
+     * ```
+     * The suspension reason (only with `suspended`).
+     * ```
+     *
+     * `string suspended_reason = 8 [json_name = "suspendedReason"];`
+     */
+    public fun clearSuspendedReason() {
+      _builder.clearSuspendedReason()
+    }
+
+    /**
+     * ```
+     * The account was deleted (anonymized) or is being deleted.
+     * ```
+     *
+     * `bool deleted = 9 [json_name = "deleted"];`
+     */
+    public var deleted: kotlin.Boolean
+      @kotlin.jvm.JvmName("getDeleted")
+        get() = _builder.deleted
+      @kotlin.jvm.JvmName("setDeleted")
+        set(value) {
+        _builder.deleted = value
+      }
+    /**
+     * ```
+     * The account was deleted (anonymized) or is being deleted.
+     * ```
+     *
+     * `bool deleted = 9 [json_name = "deleted"];`
+     */
+    public fun clearDeleted() {
+      _builder.clearDeleted()
+    }
   }
 }
 public inline fun com.thehideout.v1.AdminUserRow.copy(block: `com.thehideout.v1`.AdminUserRowKt.Dsl.() -> kotlin.Unit): com.thehideout.v1.AdminUserRow =
@@ -195,4 +309,7 @@ public val com.thehideout.v1.AdminUserRowOrBuilder.userOrNull: com.thehideout.v1
 
 public val com.thehideout.v1.AdminUserRowOrBuilder.lastActiveAtOrNull: com.google.protobuf.Timestamp?
   get() = if (hasLastActiveAt()) getLastActiveAt() else null
+
+public val com.thehideout.v1.AdminUserRowOrBuilder.suspendedUntilOrNull: com.google.protobuf.Timestamp?
+  get() = if (hasSuspendedUntil()) getSuspendedUntil() else null
 

@@ -23,6 +23,7 @@ public  final class AcceptInviteRequest extends
     username_ = "";
     password_ = "";
     deviceName_ = "";
+    acceptedTermsVersion_ = "";
   }
   private int bitField0_;
   public static final int TOKEN_OR_CODE_FIELD_NUMBER = 1;
@@ -303,6 +304,116 @@ public  final class AcceptInviteRequest extends
     checkByteStringIsUtf8(value);
     deviceName_ = value.toStringUtf8();
 
+  }
+
+  public static final int ACCEPTED_TERMS_VERSION_FIELD_NUMBER = 5;
+  private java.lang.String acceptedTermsVersion_;
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   * @return The acceptedTermsVersion.
+   */
+  @java.lang.Override
+  public java.lang.String getAcceptedTermsVersion() {
+    return acceptedTermsVersion_;
+  }
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   * @return The bytes for acceptedTermsVersion.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getAcceptedTermsVersionBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(acceptedTermsVersion_);
+  }
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   * @param value The acceptedTermsVersion to set.
+   */
+  private void setAcceptedTermsVersion(
+      java.lang.String value) {
+    java.util.Objects.requireNonNull(value);
+
+    acceptedTermsVersion_ = value;
+  }
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   */
+  private void clearAcceptedTermsVersion() {
+
+    acceptedTermsVersion_ = getDefaultInstance().getAcceptedTermsVersion();
+  }
+  /**
+   * <pre>
+   * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+   * else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+   * @param value The bytes for acceptedTermsVersion to set.
+   */
+  private void setAcceptedTermsVersionBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    acceptedTermsVersion_ = value.toStringUtf8();
+
+  }
+
+  public static final int AGE_CONFIRMED_FIELD_NUMBER = 6;
+  private boolean ageConfirmed_;
+  /**
+   * <pre>
+   * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+   * @return The ageConfirmed.
+   */
+  @java.lang.Override
+  public boolean getAgeConfirmed() {
+    return ageConfirmed_;
+  }
+  /**
+   * <pre>
+   * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+   * @param value The ageConfirmed to set.
+   */
+  private void setAgeConfirmed(boolean value) {
+    
+    ageConfirmed_ = value;
+  }
+  /**
+   * <pre>
+   * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+   * </pre>
+   *
+   * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+   */
+  private void clearAgeConfirmed() {
+
+    ageConfirmed_ = false;
   }
 
   public static com.thehideout.v1.AcceptInviteRequest parseFrom(
@@ -694,6 +805,120 @@ public  final class AcceptInviteRequest extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+     * @return The acceptedTermsVersion.
+     */
+    @java.lang.Override
+    public java.lang.String getAcceptedTermsVersion() {
+      return instance.getAcceptedTermsVersion();
+    }
+    /**
+     * <pre>
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+     * @return The bytes for acceptedTermsVersion.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getAcceptedTermsVersionBytes() {
+      return instance.getAcceptedTermsVersionBytes();
+    }
+    /**
+     * <pre>
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+     * @param value The acceptedTermsVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setAcceptedTermsVersion(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setAcceptedTermsVersion(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearAcceptedTermsVersion() {
+      copyOnWrite();
+      instance.clearAcceptedTermsVersion();
+      return this;
+    }
+    /**
+     * <pre>
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];</code>
+     * @param value The bytes for acceptedTermsVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setAcceptedTermsVersionBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setAcceptedTermsVersionBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+     * @return The ageConfirmed.
+     */
+    @java.lang.Override
+    public boolean getAgeConfirmed() {
+      return instance.getAgeConfirmed();
+    }
+    /**
+     * <pre>
+     * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+     * @param value The ageConfirmed to set.
+     * @return This builder for chaining.
+     */
+    public Builder setAgeConfirmed(boolean value) {
+      copyOnWrite();
+      instance.setAgeConfirmed(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+     * </pre>
+     *
+     * <code>bool age_confirmed = 6 [json_name = "ageConfirmed"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearAgeConfirmed() {
+      copyOnWrite();
+      instance.clearAgeConfirmed();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:thehideout.v1.AcceptInviteRequest)
   }
   @java.lang.Override
@@ -715,10 +940,12 @@ public  final class AcceptInviteRequest extends
             "username_",
             "password_",
             "deviceName_",
+            "acceptedTermsVersion_",
+            "ageConfirmed_",
           };
           java.lang.String info =
-              "\u0000\u0004\u0000\u0001\u0001\u0004\u0004\u0000\u0000\u0000\u0001\u0208\u0002\u0208" +
-              "\u0003\u1208\u0000\u0004\u0208";
+              "\u0000\u0006\u0000\u0001\u0001\u0006\u0006\u0000\u0000\u0000\u0001\u0208\u0002\u0208" +
+              "\u0003\u1208\u0000\u0004\u0208\u0005\u0208\u0006\u0007";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

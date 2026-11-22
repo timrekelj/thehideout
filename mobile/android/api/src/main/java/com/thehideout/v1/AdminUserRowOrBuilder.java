@@ -77,4 +77,63 @@ public interface AdminUserRowOrBuilder extends
    * @return The lastActiveAt.
    */
   com.google.protobuf.Timestamp getLastActiveAt();
+
+  /**
+   * <pre>
+   * The user is currently suspended.
+   * </pre>
+   *
+   * <code>bool suspended = 6 [json_name = "suspended"];</code>
+   * @return The suspended.
+   */
+  boolean getSuspended();
+
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   * @return Whether the suspendedUntil field is set.
+   */
+  boolean hasSuspendedUntil();
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   * @return The suspendedUntil.
+   */
+  com.google.protobuf.Timestamp getSuspendedUntil();
+
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   * @return The suspendedReason.
+   */
+  java.lang.String getSuspendedReason();
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   * @return The bytes for suspendedReason.
+   */
+  com.google.protobuf.ByteString
+      getSuspendedReasonBytes();
+
+  /**
+   * <pre>
+   * The account was deleted (anonymized) or is being deleted.
+   * </pre>
+   *
+   * <code>bool deleted = 9 [json_name = "deleted"];</code>
+   * @return The deleted.
+   */
+  boolean getDeleted();
 }

@@ -127,4 +127,36 @@ public interface LookupInviteResponseOrBuilder extends
    * @return The status.
    */
   com.thehideout.v1.InviteStatus getStatus();
+
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   * @return The termsVersion.
+   */
+  java.lang.String getTermsVersion();
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   * @return The bytes for termsVersion.
+   */
+  com.google.protobuf.ByteString
+      getTermsVersionBytes();
+
+  /**
+   * <pre>
+   * The minimum age (16) the invitee confirms with `age_confirmed`.
+   * </pre>
+   *
+   * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+   * @return The minimumAge.
+   */
+  int getMinimumAge();
 }

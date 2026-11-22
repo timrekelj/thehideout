@@ -122,4 +122,15 @@ public interface UserOrBuilder extends
    */
   com.google.protobuf.ByteString
       getEmailBytes();
+
+  /**
+   * <pre>
+   * The account was deleted and anonymized: `username` is "Deleted user" and
+   * `avatar` is empty. The id stays valid so messages keep their author.
+   * </pre>
+   *
+   * <code>bool deleted = 7 [json_name = "deleted"];</code>
+   * @return The deleted.
+   */
+  boolean getDeleted();
 }

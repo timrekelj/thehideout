@@ -391,6 +391,47 @@ public  final class User extends
     bitField0_ |= 0x00000002;
   }
 
+  public static final int DELETED_FIELD_NUMBER = 7;
+  private boolean deleted_;
+  /**
+   * <pre>
+   * The account was deleted and anonymized: `username` is "Deleted user" and
+   * `avatar` is empty. The id stays valid so messages keep their author.
+   * </pre>
+   *
+   * <code>bool deleted = 7 [json_name = "deleted"];</code>
+   * @return The deleted.
+   */
+  @java.lang.Override
+  public boolean getDeleted() {
+    return deleted_;
+  }
+  /**
+   * <pre>
+   * The account was deleted and anonymized: `username` is "Deleted user" and
+   * `avatar` is empty. The id stays valid so messages keep their author.
+   * </pre>
+   *
+   * <code>bool deleted = 7 [json_name = "deleted"];</code>
+   * @param value The deleted to set.
+   */
+  private void setDeleted(boolean value) {
+    
+    deleted_ = value;
+  }
+  /**
+   * <pre>
+   * The account was deleted and anonymized: `username` is "Deleted user" and
+   * `avatar` is empty. The id stays valid so messages keep their author.
+   * </pre>
+   *
+   * <code>bool deleted = 7 [json_name = "deleted"];</code>
+   */
+  private void clearDeleted() {
+
+    deleted_ = false;
+  }
+
   public static com.thehideout.v1.User parseFrom(
       java.nio.ByteBuffer data)
       throws com.google.protobuf.InvalidProtocolBufferException {
@@ -873,6 +914,49 @@ public  final class User extends
       return this;
     }
 
+    /**
+     * <pre>
+     * The account was deleted and anonymized: `username` is "Deleted user" and
+     * `avatar` is empty. The id stays valid so messages keep their author.
+     * </pre>
+     *
+     * <code>bool deleted = 7 [json_name = "deleted"];</code>
+     * @return The deleted.
+     */
+    @java.lang.Override
+    public boolean getDeleted() {
+      return instance.getDeleted();
+    }
+    /**
+     * <pre>
+     * The account was deleted and anonymized: `username` is "Deleted user" and
+     * `avatar` is empty. The id stays valid so messages keep their author.
+     * </pre>
+     *
+     * <code>bool deleted = 7 [json_name = "deleted"];</code>
+     * @param value The deleted to set.
+     * @return This builder for chaining.
+     */
+    public Builder setDeleted(boolean value) {
+      copyOnWrite();
+      instance.setDeleted(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The account was deleted and anonymized: `username` is "Deleted user" and
+     * `avatar` is empty. The id stays valid so messages keep their author.
+     * </pre>
+     *
+     * <code>bool deleted = 7 [json_name = "deleted"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearDeleted() {
+      copyOnWrite();
+      instance.clearDeleted();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:thehideout.v1.User)
   }
   @java.lang.Override
@@ -896,10 +980,11 @@ public  final class User extends
             "avatar_",
             "isAdmin_",
             "email_",
+            "deleted_",
           };
           java.lang.String info =
-              "\u0000\u0006\u0000\u0001\u0001\u0006\u0006\u0000\u0000\u0000\u0001\u0003\u0002\u0208" +
-              "\u0003\u1009\u0000\u0004\u0208\u0005\u0007\u0006\u1208\u0001";
+              "\u0000\u0007\u0000\u0001\u0001\u0007\u0007\u0000\u0000\u0000\u0001\u0003\u0002\u0208" +
+              "\u0003\u1009\u0000\u0004\u0208\u0005\u0007\u0006\u1208\u0001\u0007\u0007";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

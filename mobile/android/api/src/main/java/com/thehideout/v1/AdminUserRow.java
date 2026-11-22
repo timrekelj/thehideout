@@ -19,6 +19,7 @@ public  final class AdminUserRow extends
     // @@protoc_insertion_point(message_implements:thehideout.v1.AdminUserRow)
     AdminUserRowOrBuilder {
   private AdminUserRow() {
+    suspendedReason_ = "";
   }
   private int bitField0_;
   public static final int USER_FIELD_NUMBER = 1;
@@ -267,6 +268,216 @@ public  final class AdminUserRow extends
   private void clearLastActiveAt() {
     lastActiveAt_ = null;
     bitField0_ = (bitField0_ & ~0x00000002);
+  }
+
+  public static final int SUSPENDED_FIELD_NUMBER = 6;
+  private boolean suspended_;
+  /**
+   * <pre>
+   * The user is currently suspended.
+   * </pre>
+   *
+   * <code>bool suspended = 6 [json_name = "suspended"];</code>
+   * @return The suspended.
+   */
+  @java.lang.Override
+  public boolean getSuspended() {
+    return suspended_;
+  }
+  /**
+   * <pre>
+   * The user is currently suspended.
+   * </pre>
+   *
+   * <code>bool suspended = 6 [json_name = "suspended"];</code>
+   * @param value The suspended to set.
+   */
+  private void setSuspended(boolean value) {
+    
+    suspended_ = value;
+  }
+  /**
+   * <pre>
+   * The user is currently suspended.
+   * </pre>
+   *
+   * <code>bool suspended = 6 [json_name = "suspended"];</code>
+   */
+  private void clearSuspended() {
+
+    suspended_ = false;
+  }
+
+  public static final int SUSPENDED_UNTIL_FIELD_NUMBER = 7;
+  private com.google.protobuf.Timestamp suspendedUntil_;
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   */
+  @java.lang.Override
+  public boolean hasSuspendedUntil() {
+    return ((bitField0_ & 0x00000004) != 0);
+  }
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   */
+  @java.lang.Override
+  public com.google.protobuf.Timestamp getSuspendedUntil() {
+    return suspendedUntil_ == null ? com.google.protobuf.Timestamp.getDefaultInstance() : suspendedUntil_;
+  }
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   */
+  private void setSuspendedUntil(com.google.protobuf.Timestamp value) {
+    java.util.Objects.requireNonNull(value);
+    suspendedUntil_ = value;
+    bitField0_ |= 0x00000004;
+  }
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   */
+  @java.lang.SuppressWarnings("ReferenceEquality")
+  private void mergeSuspendedUntil(com.google.protobuf.Timestamp value) {
+    java.util.Objects.requireNonNull(value);
+    if (suspendedUntil_ != null &&
+        suspendedUntil_ != com.google.protobuf.Timestamp.getDefaultInstance()) {
+      suspendedUntil_ =
+        com.google.protobuf.Timestamp.newBuilder(suspendedUntil_).mergeFrom(value).buildPartial();
+    } else {
+      suspendedUntil_ = value;
+    }
+    bitField0_ |= 0x00000004;
+  }
+  /**
+   * <pre>
+   * When the suspension ends; unset = indefinite (only with `suspended`).
+   * </pre>
+   *
+   * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+   */
+  private void clearSuspendedUntil() {
+    suspendedUntil_ = null;
+    bitField0_ = (bitField0_ & ~0x00000004);
+  }
+
+  public static final int SUSPENDED_REASON_FIELD_NUMBER = 8;
+  private java.lang.String suspendedReason_;
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   * @return The suspendedReason.
+   */
+  @java.lang.Override
+  public java.lang.String getSuspendedReason() {
+    return suspendedReason_;
+  }
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   * @return The bytes for suspendedReason.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getSuspendedReasonBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(suspendedReason_);
+  }
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   * @param value The suspendedReason to set.
+   */
+  private void setSuspendedReason(
+      java.lang.String value) {
+    java.util.Objects.requireNonNull(value);
+
+    suspendedReason_ = value;
+  }
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   */
+  private void clearSuspendedReason() {
+
+    suspendedReason_ = getDefaultInstance().getSuspendedReason();
+  }
+  /**
+   * <pre>
+   * The suspension reason (only with `suspended`).
+   * </pre>
+   *
+   * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+   * @param value The bytes for suspendedReason to set.
+   */
+  private void setSuspendedReasonBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    suspendedReason_ = value.toStringUtf8();
+
+  }
+
+  public static final int DELETED_FIELD_NUMBER = 9;
+  private boolean deleted_;
+  /**
+   * <pre>
+   * The account was deleted (anonymized) or is being deleted.
+   * </pre>
+   *
+   * <code>bool deleted = 9 [json_name = "deleted"];</code>
+   * @return The deleted.
+   */
+  @java.lang.Override
+  public boolean getDeleted() {
+    return deleted_;
+  }
+  /**
+   * <pre>
+   * The account was deleted (anonymized) or is being deleted.
+   * </pre>
+   *
+   * <code>bool deleted = 9 [json_name = "deleted"];</code>
+   * @param value The deleted to set.
+   */
+  private void setDeleted(boolean value) {
+    
+    deleted_ = value;
+  }
+  /**
+   * <pre>
+   * The account was deleted (anonymized) or is being deleted.
+   * </pre>
+   *
+   * <code>bool deleted = 9 [json_name = "deleted"];</code>
+   */
+  private void clearDeleted() {
+
+    deleted_ = false;
   }
 
   public static com.thehideout.v1.AdminUserRow parseFrom(
@@ -632,6 +843,226 @@ public  final class AdminUserRow extends
       return this;
     }
 
+    /**
+     * <pre>
+     * The user is currently suspended.
+     * </pre>
+     *
+     * <code>bool suspended = 6 [json_name = "suspended"];</code>
+     * @return The suspended.
+     */
+    @java.lang.Override
+    public boolean getSuspended() {
+      return instance.getSuspended();
+    }
+    /**
+     * <pre>
+     * The user is currently suspended.
+     * </pre>
+     *
+     * <code>bool suspended = 6 [json_name = "suspended"];</code>
+     * @param value The suspended to set.
+     * @return This builder for chaining.
+     */
+    public Builder setSuspended(boolean value) {
+      copyOnWrite();
+      instance.setSuspended(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The user is currently suspended.
+     * </pre>
+     *
+     * <code>bool suspended = 6 [json_name = "suspended"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearSuspended() {
+      copyOnWrite();
+      instance.clearSuspended();
+      return this;
+    }
+
+    /**
+     * <pre>
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * </pre>
+     *
+     * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+     */
+    @java.lang.Override
+    public boolean hasSuspendedUntil() {
+      return instance.hasSuspendedUntil();
+    }
+    /**
+     * <pre>
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * </pre>
+     *
+     * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+     */
+    @java.lang.Override
+    public com.google.protobuf.Timestamp getSuspendedUntil() {
+      return instance.getSuspendedUntil();
+    }
+    /**
+     * <pre>
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * </pre>
+     *
+     * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+     */
+    public Builder setSuspendedUntil(com.google.protobuf.Timestamp value) {
+      copyOnWrite();
+      instance.setSuspendedUntil(value);
+      return this;
+      }
+    /**
+     * <pre>
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * </pre>
+     *
+     * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+     */
+    public Builder setSuspendedUntil(
+        com.google.protobuf.Timestamp.Builder builderForValue) {
+      copyOnWrite();
+      instance.setSuspendedUntil(builderForValue.build());
+      return this;
+    }
+    /**
+     * <pre>
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * </pre>
+     *
+     * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+     */
+    public Builder mergeSuspendedUntil(com.google.protobuf.Timestamp value) {
+      copyOnWrite();
+      instance.mergeSuspendedUntil(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * When the suspension ends; unset = indefinite (only with `suspended`).
+     * </pre>
+     *
+     * <code>optional .google.protobuf.Timestamp suspended_until = 7 [json_name = "suspendedUntil"];</code>
+     */
+    public Builder clearSuspendedUntil() {  copyOnWrite();
+      instance.clearSuspendedUntil();
+      return this;
+    }
+
+    /**
+     * <pre>
+     * The suspension reason (only with `suspended`).
+     * </pre>
+     *
+     * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+     * @return The suspendedReason.
+     */
+    @java.lang.Override
+    public java.lang.String getSuspendedReason() {
+      return instance.getSuspendedReason();
+    }
+    /**
+     * <pre>
+     * The suspension reason (only with `suspended`).
+     * </pre>
+     *
+     * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+     * @return The bytes for suspendedReason.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getSuspendedReasonBytes() {
+      return instance.getSuspendedReasonBytes();
+    }
+    /**
+     * <pre>
+     * The suspension reason (only with `suspended`).
+     * </pre>
+     *
+     * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+     * @param value The suspendedReason to set.
+     * @return This builder for chaining.
+     */
+    public Builder setSuspendedReason(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setSuspendedReason(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The suspension reason (only with `suspended`).
+     * </pre>
+     *
+     * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearSuspendedReason() {
+      copyOnWrite();
+      instance.clearSuspendedReason();
+      return this;
+    }
+    /**
+     * <pre>
+     * The suspension reason (only with `suspended`).
+     * </pre>
+     *
+     * <code>string suspended_reason = 8 [json_name = "suspendedReason"];</code>
+     * @param value The bytes for suspendedReason to set.
+     * @return This builder for chaining.
+     */
+    public Builder setSuspendedReasonBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setSuspendedReasonBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * The account was deleted (anonymized) or is being deleted.
+     * </pre>
+     *
+     * <code>bool deleted = 9 [json_name = "deleted"];</code>
+     * @return The deleted.
+     */
+    @java.lang.Override
+    public boolean getDeleted() {
+      return instance.getDeleted();
+    }
+    /**
+     * <pre>
+     * The account was deleted (anonymized) or is being deleted.
+     * </pre>
+     *
+     * <code>bool deleted = 9 [json_name = "deleted"];</code>
+     * @param value The deleted to set.
+     * @return This builder for chaining.
+     */
+    public Builder setDeleted(boolean value) {
+      copyOnWrite();
+      instance.setDeleted(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The account was deleted (anonymized) or is being deleted.
+     * </pre>
+     *
+     * <code>bool deleted = 9 [json_name = "deleted"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearDeleted() {
+      copyOnWrite();
+      instance.clearDeleted();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:thehideout.v1.AdminUserRow)
   }
   @java.lang.Override
@@ -654,10 +1085,15 @@ public  final class AdminUserRow extends
             "messageCount_",
             "storageBytes_",
             "lastActiveAt_",
+            "suspended_",
+            "suspendedUntil_",
+            "suspendedReason_",
+            "deleted_",
           };
           java.lang.String info =
-              "\u0000\u0005\u0000\u0001\u0001\u0005\u0005\u0000\u0000\u0000\u0001\u1009\u0000\u0002" +
-              "\u0003\u0003\u0003\u0004\u0003\u0005\u1009\u0001";
+              "\u0000\t\u0000\u0001\u0001\t\t\u0000\u0000\u0000\u0001\u1009\u0000\u0002\u0003\u0003" +
+              "\u0003\u0004\u0003\u0005\u1009\u0001\u0006\u0007\u0007\u1009\u0002\b\u0208\t\u0007" +
+              "";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

@@ -141,4 +141,56 @@ public class AdminServiceClient(
     ),
   )
 
+
+  /**
+   *  Suspends a user: sessions are revoked and sign-in is refused with a
+   *  `thehideout.v1.AccountSuspended` detail until `until` (or unsuspended).
+   *  Site admins cannot be suspended (FAILED_PRECONDITION). Audit-logged.
+   */
+  override suspend fun suspendUser(request: SuspendUserRequest, headers: Headers): ResponseMessage<SuspendUserResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AdminService/SuspendUser",
+      com.thehideout.v1.SuspendUserRequest::class,
+      com.thehideout.v1.SuspendUserResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
+
+  /**
+   *  Lifts a suspension. Audit-logged.
+   */
+  override suspend fun unsuspendUser(request: UnsuspendUserRequest, headers: Headers): ResponseMessage<UnsuspendUserResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AdminService/UnsuspendUser",
+      com.thehideout.v1.UnsuspendUserRequest::class,
+      com.thehideout.v1.UnsuspendUserResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
+
+  /**
+   *  Deletes (anonymizes) a user's account like the user's own DeleteAccount.
+   *  Refused for site admins and the bootstrap admin (FAILED_PRECONDITION).
+   *  Without `force_transfer` it fails with FAILED_PRECONDITION and an
+   *  `OwnedGuilds` detail while the user owns guilds; with it, ownership of each
+   *  guild passes to its member with the highest role (ties: the longest
+   *  member) and guilds where the user is alone are deleted. Audit-logged.
+   */
+  override suspend fun adminDeleteUser(request: AdminDeleteUserRequest, headers: Headers): ResponseMessage<AdminDeleteUserResponse> = client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "thehideout.v1.AdminService/AdminDeleteUser",
+      com.thehideout.v1.AdminDeleteUserRequest::class,
+      com.thehideout.v1.AdminDeleteUserResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
 }

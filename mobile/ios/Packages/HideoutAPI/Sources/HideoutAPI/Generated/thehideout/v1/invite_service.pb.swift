@@ -407,6 +407,13 @@ public nonisolated struct Thehideout_V1_LookupInviteResponse: Sendable {
   /// Current status; only PENDING invites can be accepted.
   public var status: Thehideout_V1_InviteStatus = .unspecified
 
+  /// The terms version AcceptInvite requires in `accepted_terms_version`;
+  /// the documents are at `{base}/terms` and `{base}/privacy`.
+  public var termsVersion: String = String()
+
+  /// The minimum age (16) the invitee confirms with `age_confirmed`.
+  public var minimumAge: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -439,6 +446,13 @@ public nonisolated struct Thehideout_V1_AcceptInviteRequest: Sendable {
 
   /// Human-readable name of the device (≤ 64 chars).
   public var deviceName: String = String()
+
+  /// Must equal the current terms version (`LookupInviteResponse.terms_version`);
+  /// else INVALID_ARGUMENT.
+  public var acceptedTermsVersion: String = String()
+
+  /// The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+  public var ageConfirmed: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -943,7 +957,7 @@ nonisolated extension Thehideout_V1_LookupInviteRequest: SwiftProtobuf.Message, 
 
 nonisolated extension Thehideout_V1_LookupInviteResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LookupInviteResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}masked_email\0\u{1}inviter\0\u{3}guild_names\0\u{3}expires_at\0\u{1}status\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}masked_email\0\u{1}inviter\0\u{3}guild_names\0\u{3}expires_at\0\u{1}status\0\u{3}terms_version\0\u{3}minimum_age\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -956,6 +970,8 @@ nonisolated extension Thehideout_V1_LookupInviteResponse: SwiftProtobuf.Message,
       case 3: try { try decoder.decodeRepeatedStringField(value: &self.guildNames) }()
       case 4: try { try decoder.decodeSingularMessageField(value: &self._expiresAt) }()
       case 5: try { try decoder.decodeSingularEnumField(value: &self.status) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.termsVersion) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.minimumAge) }()
       default: break
       }
     }
@@ -981,6 +997,12 @@ nonisolated extension Thehideout_V1_LookupInviteResponse: SwiftProtobuf.Message,
     if self.status != .unspecified {
       try visitor.visitSingularEnumField(value: self.status, fieldNumber: 5)
     }
+    if !self.termsVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.termsVersion, fieldNumber: 6)
+    }
+    if self.minimumAge != 0 {
+      try visitor.visitSingularUInt32Field(value: self.minimumAge, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -990,6 +1012,8 @@ nonisolated extension Thehideout_V1_LookupInviteResponse: SwiftProtobuf.Message,
     if lhs.guildNames != rhs.guildNames {return false}
     if lhs._expiresAt != rhs._expiresAt {return false}
     if lhs.status != rhs.status {return false}
+    if lhs.termsVersion != rhs.termsVersion {return false}
+    if lhs.minimumAge != rhs.minimumAge {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -997,7 +1021,7 @@ nonisolated extension Thehideout_V1_LookupInviteResponse: SwiftProtobuf.Message,
 
 nonisolated extension Thehideout_V1_AcceptInviteRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AcceptInviteRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}token_or_code\0\u{1}username\0\u{1}password\0\u{3}device_name\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}token_or_code\0\u{1}username\0\u{1}password\0\u{3}device_name\0\u{3}accepted_terms_version\0\u{3}age_confirmed\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1009,6 +1033,8 @@ nonisolated extension Thehideout_V1_AcceptInviteRequest: SwiftProtobuf.Message, 
       case 2: try { try decoder.decodeSingularStringField(value: &self.username) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self._password) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.deviceName) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.acceptedTermsVersion) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.ageConfirmed) }()
       default: break
       }
     }
@@ -1031,6 +1057,12 @@ nonisolated extension Thehideout_V1_AcceptInviteRequest: SwiftProtobuf.Message, 
     if !self.deviceName.isEmpty {
       try visitor.visitSingularStringField(value: self.deviceName, fieldNumber: 4)
     }
+    if !self.acceptedTermsVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.acceptedTermsVersion, fieldNumber: 5)
+    }
+    if self.ageConfirmed != false {
+      try visitor.visitSingularBoolField(value: self.ageConfirmed, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1039,6 +1071,8 @@ nonisolated extension Thehideout_V1_AcceptInviteRequest: SwiftProtobuf.Message, 
     if lhs.username != rhs.username {return false}
     if lhs._password != rhs._password {return false}
     if lhs.deviceName != rhs.deviceName {return false}
+    if lhs.acceptedTermsVersion != rhs.acceptedTermsVersion {return false}
+    if lhs.ageConfirmed != rhs.ageConfirmed {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

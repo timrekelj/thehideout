@@ -71,6 +71,70 @@ public object GetMeResponseKt {
 
     public val GetMeResponseKt.Dsl.userOrNull: com.thehideout.v1.User?
       get() = _builder.userOrNull
+
+    /**
+     * ```
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * ```
+     *
+     * `optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];`
+     */
+    public var termsUpdateRequired: kotlin.String
+      @kotlin.jvm.JvmName("getTermsUpdateRequired")
+        get() = _builder.termsUpdateRequired
+      @kotlin.jvm.JvmName("setTermsUpdateRequired")
+        set(value) {
+        _builder.termsUpdateRequired = value
+      }
+    /**
+     * ```
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * ```
+     *
+     * `optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];`
+     */
+    public fun clearTermsUpdateRequired() {
+      _builder.clearTermsUpdateRequired()
+    }
+    /**
+     * ```
+     * Set when the caller has not accepted the current terms (never, or an older
+     * version): the version to accept with AcceptTerms. Clients show a prompt.
+     * ```
+     *
+     * `optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];`
+     * @return Whether the termsUpdateRequired field is set.
+     */
+    public fun hasTermsUpdateRequired(): kotlin.Boolean {
+      return _builder.hasTermsUpdateRequired()
+    }
+
+    /**
+     * ```
+     * The server's current terms version (also the date of /terms and /privacy).
+     * ```
+     *
+     * `string terms_version = 3 [json_name = "termsVersion"];`
+     */
+    public var termsVersion: kotlin.String
+      @kotlin.jvm.JvmName("getTermsVersion")
+        get() = _builder.termsVersion
+      @kotlin.jvm.JvmName("setTermsVersion")
+        set(value) {
+        _builder.termsVersion = value
+      }
+    /**
+     * ```
+     * The server's current terms version (also the date of /terms and /privacy).
+     * ```
+     *
+     * `string terms_version = 3 [json_name = "termsVersion"];`
+     */
+    public fun clearTermsVersion() {
+      _builder.clearTermsVersion()
+    }
   }
 }
 public inline fun com.thehideout.v1.GetMeResponse.copy(block: `com.thehideout.v1`.GetMeResponseKt.Dsl.() -> kotlin.Unit): com.thehideout.v1.GetMeResponse =

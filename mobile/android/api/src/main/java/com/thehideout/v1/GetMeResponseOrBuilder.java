@@ -28,4 +28,56 @@ public interface GetMeResponseOrBuilder extends
    * @return The user.
    */
   com.thehideout.v1.User getUser();
+
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @return Whether the termsUpdateRequired field is set.
+   */
+  boolean hasTermsUpdateRequired();
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @return The termsUpdateRequired.
+   */
+  java.lang.String getTermsUpdateRequired();
+  /**
+   * <pre>
+   * Set when the caller has not accepted the current terms (never, or an older
+   * version): the version to accept with AcceptTerms. Clients show a prompt.
+   * </pre>
+   *
+   * <code>optional string terms_update_required = 2 [json_name = "termsUpdateRequired"];</code>
+   * @return The bytes for termsUpdateRequired.
+   */
+  com.google.protobuf.ByteString
+      getTermsUpdateRequiredBytes();
+
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   * @return The termsVersion.
+   */
+  java.lang.String getTermsVersion();
+  /**
+   * <pre>
+   * The server's current terms version (also the date of /terms and /privacy).
+   * </pre>
+   *
+   * <code>string terms_version = 3 [json_name = "termsVersion"];</code>
+   * @return The bytes for termsVersion.
+   */
+  com.google.protobuf.ByteString
+      getTermsVersionBytes();
 }

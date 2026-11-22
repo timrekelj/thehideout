@@ -212,6 +212,33 @@ public object UserKt {
     public fun hasEmail(): kotlin.Boolean {
       return _builder.hasEmail()
     }
+
+    /**
+     * ```
+     * The account was deleted and anonymized: `username` is "Deleted user" and
+     * `avatar` is empty. The id stays valid so messages keep their author.
+     * ```
+     *
+     * `bool deleted = 7 [json_name = "deleted"];`
+     */
+    public var deleted: kotlin.Boolean
+      @kotlin.jvm.JvmName("getDeleted")
+        get() = _builder.deleted
+      @kotlin.jvm.JvmName("setDeleted")
+        set(value) {
+        _builder.deleted = value
+      }
+    /**
+     * ```
+     * The account was deleted and anonymized: `username` is "Deleted user" and
+     * `avatar` is empty. The id stays valid so messages keep their author.
+     * ```
+     *
+     * `bool deleted = 7 [json_name = "deleted"];`
+     */
+    public fun clearDeleted() {
+      _builder.clearDeleted()
+    }
   }
 }
 public inline fun com.thehideout.v1.User.copy(block: `com.thehideout.v1`.UserKt.Dsl.() -> kotlin.Unit): com.thehideout.v1.User =

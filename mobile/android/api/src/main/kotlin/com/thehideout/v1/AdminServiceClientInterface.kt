@@ -56,4 +56,26 @@ public interface AdminServiceClientInterface {
    *  Lists audit entries, newest first.
    */
   public suspend fun listAuditLog(request: ListAuditLogRequest, headers: Headers = emptyMap()): ResponseMessage<ListAuditLogResponse>
+
+  /**
+   *  Suspends a user: sessions are revoked and sign-in is refused with a
+   *  `thehideout.v1.AccountSuspended` detail until `until` (or unsuspended).
+   *  Site admins cannot be suspended (FAILED_PRECONDITION). Audit-logged.
+   */
+  public suspend fun suspendUser(request: SuspendUserRequest, headers: Headers = emptyMap()): ResponseMessage<SuspendUserResponse>
+
+  /**
+   *  Lifts a suspension. Audit-logged.
+   */
+  public suspend fun unsuspendUser(request: UnsuspendUserRequest, headers: Headers = emptyMap()): ResponseMessage<UnsuspendUserResponse>
+
+  /**
+   *  Deletes (anonymizes) a user's account like the user's own DeleteAccount.
+   *  Refused for site admins and the bootstrap admin (FAILED_PRECONDITION).
+   *  Without `force_transfer` it fails with FAILED_PRECONDITION and an
+   *  `OwnedGuilds` detail while the user owns guilds; with it, ownership of each
+   *  guild passes to its member with the highest role (ties: the longest
+   *  member) and guilds where the user is alone are deleted. Audit-logged.
+   */
+  public suspend fun adminDeleteUser(request: AdminDeleteUserRequest, headers: Headers = emptyMap()): ResponseMessage<AdminDeleteUserResponse>
 }

@@ -21,6 +21,7 @@ public  final class LookupInviteResponse extends
   private LookupInviteResponse() {
     maskedEmail_ = "";
     guildNames_ = emptyProtobufList();
+    termsVersion_ = "";
   }
   private int bitField0_;
   public static final int MASKED_EMAIL_FIELD_NUMBER = 1;
@@ -414,6 +415,116 @@ public  final class LookupInviteResponse extends
   private void clearStatus() {
 
     status_ = 0;
+  }
+
+  public static final int TERMS_VERSION_FIELD_NUMBER = 6;
+  private java.lang.String termsVersion_;
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   * @return The termsVersion.
+   */
+  @java.lang.Override
+  public java.lang.String getTermsVersion() {
+    return termsVersion_;
+  }
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   * @return The bytes for termsVersion.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getTermsVersionBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(termsVersion_);
+  }
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   * @param value The termsVersion to set.
+   */
+  private void setTermsVersion(
+      java.lang.String value) {
+    java.util.Objects.requireNonNull(value);
+
+    termsVersion_ = value;
+  }
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   */
+  private void clearTermsVersion() {
+
+    termsVersion_ = getDefaultInstance().getTermsVersion();
+  }
+  /**
+   * <pre>
+   * The terms version AcceptInvite requires in `accepted_terms_version`;
+   * the documents are at `{base}/terms` and `{base}/privacy`.
+   * </pre>
+   *
+   * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+   * @param value The bytes for termsVersion to set.
+   */
+  private void setTermsVersionBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    termsVersion_ = value.toStringUtf8();
+
+  }
+
+  public static final int MINIMUM_AGE_FIELD_NUMBER = 7;
+  private int minimumAge_;
+  /**
+   * <pre>
+   * The minimum age (16) the invitee confirms with `age_confirmed`.
+   * </pre>
+   *
+   * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+   * @return The minimumAge.
+   */
+  @java.lang.Override
+  public int getMinimumAge() {
+    return minimumAge_;
+  }
+  /**
+   * <pre>
+   * The minimum age (16) the invitee confirms with `age_confirmed`.
+   * </pre>
+   *
+   * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+   * @param value The minimumAge to set.
+   */
+  private void setMinimumAge(int value) {
+    
+    minimumAge_ = value;
+  }
+  /**
+   * <pre>
+   * The minimum age (16) the invitee confirms with `age_confirmed`.
+   * </pre>
+   *
+   * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+   */
+  private void clearMinimumAge() {
+
+    minimumAge_ = 0;
   }
 
   public static com.thehideout.v1.LookupInviteResponse parseFrom(
@@ -923,6 +1034,120 @@ public  final class LookupInviteResponse extends
       return this;
     }
 
+    /**
+     * <pre>
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * </pre>
+     *
+     * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+     * @return The termsVersion.
+     */
+    @java.lang.Override
+    public java.lang.String getTermsVersion() {
+      return instance.getTermsVersion();
+    }
+    /**
+     * <pre>
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * </pre>
+     *
+     * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+     * @return The bytes for termsVersion.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTermsVersionBytes() {
+      return instance.getTermsVersionBytes();
+    }
+    /**
+     * <pre>
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * </pre>
+     *
+     * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+     * @param value The termsVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTermsVersion(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setTermsVersion(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * </pre>
+     *
+     * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearTermsVersion() {
+      copyOnWrite();
+      instance.clearTermsVersion();
+      return this;
+    }
+    /**
+     * <pre>
+     * The terms version AcceptInvite requires in `accepted_terms_version`;
+     * the documents are at `{base}/terms` and `{base}/privacy`.
+     * </pre>
+     *
+     * <code>string terms_version = 6 [json_name = "termsVersion"];</code>
+     * @param value The bytes for termsVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTermsVersionBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setTermsVersionBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * The minimum age (16) the invitee confirms with `age_confirmed`.
+     * </pre>
+     *
+     * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+     * @return The minimumAge.
+     */
+    @java.lang.Override
+    public int getMinimumAge() {
+      return instance.getMinimumAge();
+    }
+    /**
+     * <pre>
+     * The minimum age (16) the invitee confirms with `age_confirmed`.
+     * </pre>
+     *
+     * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+     * @param value The minimumAge to set.
+     * @return This builder for chaining.
+     */
+    public Builder setMinimumAge(int value) {
+      copyOnWrite();
+      instance.setMinimumAge(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The minimum age (16) the invitee confirms with `age_confirmed`.
+     * </pre>
+     *
+     * <code>uint32 minimum_age = 7 [json_name = "minimumAge"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearMinimumAge() {
+      copyOnWrite();
+      instance.clearMinimumAge();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:thehideout.v1.LookupInviteResponse)
   }
   @java.lang.Override
@@ -945,10 +1170,12 @@ public  final class LookupInviteResponse extends
             "guildNames_",
             "expiresAt_",
             "status_",
+            "termsVersion_",
+            "minimumAge_",
           };
           java.lang.String info =
-              "\u0000\u0005\u0000\u0001\u0001\u0005\u0005\u0000\u0001\u0000\u0001\u0208\u0002\u1009" +
-              "\u0000\u0003\u021a\u0004\u1009\u0001\u0005\f";
+              "\u0000\u0007\u0000\u0001\u0001\u0007\u0007\u0000\u0001\u0000\u0001\u0208\u0002\u1009" +
+              "\u0000\u0003\u021a\u0004\u1009\u0001\u0005\f\u0006\u0208\u0007\u000b";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

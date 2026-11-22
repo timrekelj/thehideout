@@ -304,11 +304,216 @@ public nonisolated struct Thehideout_V1_GetMeResponse: Sendable {
   /// Clears the value of `user`. Subsequent reads from it will return its default value.
   public mutating func clearUser() {self._user = nil}
 
+  /// Set when the caller has not accepted the current terms (never, or an older
+  /// version): the version to accept with AcceptTerms. Clients show a prompt.
+  public var termsUpdateRequired: String {
+    get {_termsUpdateRequired ?? String()}
+    set {_termsUpdateRequired = newValue}
+  }
+  /// Returns true if `termsUpdateRequired` has been explicitly set.
+  public var hasTermsUpdateRequired: Bool {self._termsUpdateRequired != nil}
+  /// Clears the value of `termsUpdateRequired`. Subsequent reads from it will return its default value.
+  public mutating func clearTermsUpdateRequired() {self._termsUpdateRequired = nil}
+
+  /// The server's current terms version (also the date of /terms and /privacy).
+  public var termsVersion: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _user: Thehideout_V1_User? = nil
+  fileprivate var _termsUpdateRequired: String? = nil
+}
+
+/// Request to email a deletion code.
+public nonisolated struct Thehideout_V1_RequestAccountDeletionCodeRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The code was sent (to the account's address).
+public nonisolated struct Thehideout_V1_RequestAccountDeletionCodeResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to delete the caller's account.
+public nonisolated struct Thehideout_V1_DeleteAccountRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The account password; required if the account has one.
+  public var password: String {
+    get {_password ?? String()}
+    set {_password = newValue}
+  }
+  /// Returns true if `password` has been explicitly set.
+  public var hasPassword: Bool {self._password != nil}
+  /// Clears the value of `password`. Subsequent reads from it will return its default value.
+  public mutating func clearPassword() {self._password = nil}
+
+  /// The emailed code of RequestAccountDeletionCode; required without a password.
+  public var emailCode: String {
+    get {_emailCode ?? String()}
+    set {_emailCode = newValue}
+  }
+  /// Returns true if `emailCode` has been explicitly set.
+  public var hasEmailCode: Bool {self._emailCode != nil}
+  /// Clears the value of `emailCode`. Subsequent reads from it will return its default value.
+  public mutating func clearEmailCode() {self._emailCode = nil}
+
+  /// TOTP or recovery code; required when two-factor authentication is on.
+  public var totpCode: String {
+    get {_totpCode ?? String()}
+    set {_totpCode = newValue}
+  }
+  /// Returns true if `totpCode` has been explicitly set.
+  public var hasTotpCode: Bool {self._totpCode != nil}
+  /// Clears the value of `totpCode`. Subsequent reads from it will return its default value.
+  public mutating func clearTotpCode() {self._totpCode = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _password: String? = nil
+  fileprivate var _emailCode: String? = nil
+  fileprivate var _totpCode: String? = nil
+}
+
+/// The deletion was accepted; the account is already unusable.
+public nonisolated struct Thehideout_V1_DeleteAccountResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Error detail (type `thehideout.v1.OwnedGuilds`) of DeleteAccount and
+/// AdminDeleteUser when the user still owns guilds.
+public nonisolated struct Thehideout_V1_OwnedGuilds: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The guilds the user owns.
+  public var guilds: [Thehideout_V1_OwnedGuild] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A guild listed in `OwnedGuilds`.
+public nonisolated struct Thehideout_V1_OwnedGuild: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Guild ID.
+  public var id: UInt64 = 0
+
+  /// Guild name.
+  public var name: String = String()
+
+  /// How many members it has (1 = only the owner).
+  public var memberCount: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Error detail (type `thehideout.v1.AccountSuspended`) of a refused sign-in
+/// (PERMISSION_DENIED, message "Your account is suspended").
+public nonisolated struct Thehideout_V1_AccountSuspended: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The admin's reason; may be empty.
+  public var reason: String = String()
+
+  /// When the suspension ends; unset = until an admin lifts it.
+  public var until: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_until ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_until = newValue}
+  }
+  /// Returns true if `until` has been explicitly set.
+  public var hasUntil: Bool {self._until != nil}
+  /// Clears the value of `until`. Subsequent reads from it will return its default value.
+  public mutating func clearUntil() {self._until = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _until: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+}
+
+/// Request for a data export.
+public nonisolated struct Thehideout_V1_ExportDataRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The export was queued.
+public nonisolated struct Thehideout_V1_ExportDataResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The address the link will be emailed to, masked.
+  public var maskedEmail: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to accept the terms.
+public nonisolated struct Thehideout_V1_AcceptTermsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The version being accepted.
+  public var version: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Accepted.
+public nonisolated struct Thehideout_V1_AcceptTermsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// Request for the caller's security overview.
@@ -1566,7 +1771,7 @@ nonisolated extension Thehideout_V1_GetMeRequest: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Thehideout_V1_GetMeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetMeResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}user\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}user\0\u{3}terms_update_required\0\u{3}terms_version\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1575,6 +1780,8 @@ nonisolated extension Thehideout_V1_GetMeResponse: SwiftProtobuf.Message, SwiftP
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularMessageField(value: &self._user) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._termsUpdateRequired) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.termsVersion) }()
       default: break
       }
     }
@@ -1588,11 +1795,327 @@ nonisolated extension Thehideout_V1_GetMeResponse: SwiftProtobuf.Message, SwiftP
     try { if let v = self._user {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
     } }()
+    try { if let v = self._termsUpdateRequired {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    if !self.termsVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.termsVersion, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Thehideout_V1_GetMeResponse, rhs: Thehideout_V1_GetMeResponse) -> Bool {
     if lhs._user != rhs._user {return false}
+    if lhs._termsUpdateRequired != rhs._termsUpdateRequired {return false}
+    if lhs.termsVersion != rhs.termsVersion {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_RequestAccountDeletionCodeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RequestAccountDeletionCodeRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_RequestAccountDeletionCodeRequest, rhs: Thehideout_V1_RequestAccountDeletionCodeRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_RequestAccountDeletionCodeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RequestAccountDeletionCodeResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_RequestAccountDeletionCodeResponse, rhs: Thehideout_V1_RequestAccountDeletionCodeResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_DeleteAccountRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteAccountRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}password\0\u{3}email_code\0\u{3}totp_code\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self._password) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._emailCode) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self._totpCode) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._password {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._emailCode {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._totpCode {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_DeleteAccountRequest, rhs: Thehideout_V1_DeleteAccountRequest) -> Bool {
+    if lhs._password != rhs._password {return false}
+    if lhs._emailCode != rhs._emailCode {return false}
+    if lhs._totpCode != rhs._totpCode {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_DeleteAccountResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteAccountResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_DeleteAccountResponse, rhs: Thehideout_V1_DeleteAccountResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_OwnedGuilds: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".OwnedGuilds"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}guilds\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.guilds) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.guilds.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.guilds, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_OwnedGuilds, rhs: Thehideout_V1_OwnedGuilds) -> Bool {
+    if lhs.guilds != rhs.guilds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_OwnedGuild: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".OwnedGuild"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{3}member_count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.memberCount) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.id != 0 {
+      try visitor.visitSingularUInt64Field(value: self.id, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if self.memberCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.memberCount, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_OwnedGuild, rhs: Thehideout_V1_OwnedGuild) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.memberCount != rhs.memberCount {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_AccountSuspended: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AccountSuspended"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}reason\0\u{1}until\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._until) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 1)
+    }
+    try { if let v = self._until {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_AccountSuspended, rhs: Thehideout_V1_AccountSuspended) -> Bool {
+    if lhs.reason != rhs.reason {return false}
+    if lhs._until != rhs._until {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_ExportDataRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportDataRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_ExportDataRequest, rhs: Thehideout_V1_ExportDataRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_ExportDataResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportDataResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}masked_email\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.maskedEmail) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.maskedEmail.isEmpty {
+      try visitor.visitSingularStringField(value: self.maskedEmail, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_ExportDataResponse, rhs: Thehideout_V1_ExportDataResponse) -> Bool {
+    if lhs.maskedEmail != rhs.maskedEmail {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_AcceptTermsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AcceptTermsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}version\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.version) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.version.isEmpty {
+      try visitor.visitSingularStringField(value: self.version, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_AcceptTermsRequest, rhs: Thehideout_V1_AcceptTermsRequest) -> Bool {
+    if lhs.version != rhs.version {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Thehideout_V1_AcceptTermsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AcceptTermsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Thehideout_V1_AcceptTermsResponse, rhs: Thehideout_V1_AcceptTermsResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

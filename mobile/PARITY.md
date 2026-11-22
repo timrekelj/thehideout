@@ -8,7 +8,7 @@ How to read it:
 - **Mobile adaptation**: what changes from desktop. "Same" means behaviour and copy match desktop; use the desktop string verbatim (`client/desktop/src/ui/*.rs`) unless noted.
 - **iOS / Android**: the native component to build it from. iOS targets iOS 26+ (Liquid Glass applies to system bars, toolbars, tab bar, sheets and menus automatically; do not fake it on content). Android targets Material 3 Expressive on Compose, edge-to-edge, predictive back.
 - Scene names in backticks are desktop's headless snapshot scenes (`client/desktop/render.sh`); render them for the reference picture.
-- Items marked **(server)** need server work that does not exist on `main` yet; **(branch)** exist on an unmerged branch (see "Pending server branches" at the end).
+- Items marked **(server)** need server work that does not exist on `main` yet; **(push)** is being added on the server branch `push-notifications` (see "Server work" at the end).
 
 General rules that apply to every row: the warm palette and type come from `mobile/tokens` (see README); every control has an accessibility label (VoiceOver / TalkBack), honours Dynamic Type / font scale on top of the app's own text-size setting, honours Reduce Motion, and has a 44pt / 48dp minimum touch target.
 
@@ -27,7 +27,7 @@ General rules that apply to every row: the warm palette and type come from `mobi
 | AUTH-07 | Forgot password: request code, enter code + new password, signs out every session (`Reset your password`) | Same two steps; strong-password autofill (`newPassword` content type) | `.textContentType(.newPassword)` | Credential Manager `CreatePasswordRequest` after success | ☐ |
 | AUTH-08 | Invite flow: "Have an invite? Join with a code", code `XXXX-XXXX`, lookup shows masked email, inviter, servers, expiry (`auth-invite-lookup`) | Same; also entered by a deep link `thehideout://invite/<token>` or the universal link `{PUBLIC_URL}/invite/<token>` (see MOB-05); code field auto-formats the dash and forgives I/L/O | Pasteboard-detect banner (`PasteButton`), `onOpenURL` | Intent filter + `ClipboardManager` chip | ☐ |
 | AUTH-09 | Accept invite: choose username and password (or none), creates the account and first session (`auth-invite-accept`) | Same; errors inline (taken username keeps the invite usable) | `Form` with validation footers | Same with supporting text | ☐ |
-| AUTH-10 | Terms and age: accept terms version and confirm minimum age 16 when accepting an invite; "terms update required" gate after sign-in **(branch `account-lifecycle`)** | A required checkbox row linking `{base}/terms` and `{base}/privacy` in an in-app browser; blocking full-screen "Accept updated terms" when `GetMe.terms_update_required` is set | `Toggle` + `SFSafariViewController` sheet; `.fullScreenCover` gate | `Checkbox` + Custom Tabs; full-screen destination gate | ☐ |
+| AUTH-10 | Terms and age: accept terms version and confirm minimum age 16 when accepting an invite; "terms update required" gate after sign-in | A required checkbox row linking `{base}/terms` and `{base}/privacy` in an in-app browser; blocking full-screen "Accept updated terms" when `GetMe.terms_update_required` is set | `Toggle` + `SFSafariViewController` sheet; `.fullScreenCover` gate | `Checkbox` + Custom Tabs; full-screen destination gate | ☐ |
 | AUTH-11 | Add a passkey after signing up prompt ("Welcome to thehideout … Protect it now?", Skip) | Same, shown once after account creation | `.sheet` with `presentationDetents([.medium])` | `ModalBottomSheet` | ☐ |
 | AUTH-12 | Add-email banner for legacy accounts without an email (`add-email-banner`) | Dismissible banner above the server list; opens the Change email flow (SEC-03) | `safeAreaInset(edge: .top)` banner | `Card` banner in the list header | ☐ |
 | AUTH-13 | Sign-out clears local data and returns to sign-in (user menu "Sign out") | Also deletes the Keychain/Keystore token and cached messages | `ConfirmationDialog` | `AlertDialog` | ☐ |
@@ -167,7 +167,7 @@ General rules that apply to every row: the warm palette and type come from `mobi
 | PROF-01 | Profile dialog of another user: avatar, username, role chips | Profile sheet from tapping an avatar, name or mention; "Message" button (opens DM) | `.sheet` with `presentationDetents([.medium])` | bottom sheet | ☐ |
 | PROF-02 | Own profile: change avatar (PNG/JPEG/WebP/GIF up to 8 MiB, server crops 256x256), shows "This is how you look to everyone" | You tab > Profile; photo picker with crop preview | `PhotosPicker` + crop (system) | `PickVisualMedia` + crop | ☐ |
 | PROF-03 | Avatars: deterministic fill by FNV-1a of user id (8 fills per accent), initials, rounded squares with the `Radius.avatar` rule, picture over initials | Generated helpers `AvatarStyle` in `mobile/tokens` | `AvatarView` | `Avatar` composable | ☐ |
-| PROF-04 | Deleted users shown as "Deleted user" **(branch)** | Same | | | ☐ |
+| PROF-04 | Deleted users shown as "Deleted user" | Same | | | ☐ |
 
 ## 11. Server dialogs: create, join, invite (`ui/dialogs.rs`, scenes `dialog-create-server`, `invite-by-email`, `invite-reset`)
 
@@ -222,10 +222,10 @@ Needs the matching permission for each page; non-permitted pages are hidden, par
 | SEC-06 | Passkeys: list with created/used, add (ceremony), rename, remove (`BeginPasskeyRegistration`, `RenamePasskey`, `DeletePasskey`) | Add via platform passkey creation (see AUTH-06); swipe to remove, tap to rename | `ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest`, `.swipeActions` | `CreatePublicKeyCredentialRequest`, swipe | ☐ |
 | SEC-07 | Devices (sessions): list with "This device", last seen, sign out one, sign out of all other devices | Same | `List` + `swipeActions` | `LazyColumn` + swipe | ☐ |
 | SEC-08 | Email notice / verification state (`email_verified`, "No email yet", Add email) | Same | | | ☐ |
-| ACCT-01 | Account deletion: re-authenticate (password, or emailed code if passwordless; plus 2FA), blocked while owning servers (shows owned servers) **(branch)** | **Required by App Store 5.1.1(v) and Play policy: must be in-app.** You > Security > Delete account; owned servers list with "Transfer" shortcuts | `NavigationLink` flow, destructive `Button` | same | ☐ |
-| ACCT-02 | Export my data (emails a link; rate-limited) **(branch)** | Row in You > Security with last-requested state | `Button` + toast | same | ☐ |
-| ACCT-03 | Terms re-acceptance gate (see AUTH-10), links to Terms and Privacy in settings **(branch)** | You > About | `Link` | `uriHandler` | ☐ |
-| ACCT-04 | Suspended account message ("Your account is suspended") **(branch)** | Full-screen state after sign-in attempt | `ContentUnavailableView` | EmptyState | ☐ |
+| ACCT-01 | Account deletion: re-authenticate (password, or emailed code if passwordless; plus 2FA), blocked while owning servers (shows owned servers) | **Required by App Store 5.1.1(v) and Play policy: must be in-app.** You > Security > Delete account; owned servers list with "Transfer" shortcuts | `NavigationLink` flow, destructive `Button` | same | ☐ |
+| ACCT-02 | Export my data (emails a link; rate-limited) | Row in You > Security with last-requested state | `Button` + toast | same | ☐ |
+| ACCT-03 | Terms re-acceptance gate (see AUTH-10), links to Terms and Privacy in settings | You > About | `Link` | `uriHandler` | ☐ |
+| ACCT-04 | Suspended account message ("Your account is suspended") | Full-screen state after sign-in attempt | `ContentUnavailableView` | EmptyState | ☐ |
 | ACCT-05 | Minimum client version gate: "Update required — This version of thehideout is too old to connect" with a download link (`ui/update_required.rs`) | Full-screen blocker with "Update" opening the App Store / Play listing | `ContentUnavailableView` + `Link` (App Store URL) | EmptyState + Play Store intent | ☐ |
 
 ## 15. Voice and video (`voice.rs`, `voice_engine.rs`, `ui/voice_bar.rs`, `ui/voice_stage.rs`, scenes `voice-*`)
@@ -271,7 +271,7 @@ Uses the official LiveKit SDKs; `JoinVoice` returns `{ url, token }`, room `voic
 | ADMIN-05 | Users: search, status, last active, Make admin / Remove admin with reason, cannot demote yourself or last admin (`admin-users`) | Row menu / swipe, reason alert | `.swipeActions` | `SwipeToDismissBox` | ☐ |
 | ADMIN-06 | Invites: list with status filter (Pending, Accepted, Expired, Revoked), search, create invite (email, servers to join, make admin), Resend, Withdraw, copy code/link (`admin-invites`) | Same with share sheet | `Form` sheet | form sheet | ☐ |
 | ADMIN-07 | Audit log: time, actor, action, target, kind filter, paging ("Loading more…") (`admin-audit`) | Infinite scrolling list, filter menu | `List` | `LazyColumn` paging | ☐ |
-| ADMIN-08 | Suspend, unsuspend, delete user **(branch)** | Row actions with reason | | | ☐ |
+| ADMIN-08 | Suspend, unsuspend, delete user | Row actions with reason | | | ☐ |
 
 ## 18. App shell, connection, system states
 
@@ -304,8 +304,8 @@ Uses the official LiveKit SDKs; `JoinVoice` returns `{ url, token }`, room `voic
 
 | ID | Item | Plan | iOS | Android | Status |
 |---|---|---|---|---|---|
-| MOB-01 | **Push notifications for messages and mentions** | **(server) The server has no push support.** Needs: device-token registration RPC (`RegisterPushToken`/`UnregisterPushToken` with platform), APNs (token auth, `.p8`) and FCM v1 senders, notification payload policy (no message content in the payload, `mutable-content` for a Notification Service Extension that fetches the message), per-guild/channel mute settings, badge count. Apps: permission prompt after first sign-in, in-app settings, notification channels (Android), grouping by channel, inline reply action, tap opens the channel | `UNUserNotificationCenter`, APNs, `UNNotificationServiceExtension`, `UNNotificationAction` reply | FCM `FirebaseMessagingService`, `NotificationChannel`s, `RemoteInput` reply | ☐ |
-| MOB-02 | Notification and mute settings per server and channel (mute, mentions only, all) | Local settings synced via the push registration payload **(server)** | `Form` | `Preferences` screen | ☐ |
+| MOB-01 | **Push notifications for messages and mentions** | **(push) Being added server-side on branch `push-notifications`:** a device-token registration RPC plus APNs and FCM senders; regenerate `mobile/api` once it merges and follow its payload contract. Expected scope: notification payload policy (no message content in the payload, `mutable-content` for a Notification Service Extension that fetches the message), per-guild/channel mute settings, badge count. Apps: permission prompt after first sign-in, in-app settings, notification channels (Android), grouping by channel, inline reply action, tap opens the channel | `UNUserNotificationCenter`, APNs, `UNNotificationServiceExtension`, `UNNotificationAction` reply | FCM `FirebaseMessagingService`, `NotificationChannel`s, `RemoteInput` reply | ☐ |
+| MOB-02 | Notification and mute settings per server and channel (mute, mentions only, all) | Local settings, synced through the push registration once `push-notifications` lands **(push)** | `Form` | `Preferences` screen | ☐ |
 | MOB-03 | Background voice | iOS: audio background mode + CallKit (`CXProvider`, `CXCallController`) so the call shows in the system UI and lock screen; Android: `ForegroundService` of type `microphone` (+ `mediaProjection` when sharing) with an ongoing notification and `ConnectionService`/Telecom self-managed optional; leave voice when the app is killed | CallKit, `UIBackgroundModes: audio, voip?` (use `audio` only: no PushKit without server VoIP push) | `FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS` | ☐ |
 | MOB-04 | Share sheet and photo picker integration | Share extension: share images/files/text from other apps into a channel or DM (pick destination); camera capture; photo picker without library permission | Share Extension target (App Group for the session), `PHPicker` | `ACTION_SEND` intent filter + `ShareTarget` direct share, Photo Picker | ☐ |
 | MOB-05 | Deep links and universal links for invites | `thehideout://invite/<token>` custom scheme (matches desktop `app.rs`) and `https://{PUBLIC_URL}/invite/<token>`; route to AUTH-08 when signed out or DLG-02 when signed in **(server: host `apple-app-site-association` and `assetlinks.json`)** | Associated Domains `applinks:`, `onOpenURL` | `intent-filter` with `autoVerify`, App Links | ☐ |
@@ -314,7 +314,7 @@ Uses the official LiveKit SDKs; `JoinVoice` returns `{ url, token }`, room `voic
 | MOB-08 | iPad / tablet / foldable layouts | `NavigationSplitView`: rail + sidebar + detail, members as `inspector`; Android `NavigableListDetailPaneScaffold` + rail; Stage Manager / multi-window; hardware keyboard shortcuts | `NavigationSplitView`, `inspector`, `.keyboardShortcut` | Material3 adaptive, `NavigationSuiteScaffold` | ☐ |
 | MOB-09 | Secure token storage | Keychain (`kSecAttrAccessibleAfterFirstUnlock`, no iCloud sync) / Android Keystore-backed `EncryptedFile` or DataStore with Tink | Keychain Services | `androidx.security` / Tink | ☐ |
 | MOB-10 | Offline tolerance | Cache last N messages per channel and the guild/channel lists; show cached while loading; queue sends? (no: show Failed with Retry like desktop) | SwiftData or file cache (README) | Room (README) | ☐ |
-| MOB-11 | App icon, launch assets, display name | Icons come from `branding/out` (branch `app-icon`); see README | Asset catalog `AppIcon` | `mipmap` / adaptive icon | ☐ |
+| MOB-11 | App icon, launch assets, display name | Icons come from `branding/out` (on `main`); see README | Asset catalog `AppIcon` | `mipmap` / adaptive icon | ☐ |
 | MOB-12 | Accessibility: Dynamic Type, VoiceOver rotor / TalkBack actions on message rows (reply, react, copy), Switch Control | Custom accessibility actions on rows | `.accessibilityAction` | `semantics { customActions }` | ☐ |
 | MOB-13 | Localisation scaffolding | English only for v1; use String Catalog / `strings.xml` from day one | `Localizable.xcstrings` | `strings.xml` | ☐ |
 | MOB-14 | Handoff of keyboard between composer and emoji picker, interactive dismiss, inset handling | Use system keyboard layout guides | `.scrollDismissesKeyboard` | `imePadding()` | ☐ |
@@ -323,14 +323,14 @@ Uses the official LiveKit SDKs; `JoinVoice` returns `{ url, token }`, room `voic
 
 ---
 
-## Pending server branches (not on `main` at the time of writing)
+## Server changes already merged
 
-- `account-lifecycle`: account deletion (`RequestAccountDeletionCode`, `DeleteAccount`), data export (`ExportData`), terms acceptance (`AcceptTerms`, `terms_version`, `age_confirmed` on `AcceptInvite`), admin suspend/unsuspend/delete user, minimum client version gate, `User.deleted`. The generated API clients in `mobile/api` do not contain these yet: after the branch merges, rerun `mobile/api/generate.sh` and commit (CI's `--check` will fail until you do). Items tagged **(branch)** depend on it.
-- `app-icon`: brand artwork and generated platform icons in `branding/out` (MOB-11).
+- `account-lifecycle` (#10): account deletion, data export, terms acceptance, admin suspend/unsuspend/delete, minimum client version gate, `User.deleted`. The generated clients in `mobile/api` include them (`AuthService`/`AdminService` RPCs, `OwnedGuilds` and `AccountSuspended` error details).
+- `app-icon` (#9): brand art and generated platform icons in `branding/out` (MOB-11).
 
-## Server work the apps need (not in this repository yet)
+## Server work the apps need
 
-1. Push notification registration and delivery (APNs + FCM): MOB-01, MOB-02, RAIL-04 badge.
+1. Push notifications: in progress on branch `push-notifications` (device-token registration RPC; APNs + FCM): MOB-01, MOB-02, RAIL-04 badge.
 2. `apple-app-site-association` (webcredentials, applinks) and `assetlinks.json` hosting: AUTH-06 native passkeys, MOB-05 invite links.
 3. Server-side read state (optional): cross-device unread sync, SYS-04.
 4. VoIP/incoming-call pushes are **not** planned (voice channels are join-based, not ring-based).

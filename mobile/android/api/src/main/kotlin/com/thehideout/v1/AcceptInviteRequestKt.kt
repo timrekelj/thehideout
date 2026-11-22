@@ -143,6 +143,58 @@ public object AcceptInviteRequestKt {
     public fun clearDeviceName() {
       _builder.clearDeviceName()
     }
+
+    /**
+     * ```
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * ```
+     *
+     * `string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];`
+     */
+    public var acceptedTermsVersion: kotlin.String
+      @kotlin.jvm.JvmName("getAcceptedTermsVersion")
+        get() = _builder.acceptedTermsVersion
+      @kotlin.jvm.JvmName("setAcceptedTermsVersion")
+        set(value) {
+        _builder.acceptedTermsVersion = value
+      }
+    /**
+     * ```
+     * Must equal the current terms version (`LookupInviteResponse.terms_version`);
+     * else INVALID_ARGUMENT.
+     * ```
+     *
+     * `string accepted_terms_version = 5 [json_name = "acceptedTermsVersion"];`
+     */
+    public fun clearAcceptedTermsVersion() {
+      _builder.clearAcceptedTermsVersion()
+    }
+
+    /**
+     * ```
+     * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+     * ```
+     *
+     * `bool age_confirmed = 6 [json_name = "ageConfirmed"];`
+     */
+    public var ageConfirmed: kotlin.Boolean
+      @kotlin.jvm.JvmName("getAgeConfirmed")
+        get() = _builder.ageConfirmed
+      @kotlin.jvm.JvmName("setAgeConfirmed")
+        set(value) {
+        _builder.ageConfirmed = value
+      }
+    /**
+     * ```
+     * The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+     * ```
+     *
+     * `bool age_confirmed = 6 [json_name = "ageConfirmed"];`
+     */
+    public fun clearAgeConfirmed() {
+      _builder.clearAgeConfirmed()
+    }
   }
 }
 public inline fun com.thehideout.v1.AcceptInviteRequest.copy(block: `com.thehideout.v1`.AcceptInviteRequestKt.Dsl.() -> kotlin.Unit): com.thehideout.v1.AcceptInviteRequest =
