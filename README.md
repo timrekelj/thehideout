@@ -209,3 +209,9 @@ and `_SECRET_KEY`. For AWS S3 set `THEHIDEOUT_S3_PATH_STYLE=false` (and the buck
 real region); R2 and most others accept either style with `us-east-1`/`auto`
 regions as documented by the provider. The bucket stays private: the server
 streams objects through `/media`, so no public bucket policy is needed.
+
+## Production deployment
+
+`deploy/` has a Docker Compose stack (server, ScyllaDB, LiveKit with TURN, Caddy with automatic
+TLS), backup and restore scripts and a step-by-step guide: see [deploy/README.md](deploy/README.md).
+The server image is built from the root `Dockerfile`; CI is in `.github/workflows/ci.yml`.
