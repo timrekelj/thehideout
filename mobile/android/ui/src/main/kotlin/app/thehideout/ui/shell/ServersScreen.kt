@@ -22,8 +22,11 @@ import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.toMutableStateList
@@ -38,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.model.Perm
 import app.thehideout.core.store.AppState
 import app.thehideout.core.store.Place
 import app.thehideout.core.store.Unread
@@ -59,6 +63,10 @@ fun ServersScreen(state: AppState, actions: ShellActions, modifier: Modifier = M
     val scope = rememberCoroutineScope()
     val guild = state.currentGuild
     val channel = guild?.let { g -> state.currentChannel?.let { state.channel(g.id, it) } }
+    // A channel already open when this pane (re)mounts - on launch, or because a Mentions tap or a
+    // profile's "Message" switched here - brings the detail pane forward on a phone, same as a tap
+    // on a channel row does; nothing to open shows the list.
+    LaunchedEffect(channel?.id) { if (channel != null) navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, channel.id) }
     NavigableListDetailPaneScaffold(
         navigator = navigator,
         modifier = modifier,
@@ -73,10 +81,23 @@ fun ServersScreen(state: AppState, actions: ShellActions, modifier: Modifier = M
         detailPane = {
             AnimatedPane {
                 if (guild != null && channel != null) {
+                    var showMembers by remember { mutableStateOf(false) }
+                    val members = state.members[guild.id].orEmpty().mapNotNull { state.users[it] }
                     TranscriptPane(
                         state, channel.id, "# ${channel.name}", channel.topic.ifBlank { guild.name }, actions,
                         onBack = if (navigator.canNavigateBack()) ({ scope.launch { navigator.navigateBack() } }) else null,
+                        members = members,
+                        serverEmojis = state.emojis[guild.id].orEmpty(),
+                        canManageMessages = Perm.has(state.perms(guild.id), Perm.MANAGE_MESSAGES),
+                        onOpenMembers = { showMembers = true },
                     )
+                    if (showMembers) {
+                        MembersSheet(state, guild.id, onDismiss = { showMembers = false }, onMessage = { userId ->
+                            showMembers = false
+                            actions.startDm(userId)
+                            actions.navigateToDms()
+                        })
+                    }
                 } else {
                     Box(Modifier.fillMaxSize().background(Hideout.colors.bg)) { EmptyState(Sym.Tag, "Pick a channel", "Its messages show up here.", Modifier.align(Alignment.Center)) }
                 }

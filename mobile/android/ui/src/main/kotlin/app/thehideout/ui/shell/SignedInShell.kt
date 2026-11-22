@@ -11,11 +11,11 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.thehideout.core.store.AppState
-import app.thehideout.ui.components.EmptyState
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.theme.Hideout
@@ -45,8 +45,12 @@ fun SignedInShell(
 ) {
     val c = Hideout.colors
     var current by rememberSaveable { mutableStateOf(initial) }
+    val navActions = remember(actions) {
+        actions.copy(navigateToDms = { current = Destination.Messages }, navigateToServers = { current = Destination.Servers })
+    }
     val dmUnread = state.homeUnread
     val serverUnread = state.guilds.sumOf { state.guildUnread(it.id).count }
+    val mentionCount = state.guilds.sumOf { state.guildUnread(it.id).mentions } + state.homeUnread.mentions
     NavigationSuiteScaffold(
         modifier = modifier,
         containerColor = c.bg,
@@ -66,7 +70,8 @@ fun SignedInShell(
                         val count = when (d) {
                             Destination.Servers -> serverUnread
                             Destination.Messages -> dmUnread.count
-                            else -> 0
+                            Destination.Mentions -> mentionCount
+                            Destination.You -> 0
                         }
                         if (count > 0) BadgedBox(badge = { Badge(containerColor = c.accent, contentColor = c.accentFg) { Text(if (count > 99) "99+" else count.toString()) } }) { SymIcon(d.sym, null) } else SymIcon(d.sym, null)
                     },
@@ -77,11 +82,9 @@ fun SignedInShell(
     ) {
         Box(Modifier.fillMaxSize().background(c.bg)) {
             when (current) {
-                Destination.Servers -> ServersScreen(state, actions)
-                Destination.Messages -> DmsScreen(state, actions)
-                Destination.Mentions -> Box(Modifier.fillMaxSize()) {
-                    EmptyState(Sym.AlternateEmail, "No mentions yet", "Messages that mention you collect here.", Modifier.align(androidx.compose.ui.Alignment.Center))
-                }
+                Destination.Servers -> ServersScreen(state, navActions)
+                Destination.Messages -> DmsScreen(state, navActions)
+                Destination.Mentions -> MentionsScreen(state, navActions)
                 Destination.You -> YouScreen(state.me, look, onLookChange, actions.signOut, versionName)
             }
         }

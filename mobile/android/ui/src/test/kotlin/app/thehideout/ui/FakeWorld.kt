@@ -28,6 +28,9 @@ fun fakeWorldState(): AppState = runBlocking {
         s = s.copy(logs = s.logs + (dm to app.thehideout.core.store.ChannelLog()))
         s = s.reduce(Action.MessagesLoaded(dm, null, Result.success(fake.listMessages(dm, null))))
     }
+    // #dev's history too, loaded before its mention arrives below, so the Mentions feed has it.
+    s = s.copy(logs = s.logs + (FakeBackend.DEV to app.thehideout.core.store.ChannelLog()))
+    s = s.reduce(Action.MessagesLoaded(FakeBackend.DEV, null, Result.success(fake.listMessages(FakeBackend.DEV, null))))
     fun event(e: GatewayEvent) { s = s.reduce(Action.Gateway(GatewayUpdate.Event(e))) }
     s = s.reduce(Action.Gateway(GatewayUpdate.Connected))
     event(GatewayEvent.VoiceSnapshot(listOf(FakeBackend.HIDEOUT), fake.voiceSnapshotStates()))

@@ -139,11 +139,15 @@ class AppStore(
 
     fun openHome() = dispatch(Action.OpenHome)
     fun openGuild(id: Long) = dispatch(Action.OpenGuild(id))
+    fun startDm(userId: Long) = dispatch(Action.StartDm(userId))
     fun openChannel(id: Long) = dispatch(Action.OpenChannel(id))
     fun loadOlder(channel: Long) = dispatch(Action.LoadOlder(channel))
     fun send(text: String) = dispatch(Action.Send(text, clock()))
     fun retry(nonce: String) = dispatch(Action.Retry(nonce))
     fun react(channel: Long, message: Long, emoji: ReactionEmoji) = dispatch(Action.React(channel, message, emoji))
+    fun editMessage(channel: Long, message: Long, content: String) = dispatch(Action.EditMessage(channel, message, content))
+    fun deleteMessage(channel: Long, message: Long) = dispatch(Action.DeleteMessage(channel, message))
+    fun setDraft(channel: Long, text: String) = dispatch(Action.SetDraft(channel, text))
     fun dismissNotice(id: Long) = dispatch(Action.DismissNotice(id))
 
     // ---- effects ------------------------------------------------------------------------------
@@ -168,6 +172,18 @@ class AppStore(
                 )
                 is Effect.AddReaction -> guard(runCatching { api.addReaction(effect.channel, effect.message, effect.emoji) })
                 is Effect.RemoveReaction -> guard(runCatching { api.removeReaction(effect.channel, effect.message, effect.emoji) })
+                is Effect.EditMessage -> {
+                    val r = guard(runCatching { api.editMessage(effect.channel, effect.message, effect.content) })
+                    val outcome = r.fold(
+                        { EditOutcome.Edited(it) },
+                        { e -> EditOutcome.Failed(effect.channel, effect.message, effect.previous, e as? AppError ?: AppError.Other(e.message.orEmpty())) },
+                    )
+                    dispatch(Action.MessageEdited(outcome))
+                }
+                is Effect.DeleteMessage -> dispatch(
+                    Action.MessageDeleteResult(effect.channel, effect.message, guard(runCatching { api.deleteMessage(effect.channel, effect.message) })),
+                )
+                is Effect.OpenDm -> dispatch(Action.DmOpened(guard(runCatching { api.openDm(effect.userId) })))
             }
         }
     }

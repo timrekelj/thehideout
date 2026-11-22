@@ -134,6 +134,104 @@ class ReducerTest {
         assertTrue(off.state.log(GENERAL)!!.messages.single().reactions.isEmpty())
     }
 
+    // ---- edit, delete, drafts, mentions ----
+
+    @Test fun `editing a message updates it locally and asks the server`() {
+        val s = s0.withLog(GENERAL, listOf(1), author = TIM)
+        val r = Reducer.reduce(s, Action.EditMessage(GENERAL, 1, "  new text  "))
+        assertEquals(listOf(Effect.EditMessage(GENERAL, 1, "new text", previous = "m1")), r.effects)
+        assertEquals("new text", r.state.log(GENERAL)!!.messages.single().content)
+    }
+
+    @Test fun `an empty or too-long edit is dropped`() {
+        val s = s0.withLog(GENERAL, listOf(1), author = TIM)
+        assertEquals(Reduction(s), Reducer.reduce(s, Action.EditMessage(GENERAL, 1, "   ")))
+        val tooLong = "x".repeat(MAX_MESSAGE_CHARS + 1)
+        assertEquals(Reduction(s), Reducer.reduce(s, Action.EditMessage(GENERAL, 1, tooLong)))
+    }
+
+    @Test fun `a failed edit rolls back to what was there and raises a notice`() {
+        val s = s0.withLog(GENERAL, listOf(1), author = TIM).reduce(Action.EditMessage(GENERAL, 1, "edited"))
+        assertEquals("edited", s.log(GENERAL)!!.messages.single().content, "optimistic while the server is asked")
+        val failed = s.reduce(Action.MessageEdited(EditOutcome.Failed(GENERAL, 1, "m1", AppError.PermissionDenied)))
+        assertEquals("m1", failed.log(GENERAL)!!.messages.single().content, "rolled back to what was there before the edit")
+        assertEquals(1, failed.notices.size)
+    }
+
+    @Test fun `deleting asks the server, message_deleted then removes it from the transcript`() {
+        val s = s0.withLog(GENERAL, listOf(1, 2), author = TIM)
+        val r = Reducer.reduce(s, Action.DeleteMessage(GENERAL, 1))
+        assertEquals(listOf(Effect.DeleteMessage(GENERAL, 1)), r.effects)
+        assertEquals(listOf(1L, 2L), r.state.log(GENERAL)!!.messages.map { it.id }, "removal waits for the event")
+        val gone = r.state.event(GatewayEvent.MessageDeleted(GENERAL, 1))
+        assertEquals(listOf(2L), gone.log(GENERAL)!!.messages.map { it.id })
+    }
+
+    @Test fun `a draft is kept per channel and an empty one clears it`() {
+        val s = s0.reduce(Action.SetDraft(GENERAL, "hello")).reduce(Action.SetDraft(DEV, "world"))
+        assertEquals("hello", s.draft(GENERAL))
+        assertEquals("world", s.draft(DEV))
+        val cleared = s.reduce(Action.SetDraft(GENERAL, ""))
+        assertEquals("", cleared.draft(GENERAL))
+        assertFalse(cleared.drafts.containsKey(GENERAL))
+    }
+
+    @Test fun `the mention feed lists loaded messages that mention me, newest first`() {
+        val log = ChannelLog(
+            messages = listOf(
+                msg(1, DEV, ANA, "hi @tim"),
+                msg(2, DEV, BRUNO, "no mention here"),
+                msg(3, DEV, ANA, "@tim again, later"),
+            ),
+            loaded = true,
+        )
+        val s = s0.copy(logs = s0.logs + (DEV to log))
+        val feed = s.mentionFeed()
+        assertEquals(listOf(3L, 1L), feed.map { it.message.id })
+        assertTrue(feed.all { it.channelId == DEV })
+    }
+
+    @Test fun `starting a dm with someone already open switches to it and fetches its history`() {
+        val r = Reducer.reduce(s0, Action.StartDm(ANA))
+        assertEquals(listOf(Effect.LoadMessages(DM_ANA, null)), r.effects, "DM_ANA exists but its log is not loaded yet: arrive() must still fetch it")
+        assertEquals(Place.Home, r.state.place)
+        assertEquals(DM_ANA, r.state.homeDm)
+    }
+
+    @Test fun `starting a dm whose history is already loaded switches with no further effect`() {
+        val s = s0.withLog(DM_ANA, listOf(40, 41))
+        val r = Reducer.reduce(s, Action.StartDm(ANA))
+        assertEquals(emptyList<Effect>(), r.effects)
+        assertEquals(DM_ANA, r.state.homeDm)
+    }
+
+    @Test fun `starting a dm never matches myself or a dm that is not 1 to 1`() {
+        assertEquals(listOf(Effect.OpenDm(TIM)), Reducer.reduce(s0, Action.StartDm(TIM)).effects, "never matches myself, even if listed somehow")
+        // CVETKA has no 1:1 DM in the fake seed, so a 3-participant channel that happens to list her must not count as one.
+        val group = DmChannel(90, listOf(s0.me!!, s0.users.getValue(ANA), User(CVETKA, "cvetka", T0)), T0)
+        val withGroup = s0.copy(dms = s0.dms + group)
+        assertEquals(listOf(Effect.OpenDm(CVETKA)), Reducer.reduce(withGroup, Action.StartDm(CVETKA)).effects, "a 3-participant channel is not a 1:1 match")
+    }
+
+    @Test fun `starting a dm with someone new asks the server, then opens it and fetches its history`() {
+        val r = Reducer.reduce(s0, Action.StartDm(999))
+        assertEquals(listOf(Effect.OpenDm(999)), r.effects)
+        val dm = DmChannel(70, listOf(s0.me!!, User(999, "newperson", T0)), T0)
+        val opened = Reducer.reduce(r.state, Action.DmOpened(Result.success(dm)))
+        assertEquals(listOf(Effect.LoadMessages(70, null)), opened.effects, "a freshly opened DM has no history yet: must be fetched")
+        val finalState = opened.state
+        assertEquals(Place.Home, finalState.place)
+        assertEquals(70L, finalState.homeDm)
+        assertTrue(finalState.dms.any { it.id == 70L })
+    }
+
+    @Test fun `the mention feed never includes my own messages`() {
+        val s = s0.withLog(DEV, listOf(1)).copy(
+            logs = s0.logs + (DEV to ChannelLog(messages = listOf(msg(1, DEV, TIM, "@tim talking to myself")), loaded = true)),
+        )
+        assertTrue(s.mentionFeed().isEmpty())
+    }
+
     @Test fun `channel_created adds once, channel_updated replaces`() {
         val c = Channel(77, HIDEOUT, "new", T0)
         val added = s0.event(GatewayEvent.ChannelCreated(c)).event(GatewayEvent.ChannelCreated(c))

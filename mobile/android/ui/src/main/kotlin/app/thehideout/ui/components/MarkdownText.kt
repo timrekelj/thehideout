@@ -118,6 +118,11 @@ private fun rememberInline(inlines: List<Inline>, me: String?, revealed: Mutable
                             ),
                         ) { append("@${n.name}") }
                     }
+                    is Inline.CustomEmoji -> {
+                        // Rendered as its name until the guild emoji's image is decoded (Coil, MSG-09);
+                        // desktop shows the same `:name:` text for a token it cannot resolve.
+                        withStyle(SpanStyle(color = c.textMuted)) { append(":${n.name}:") }
+                    }
                     is Inline.Spoiler -> {
                         val id = spoilers++
                         val shown = id in hidden

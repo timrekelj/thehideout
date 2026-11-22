@@ -12,6 +12,8 @@ sealed interface Inline {
     data class Link(val children: List<Inline>, val url: String) : Inline
     /** `@name`, `name` without the at sign. */
     data class Mention(val name: String) : Inline
+    /** `<:name:id>` or, when [animated], `<a:name:id>` (MD-06). */
+    data class CustomEmoji(val name: String, val id: Long, val animated: Boolean) : Inline
 }
 
 sealed interface Block {
@@ -80,6 +82,7 @@ object Markdown {
     private val ORDERED = Regex("^\\d+\\. (.+)$")
     private val URL = Regex("^https?://[^\\s<>()]+[^\\s<>().,;:!?'\"]")
     private val MENTION = Regex("^@([\\p{L}\\p{N}_]+)")
+    private val CUSTOM_EMOJI = Regex("^<(a)?:([\\p{L}\\p{N}_]+):(\\d+)>")
 
     /** Parses inline markup; unmatched delimiters stay literal. */
     fun inline(s: String): List<Inline> {
@@ -130,6 +133,10 @@ object Markdown {
                 c == '@' && (i == 0 || !s[i - 1].isLetterOrDigit()) && MENTION.containsMatchIn(rest) -> {
                     val name = MENTION.find(rest)!!.groupValues[1]
                     flush(); out += Inline.Mention(name); i += 1 + name.length
+                }
+                c == '<' && CUSTOM_EMOJI.matchAt(rest, 0) != null -> {
+                    val m = CUSTOM_EMOJI.matchAt(rest, 0)!!
+                    flush(); out += Inline.CustomEmoji(m.groupValues[2], m.groupValues[3].toLong(), m.groupValues[1] == "a"); i += m.value.length
                 }
                 else -> { text.append(c); i++ }
             }

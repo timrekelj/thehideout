@@ -130,6 +130,8 @@ data class AppState(
     val connection: ConnectionStatus = ConnectionStatus.Connecting,
     val stream: StreamState = StreamState.Live,
     val notices: List<Notice> = emptyList(),
+    /** The composer's unsent text per channel, kept while switching channels. */
+    val drafts: Map<Long, String> = emptyMap(),
     val noticeSeq: Long = 0,
     val nonceSeq: Long = 0,
     /** Guilds we are leaving or deleting ourselves, so their `guild_removed` is not announced as news. */
@@ -197,7 +199,20 @@ data class AppState(
 
     /** Everyone the user could start a DM with: known users but themselves, by name. */
     fun knownUsers(): List<User> = users.values.filter { it.id != myId }.sortedBy { it.username.lowercase() }
+
+    fun draft(channel: Long): String = drafts[channel].orEmpty()
+
+    /** Loaded messages that mention the signed-in user, newest first, across every channel whose history is in memory. */
+    fun mentionFeed(): List<MentionEntry> {
+        val name = me?.username ?: return emptyList()
+        return logs.entries.flatMap { (channel, log) ->
+            log.messages.filter { it.authorId != myId && mentions(it.content, name) }.map { MentionEntry(channel, it) }
+        }.sortedByDescending { it.message.createdAt }
+    }
 }
+
+/** One hit in [AppState.mentionFeed]. */
+data class MentionEntry(val channelId: Long, val message: Message)
 
 /** Whether [content] has an `@username` mention (case-insensitive, whole word). */
 fun mentions(content: String, username: String): Boolean {
