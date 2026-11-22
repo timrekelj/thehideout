@@ -143,6 +143,44 @@ audit-log actions are in `proto/README.md`. Operationally:
   within 60 seconds is deduplicated (`message_nonces`, written with a TTL).
 - Migration `0013_moderation.cql` adds `guild_bans` and `message_nonces`.
 
+## Account lifecycle, legal pages and client versions
+
+- **Deleting an account** (`AuthService.DeleteAccount`) anonymizes it: messages stay and
+  show as "Deleted user"; the username, email, avatar, password, authenticator, passkeys,
+  recovery codes, sessions, DM membership, uploads and attachments, reactions and pending
+  invites are removed, and the username is free again. The owner must transfer or delete
+  their servers first (`FAILED_PRECONDITION` naming them). The account is unusable at once;
+  the cleanup is a list of idempotent steps (`lifecycle.rs`) run in the background. A crash
+  leaves the account in `deleting` state in `account_deletions` and the sweep at startup
+  (and every 10 minutes) finishes it. Messages are found by scanning the channels of the
+  user's guilds, of guilds they left since migration 0014, and of their DMs; messages in a
+  guild left before that migration are not found.
+- **Data export** (`ExportData`): a JSON file generated in the background into object
+  storage under `exports/`, emailed as `{PUBLIC_URL}/export/{token}` (unguessable token,
+  7 days; the sweeper deletes the file). One per user per 24 hours; needs an email address.
+- **Admin**: `SuspendUser` / `UnsuspendUser` (revokes sessions; sign-in fails with
+  PERMISSION_DENIED "Your account is suspended" and an `AccountSuspended` detail) and
+  `AdminDeleteUser` (same deletion; refused for site admins; `force_transfer` hands each
+  owned server to its highest-role member, ties the longest member, and deletes servers
+  where the user is alone). All are audit-logged (`user.suspend`, `user.unsuspend`,
+  `account.delete`).
+- **Sessions** slide: using a session older than a day rewrites its rows with a fresh
+  30-day TTL (at most once a day per session), so active users are not signed out.
+- **Legal pages**: `GET /privacy` and `GET /terms` (version `policy::LEGAL_VERSION`,
+  minimum age 16), linked from the invite page and every email footer. `THEHIDEOUT_CONTACT_EMAIL`
+  is required on non-development hosts (the server refuses to start without it);
+  `THEHIDEOUT_OPERATOR_NAME` is optional. `AcceptInvite` requires
+  `accepted_terms_version` = the current version and `age_confirmed`; `GetMe` reports
+  `terms_update_required` for users who have not accepted the current one (`AcceptTerms`).
+  The notices state 30-day log and backup retention: keep your operations in line with that.
+- **Minimum client version**: `THEHIDEOUT_MIN_CLIENT_VERSION` (and `_DESKTOP`, `_IOS`,
+  `_ANDROID`) refuses clients whose `x-thehideout-client: <platform>/<version> ...` header is
+  older with `FAILED_PRECONDITION` "client too old". Requests without the header, and
+  `/health`, `/ready`, `/privacy`, `/terms`, `/invite` and `/media`, pass.
+- Migration `0014_account_lifecycle.cql` adds the deletion, suspension and terms columns,
+  `account_deletions`, `user_left_guilds`, `export_requests`, `data_exports` and
+  `data_exports_index`, and `sessions.refreshed_at`.
+
 ## Voice (LiveKit)
 
 Voice channels (`Channel.kind = CHANNEL_KIND_VOICE`, chosen at creation, never
