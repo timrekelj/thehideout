@@ -16,7 +16,7 @@ use scylla::statement::batch::{Batch, BatchType};
 use crate::AppState;
 use crate::auth::internal;
 use crate::convert::{datetime_to_proto, id_from_db, id_to_db};
-use crate::proto::thehideout::v1::{Channel, ChannelIcon, GuildLayout, LayoutEntry, Section, channel_icon};
+use crate::proto::thehideout::v1::{Channel, ChannelIcon, ChannelKind, GuildLayout, LayoutEntry, Section, channel_icon};
 use crate::versions;
 
 /// Sections one guild may have. Enforced by a count before insert, so racing
@@ -91,6 +91,21 @@ pub struct ChannelRow {
     pub icon: Option<IconRef>,
     pub color: String,
     pub topic: String,
+    /// Text or voice; rows from before migration 0012 are text.
+    pub kind: ChannelKind,
+}
+
+/// The `kind` column value of a channel kind ("text" for everything but voice).
+pub fn kind_column(kind: ChannelKind) -> &'static str {
+    if kind == ChannelKind::CHANNEL_KIND_VOICE { "voice" } else { "text" }
+}
+
+/// Reads the `kind` column; null (old rows) and unknown values are text.
+pub fn kind_from_column(kind: Option<&str>) -> ChannelKind {
+    match kind {
+        Some("voice") => ChannelKind::CHANNEL_KIND_VOICE,
+        _ => ChannelKind::CHANNEL_KIND_TEXT,
+    }
 }
 
 pub struct SectionRow {
@@ -117,6 +132,7 @@ type RawChannel = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
 pub async fn load(state: &AppState, guild_id: u64) -> Result<GuildLayoutData, ConnectError> {
@@ -124,7 +140,7 @@ pub async fn load(state: &AppState, guild_id: u64) -> Result<GuildLayoutData, Co
     let mut channels = state
         .session
         .execute_unpaged(
-            "SELECT id, name, created_at, section_id, position, icon, color, topic, icon_kind, icon_value \
+            "SELECT id, name, created_at, section_id, position, icon, color, topic, icon_kind, icon_value, kind \
              FROM channels WHERE guild_id = ? ORDER BY id ASC",
             (db_guild,),
         )
@@ -135,7 +151,7 @@ pub async fn load(state: &AppState, guild_id: u64) -> Result<GuildLayoutData, Co
         .rows::<RawChannel>()
         .map_err(internal)?
         .map(|r| {
-            r.map(|(id, name, created_at, section, position, icon, color, topic, icon_kind, icon_value)| ChannelRow {
+            r.map(|(id, name, created_at, section, position, icon, color, topic, icon_kind, icon_value, kind)| ChannelRow {
                 id: id_from_db(id),
                 name: name.unwrap_or_default(),
                 created_at,
@@ -144,6 +160,7 @@ pub async fn load(state: &AppState, guild_id: u64) -> Result<GuildLayoutData, Co
                 icon: IconRef::from_columns(icon_kind.as_deref(), icon_value.as_deref(), &icon.unwrap_or_default()),
                 color: color.unwrap_or_default(),
                 topic: topic.unwrap_or_default(),
+                kind: kind_from_column(kind.as_deref()),
             })
         })
         .collect::<Result<Vec<_>, _>>()
@@ -245,6 +262,7 @@ pub fn channel_to_proto(guild_id: u64, c: &ChannelRow, section_id: Option<u64>, 
         icon_ref: c.icon.as_ref().map(IconRef::to_proto).into(),
         color: c.color.clone(),
         topic: c.topic.clone(),
+        kind: c.kind.into(),
         ..Default::default()
     }
 }
@@ -307,6 +325,7 @@ mod tests {
             icon: None,
             color: String::new(),
             topic: String::new(),
+            kind: ChannelKind::CHANNEL_KIND_TEXT,
         }
     }
 

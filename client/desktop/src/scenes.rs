@@ -10,7 +10,7 @@ use crate::backend::Command;
 use crate::emoji::PickerTarget;
 use crate::fake::{
     ANA, ARCHIVE, BRUNO, CVETKA, DESIGN, DEV, DM_ANA, FakeBackend, GENERAL, HIDEOUT_DESIGNERS,
-    HIDEOUT_MODS, MEMES, MUSIC, PLANS, RANDOM, SMUG_CAT,
+    HIDEOUT_MODS, LOUNGE, MEMES, MUSIC, PLANS, RANDOM, SMUG_CAT,
 };
 use crate::format::Tz;
 use crate::server_settings::ServerPage;
@@ -231,6 +231,31 @@ fn settings_appearance(a: &mut App, dark: bool) {
     main_look(a, dark, AccentPreset::Ocean, BackgroundPreset::Cool, true);
     a.act(|s| s.open_settings());
     a.pump();
+}
+
+/// The Voice & audio page of the settings: the fake world's devices, the mic test running at a fixed
+/// level. `ptt` is push-to-talk mode with a key bound and a saved output device that is gone (so the
+/// page shows "(unavailable)"); otherwise voice activity with the gate's marker on the meter.
+fn settings_voice(a: &mut App, dark: bool, ptt: bool) {
+    let (mut app, _fake) = booted(dark);
+    {
+        let p = &mut app.state.voice.prefs;
+        p.input = Some("mic-headset".into());
+        p.input_name = Some("USB Headset".into());
+        if ptt {
+            p.mode = crate::voice::InputMode::PushToTalk;
+            p.ptt_key = Some("f13".into());
+            p.output = Some("out-airpods".into());
+            p.output_name = Some("AirPods Pro".into());
+            p.noise_suppression = false;
+        }
+    }
+    app.act(|s| s.open_voice_settings());
+    app.state.voice_event(crate::fake::fake_devices_event());
+    app.state.voice.mic_test = true;
+    app.state.voice.mic_level = crate::fake::FAKE_MIC_LEVEL;
+    app.pump();
+    *a = app;
 }
 
 /// The busy main screen with the member panel, at a density and text size.
@@ -724,6 +749,158 @@ fn video_embed(a: &mut App, dark: bool) {
     *a = app;
 }
 
+// ---- voice -----------------------------------------------------------------------------------
+
+/// The Hideout with every member's picture, #general open; Ana and Bruno are in the lounge
+/// (Bruno muted himself) and nobody else.
+fn voice_screen(dark: bool) -> App {
+    voice_screen_as(dark, "tim").0
+}
+
+/// The same signed in as `who` (the UI tests use it for a plain member and a moderator).
+pub(crate) fn voice_screen_as(dark: bool, who: &str) -> (App, FakeBackend) {
+    let (mut app, fake) = booted_as(dark, who);
+    fake.give_avatars();
+    app.pump();
+    app.state.data.media.settle();
+    // The other sections are folded, so the Voice section is in view.
+    let others: Vec<u64> = app
+        .state
+        .layout(1)
+        .map(|l| l.sections.iter().map(|x| x.id).filter(|id| *id != crate::fake::VOICE).collect())
+        .unwrap_or_default();
+    app.act(|s| others.iter().for_each(|id| s.toggle_section(1, *id)));
+    (app, fake)
+}
+
+fn voice_sidebar(a: &mut App, dark: bool) {
+    *a = voice_screen(dark);
+}
+
+/// Tim joined the lounge and muted himself; Ana is talking. (Bruno is self-muted in the seed, so
+/// he is not the one with the ring.)
+fn voice_connected(a: &mut App, dark: bool) {
+    let mut app = voice_screen(dark);
+    app.act(|s| s.join_voice(LOUNGE));
+    app.pump();
+    app.act(|s| {
+        s.toggle_mute();
+        s.set_speaking([ANA]);
+    });
+    app.pump();
+    *a = app;
+}
+
+/// A moderator muted Tim: the mute button is disabled and his row shows the danger glyph.
+fn voice_server_muted(a: &mut App, dark: bool) {
+    let mut app = voice_screen(dark);
+    app.act(|s| s.join_voice(LOUNGE));
+    app.pump();
+    let me = app.state.my_id();
+    if let Some(v) = app
+        .state
+        .data
+        .voice
+        .values_mut()
+        .find_map(|m| m.get_mut(&me))
+    {
+        v.server_mute = true;
+    }
+    app.pump();
+    *a = app;
+}
+
+/// Tim (the owner) opened Bruno's menu in the lounge.
+fn voice_participant_menu(a: &mut App, dark: bool) {
+    let mut app = voice_screen(dark);
+    app.act(|s| s.join_voice(LOUNGE));
+    app.pump();
+    app.state.ui.menu = Menu::Participant {
+        user: BRUNO,
+        at: None,
+    };
+    *a = app;
+}
+
+/// Tim is connected to the lounge with a fake engine in which `remote` people have video, and
+/// the server's camera / LIVE flags of Ana and Bruno say the same (as the gateway would).
+fn voice_video_screen(dark: bool, remote: &[(u64, thehideout_voice::VideoKind)]) -> App {
+    use thehideout_voice::VideoKind;
+    let mut app = voice_screen(dark);
+    app.set_voice_sink(Box::new(crate::fake::FakeAudio::with_remote(remote.to_vec())));
+    app.act(|s| s.join_voice(LOUNGE));
+    app.pump();
+    app.act(|s| {
+        for (user, kind) in remote {
+            if let Some(v) = s.data.voice.values_mut().find_map(|m| m.get_mut(user)) {
+                match kind {
+                    VideoKind::Camera => v.self_video = true,
+                    VideoKind::Screen => v.self_stream = true,
+                }
+            }
+        }
+    });
+    app.pump();
+    app
+}
+
+/// The stage with Tim's camera on, Ana's camera on and Bruno (muted) with none: a grid of three.
+fn voice_stage(a: &mut App, dark: bool) {
+    use thehideout_voice::VideoKind;
+    let mut app = voice_video_screen(dark, &[(ANA, VideoKind::Camera)]);
+    app.act(|s| s.toggle_camera());
+    app.pump();
+    app.act(|s| {
+        s.open_stage();
+        s.set_speaking([ANA]);
+    });
+    app.pump();
+    *a = app;
+}
+
+/// Ana shares her screen: it is the big tile, and Tim's camera and Bruno's avatar sit in the strip.
+fn voice_stage_screen(a: &mut App, dark: bool) {
+    use thehideout_voice::VideoKind;
+    let mut app = voice_video_screen(dark, &[(ANA, VideoKind::Screen)]);
+    app.act(|s| s.toggle_camera());
+    app.pump();
+    app.act(|s| {
+        s.open_stage();
+        s.set_speaking([ANA]);
+    });
+    app.pump();
+    *a = app;
+}
+
+/// The "Share your screen" picker over the chat.
+fn voice_screen_picker(a: &mut App, dark: bool) {
+    let mut app = voice_video_screen(dark, &[]);
+    app.act(|s| s.open_screen_picker());
+    app.pump();
+    *a = app;
+}
+
+/// The sidebar with Ana's camera on and Bruno live, Tim connected (the chat stays open).
+fn voice_sidebar_live(a: &mut App, dark: bool) {
+    use thehideout_voice::VideoKind;
+    *a = voice_video_screen(dark, &[(ANA, VideoKind::Camera), (BRUNO, VideoKind::Screen)]);
+}
+
+/// Create channel with the Voice type picked and a name typed.
+fn dialog_create_voice(a: &mut App, dark: bool) {
+    let mut app = voice_screen(dark);
+    app.act(|s| s.open_dialog(DialogKind::CreateChannel { guild: 1 }));
+    app.act(|s| {
+        if let Some(f) = s.channel_form() {
+            f.kind = thehideout_api::ChannelKind::Voice;
+        }
+    });
+    if let Some(d) = &mut app.state.ui.dialog {
+        d.input.replace_text("karaoke-night");
+    }
+    *a = app;
+}
+
 type Scene = (&'static str, fn(&mut App));
 
 pub const SCENES: &[Scene] = &[
@@ -743,6 +920,10 @@ pub const SCENES: &[Scene] = &[
     ("auth-passkey-waiting-light", |a| auth_passkey_waiting(a, false)),
     ("add-email-banner", |a| add_email_banner(a, true)),
     ("add-email-banner-light", |a| add_email_banner(a, false)),
+    ("settings-voice", |a| settings_voice(a, true, false)),
+    ("settings-voice-light", |a| settings_voice(a, false, false)),
+    ("settings-voice-ptt", |a| settings_voice(a, true, true)),
+    ("settings-voice-ptt-light", |a| settings_voice(a, false, true)),
     ("settings-security", |a| settings_security(a, true)),
     ("settings-security-light", |a| settings_security(a, false)),
     ("settings-security-totp-setup", |a| settings_security_totp_setup(a, true)),
@@ -880,6 +1061,30 @@ pub const SCENES: &[Scene] = &[
     ("embeds-collapsed-light", |a| embeds_collapsed(a, false)),
     ("video-embed", |a| video_embed(a, true)),
     ("video-embed-light", |a| video_embed(a, false)),
+    ("voice-sidebar", |a| voice_sidebar(a, true)),
+    ("voice-sidebar-light", |a| voice_sidebar(a, false)),
+    ("voice-connected", |a| voice_connected(a, true)),
+    ("voice-connected-light", |a| voice_connected(a, false)),
+    ("voice-server-muted", |a| voice_server_muted(a, true)),
+    ("voice-server-muted-light", |a| voice_server_muted(a, false)),
+    ("voice-participant-menu", |a| voice_participant_menu(a, true)),
+    ("voice-participant-menu-light", |a| voice_participant_menu(a, false)),
+    ("voice-stage", |a| voice_stage(a, true)),
+    ("voice-stage-light", |a| voice_stage(a, false)),
+    ("voice-stage-screen", |a| voice_stage_screen(a, true)),
+    ("voice-stage-screen-light", |a| voice_stage_screen(a, false)),
+    ("voice-screen-picker", |a| voice_screen_picker(a, true)),
+    ("voice-screen-picker-light", |a| voice_screen_picker(a, false)),
+    ("voice-sidebar-live", |a| voice_sidebar_live(a, true)),
+    ("voice-sidebar-live-light", |a| voice_sidebar_live(a, false)),
+    ("dialog-create-voice", |a| dialog_create_voice(a, true)),
+    ("dialog-create-voice-light", |a| dialog_create_voice(a, false)),
+    ("server-settings-roles-voice", |a| {
+        server_settings(a, true, ServerPage::Roles, Some(HIDEOUT_MODS))
+    }),
+    ("server-settings-roles-voice-light", |a| {
+        server_settings(a, false, ServerPage::Roles, Some(HIDEOUT_MODS))
+    }),
     ("main-small", |a| main_(a, true)),
     ("main-small-light", |a| main_(a, false)),
     ("admin-overview", |a| admin_overview(a, true)),

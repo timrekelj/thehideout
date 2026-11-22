@@ -1,0 +1,22 @@
+[package]
+name = "thehideout-voice"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Voice and video engine for the desktop app: a thin, testable layer over the LiveKit Rust SDK."
+
+[features]
+# Camera capture through nokhwa (AVFoundation on macOS). The LiveKit SDK has no camera
+# capturer of its own.
+camera = ["dep:nokhwa"]
+
+[dependencies]
+cpal = "0.18.2"
+futures-util = { version = "0.3", default-features = false }
+livekit = { version = "0.12", features = ["native-tls"] }
+nokhwa = { version = "0.10", default-features = false, features = ["input-avfoundation"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+
+[dev-dependencies]
+livekit-api = { version = "0.11", default-features = false, features = ["access-token"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }

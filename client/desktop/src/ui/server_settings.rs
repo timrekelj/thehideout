@@ -626,7 +626,7 @@ fn editor(a: &App, k: &Kit, ss: &ServerSettings, f: &RoleForm) -> El {
     }
 
     let mut perms = col().key("role-perms").w_full().gap(2.0);
-    for p in &PERMISSION_ROWS {
+    for p in PERMISSION_ROWS.iter().chain(&crate::voice::VOICE_PERMISSION_ROWS) {
         let on = has_bit(f.perms, p.bit);
         let holds = s.can_grant(guild, p.bit);
         let bit: Permissions = p.bit;

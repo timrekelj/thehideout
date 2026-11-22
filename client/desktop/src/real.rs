@@ -48,14 +48,31 @@ pub fn default_server() -> String {
         .unwrap_or_else(|| DEFAULT_SERVER.to_owned())
 }
 
-/// `http://host:port` without a trailing slash; a bare `host:port` gets `http://`.
+/// `scheme://host:port` without a trailing slash. A bare `host:port` gets `https://`,
+/// except loopback hosts, which stay on plaintext `http://` for local development;
+/// an explicit scheme is kept as typed.
 fn normalize(url: &str) -> String {
     let url = url.trim().trim_end_matches('/');
     if url.contains("://") {
         url.to_owned()
-    } else {
+    } else if is_loopback_host(url) {
         format!("http://{url}")
+    } else {
+        format!("https://{url}")
     }
+}
+
+/// Whether a bare `host:port` (or `host`) names a loopback address.
+fn is_loopback_host(host_port: &str) -> bool {
+    if let Ok(ip) = host_port.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    let host = host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port);
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// The app's one `Prefs`, shared with the look's saver thread: two stores on one file would each
@@ -64,14 +81,46 @@ pub type SharedPrefs = Arc<Mutex<Prefs>>;
 
 /// Opens the app's prefs file. Read once at launch (before the first frame), never in a frame.
 pub fn open_prefs() -> SharedPrefs {
-    Arc::new(Mutex::new(Prefs::open(APP_ID)))
+    let prefs = Arc::new(Mutex::new(Prefs::open(APP_ID)));
+    restrict_prefs_file(&prefs);
+    prefs
 }
+
+/// Runs `f` on the shared prefs, then makes the prefs file readable only by its
+/// owner. Rune's `Prefs` writes the file with the process umask (typically 0644),
+/// which would leave the stored session token readable by other local accounts;
+/// every save rewrites the file, so the permissions are re-applied after each write.
+pub fn with_prefs<T>(prefs: &SharedPrefs, f: impl FnOnce(&mut Prefs) -> T) -> T {
+    let out = {
+        let mut p = prefs.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut p)
+    };
+    restrict_prefs_file(prefs);
+    out
+}
+
+/// Keeps the prefs file (and its directory) owner-only on Unix.
+#[cfg(unix)]
+fn restrict_prefs_file(prefs: &SharedPrefs) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = prefs.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(path) = p.path() else { return };
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    if path.exists() {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_prefs_file(_prefs: &SharedPrefs) {}
 
 struct Store(SharedPrefs);
 
 impl Store {
     fn with<T>(&self, f: impl FnOnce(&mut Prefs) -> T) -> T {
-        f(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        with_prefs(&self.0, f)
     }
 
     fn load(&self) -> Option<(String, String)> {
@@ -804,6 +853,7 @@ impl Backend for RealBackend {
             Command::CreateChannel {
                 guild,
                 name,
+                kind,
                 section,
                 icon,
                 color,
@@ -811,10 +861,86 @@ impl Backend for RealBackend {
                 self.call(
                     async move {
                         client
-                            .create_channel_with_ref(guild, &name, section, &icon, color)
+                            .create_channel_of_kind(guild, &name, kind, section, &icon, color)
                             .await
                     },
                     Reply::ChannelCreated,
+                );
+            }
+            Command::JoinVoice { channel } => {
+                self.call(
+                    async move { client.join_voice(channel).await },
+                    move |result| Reply::VoiceJoined { channel, result },
+                );
+            }
+            Command::LeaveVoice => {
+                self.call(async move { client.leave_voice().await }, Reply::VoiceLeft);
+            }
+            Command::UpdateVoiceState {
+                self_mute,
+                self_deaf,
+            } => {
+                self.call(
+                    async move {
+                        client
+                            .update_voice_state(Some(self_mute), Some(self_deaf), None, None)
+                            .await
+                    },
+                    Reply::VoiceFlags,
+                );
+            }
+            Command::UpdateVideoState { self_video, self_stream } => {
+                self.call(
+                    async move {
+                        client
+                            .update_voice_state(None, None, self_video, self_stream)
+                            .await
+                    },
+                    Reply::VoiceFlags,
+                );
+            }
+            Command::ServerMuteMember { guild, user, muted } => {
+                self.call(
+                    async move {
+                        client
+                            .server_mute_member(guild, user, muted)
+                            .await
+                            .map(|_| ())
+                    },
+                    move |result| Reply::VoiceModerated {
+                        guild,
+                        user,
+                        result,
+                    },
+                );
+            }
+            Command::MoveMember {
+                guild,
+                user,
+                channel,
+            } => {
+                self.call(
+                    async move {
+                        client
+                            .move_member(guild, user, channel)
+                            .await
+                            .map(|_| ())
+                    },
+                    move |result| Reply::VoiceModerated {
+                        guild,
+                        user,
+                        result,
+                    },
+                );
+            }
+            Command::DisconnectMember { guild, user } => {
+                self.call(
+                    async move { client.disconnect_member(guild, user).await },
+                    move |result| Reply::VoiceModerated {
+                        guild,
+                        user,
+                        result,
+                    },
                 );
             }
             Command::LoadAccess { guild } => {
@@ -1212,5 +1338,36 @@ impl Backend for RealBackend {
 
     fn sent(&self) -> Vec<Command> {
         self.sent.clone()
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::{is_loopback_host, normalize};
+
+    #[test]
+    fn explicit_schemes_are_kept() {
+        assert_eq!(normalize("http://127.0.0.1:8080/"), "http://127.0.0.1:8080");
+        assert_eq!(normalize("https://hideout.example.com/"), "https://hideout.example.com");
+        assert_eq!(normalize("http://192.168.1.5:8080"), "http://192.168.1.5:8080");
+    }
+
+    #[test]
+    fn bare_hosts_default_to_https_except_loopback() {
+        assert_eq!(normalize("hideout.example.com:8443"), "https://hideout.example.com:8443");
+        assert_eq!(normalize("hideout.example.com"), "https://hideout.example.com");
+        assert_eq!(normalize("localhost:8080"), "http://localhost:8080");
+        assert_eq!(normalize("127.0.0.1:8080"), "http://127.0.0.1:8080");
+        assert_eq!(normalize("[::1]:8080"), "http://[::1]:8080");
+    }
+
+    #[test]
+    fn loopback_detection() {
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("LOCALHOST:8080"));
+        assert!(is_loopback_host("127.0.0.1:8080"));
+        assert!(is_loopback_host("::1"));
+        assert!(!is_loopback_host("example.com"));
+        assert!(!is_loopback_host("192.168.1.5:8080"));
     }
 }

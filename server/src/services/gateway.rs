@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -95,8 +96,16 @@ impl GatewayService for GatewaySvc {
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         self.state.live.connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // After the guild subscriptions exist, so a change in between is not
+        // missed (a repeated state is harmless). Sent only when someone is in voice.
+        let guild_list: Vec<u64> = guilds.keys().copied().collect();
+        let mut pending = VecDeque::new();
+        if let Some(snapshot) = voice_snapshot(&self.state, &guild_list) {
+            pending.push_back(snapshot);
+        }
         let session = EventStream {
             state: self.state.clone(),
+            pending,
             control: Some(control),
             guilds,
             dms,
@@ -119,6 +128,8 @@ impl GatewayService for GatewaySvc {
 /// State of one open Subscribe stream.
 struct EventStream {
     state: AppState,
+    /// Events queued behind the first heartbeat (voice snapshots).
+    pending: VecDeque<Payload>,
     /// `None` only while dropping.
     control: Option<broadcast::Receiver<UserControl>>,
     guilds: StreamMap<u64, BroadcastStream<Arc<EventPayload>>>,
@@ -136,6 +147,8 @@ impl EventStream {
     async fn next_event(&mut self) -> Result<Event, ConnectError> {
         let payload = if self.sequence == 0 {
             heartbeat_payload()
+        } else if let Some(queued) = self.pending.pop_front() {
+            queued
         } else {
             self.next_payload().await?
         };
@@ -167,6 +180,9 @@ impl EventStream {
                     // devices of the user pick it up without a restart.
                     let rx = self.state.events.subscribe_guild(guild.id);
                     self.guilds.insert(guild.id, BroadcastStream::new(rx));
+                    if let Some(snapshot) = voice_snapshot(&self.state, &[guild.id]) {
+                        self.pending.push_back(snapshot);
+                    }
                     Ok(Payload::GuildAdded(guild.into()))
                 }
                 Ok(UserControl::OpenedDm(channel)) => {
@@ -177,6 +193,7 @@ impl EventStream {
                     Ok(Payload::DmOpened(channel.into()))
                 }
                 Ok(UserControl::ProfileUpdated(user)) => Ok(Payload::UserUpdated(user.into())),
+                Ok(UserControl::VoiceMoved(moved)) => Ok(Payload::VoiceMoved(moved.into())),
                 Err(RecvError::Lagged(_)) => Err(lagged()),
                 Err(RecvError::Closed) => Err(internal("user control channel closed")),
             },
@@ -233,7 +250,24 @@ fn to_payload(event: &EventPayload) -> Payload {
         EventPayload::EmojisUpdated(e) => Payload::EmojisUpdated(e.into()),
         EventPayload::ReactionAdded(r) => Payload::ReactionAdded(r.into()),
         EventPayload::ReactionRemoved(r) => Payload::ReactionRemoved(r.into()),
+        EventPayload::VoiceStateUpdate(v) => Payload::VoiceStateUpdate(v.into()),
     }
+}
+
+/// The voice states of `guild_ids` as a `voice_snapshot` payload; `None` when nobody is in voice there.
+fn voice_snapshot(state: &AppState, guild_ids: &[u64]) -> Option<Payload> {
+    let states = state.voice.in_guilds(guild_ids);
+    if states.is_empty() {
+        return None;
+    }
+    Some(Payload::VoiceSnapshot(
+        VoiceSnapshot {
+            guild_ids: guild_ids.to_vec(),
+            states: states.iter().map(|e| e.to_proto()).collect(),
+            ..Default::default()
+        }
+        .into(),
+    ))
 }
 
 fn lagged() -> ConnectError {

@@ -9,9 +9,9 @@ use std::rc::Rc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use thehideout_api::{
-    ApiError, Channel, ChannelIcon, ChannelIconRef, DmChannel, Emoji, Event, GatewayUpdate, Guild,
+    ApiError, Channel, ChannelIcon, ChannelIconRef, ChannelKind, DmChannel, Emoji, Event, GatewayUpdate, Guild,
     GuildLayout, LayoutEntry, Member, Message, Page, PaletteColor, Permissions, Reaction,
-    ReactionEmoji, Role, RoleList, Section, User,
+    ReactionEmoji, Role, RoleList, Section, User, VoiceState,
 };
 
 use crate::backend::{Backend, Command, GuildAccess, Initial, Reply, Session};
@@ -25,6 +25,10 @@ mod files;
 
 #[path = "fake_account.rs"]
 pub mod account;
+
+#[path = "fake_voice.rs"]
+mod voice;
+pub use voice::{FAKE_MIC_LEVEL, FakeAudio, fake_devices_event};
 
 /// The bytes of a generated file (tests compare downloads with them).
 #[cfg(test)]
@@ -53,9 +57,14 @@ pub const MUSIC: u64 = 16;
 pub const GAMING: u64 = 17;
 pub const MEMES: u64 = 18;
 pub const BOOKS: u64 = 19;
+/// The Hideout's voice channels: Ana and Bruno are in the first, the second is empty.
+pub const LOUNGE: u64 = 22;
+pub const GAME_NIGHT: u64 = 23;
 pub const BUILDING: u64 = 101;
 pub const HANGOUT: u64 = 102;
 pub const ARCHIVE: u64 = 103;
+/// The last section of The Hideout: its voice channels.
+pub const VOICE: u64 = 104;
 /// Tim holds this in Cooking Club (which Bruno owns): a non-owner who may manage channels.
 pub const COOK_MODS: u64 = 3001;
 /// Bruno holds this in The Hideout.
@@ -143,6 +152,8 @@ struct World {
     admin: AdminWorld,
     /// Sign-in methods, invites, sessions and the Security page.
     account: account::Accounts,
+    /// Voice channels' occupants.
+    voice: voice::Voice,
 }
 
 impl Default for World {
@@ -189,6 +200,7 @@ impl World {
             icon_ref: ChannelIconRef::Default,
             color: PaletteColor::None,
             topic: String::new(),
+            kind: ChannelKind::Text,
         };
         let look = |mut c: Channel, icon: &str, color: PaletteColor, topic: &str| {
             c.icon = ChannelIcon::new(icon);
@@ -305,11 +317,13 @@ impl World {
             files: files::Files::default(),
             admin: AdminWorld::empty(),
             account: account::Accounts::new(),
+            voice: voice::Voice::default(),
         };
         f.admin = AdminWorld::new(&f.users, &f.guilds);
         f.seed_structure();
         f.seed();
         f.seed_emojis();
+        f.seed_voice();
         f
     }
 
@@ -722,7 +736,7 @@ impl World {
         let perms = if owner || perms.contains(Permissions::ADMINISTRATOR) {
             crate::perms::ALL
         } else {
-            perms
+            perms | crate::perms::BASELINE
         };
         (owner, perms, held.iter().map(|r| r.position).max())
     }
@@ -1013,6 +1027,9 @@ impl World {
     fn reconnect(&mut self) {
         self.gateway(GatewayUpdate::Connecting);
         self.gateway(GatewayUpdate::Connected);
+        if let Some(snapshot) = self.voice_snapshot() {
+            self.enqueue(snapshot);
+        }
     }
 
     fn initial(&self) -> Initial {
@@ -1104,13 +1121,22 @@ impl World {
             Ok(replies) => return replies,
             Err(cmd) => cmd,
         };
+        let cmd = match self.voice_command(cmd) {
+            Ok(replies) => return replies,
+            Err(cmd) => cmd,
+        };
         let me = self.me.id;
         match cmd {
             Command::Resume => vec![Reply::Resume(Ok(None))],
-            Command::LoadInitial => vec![
-                Reply::Initial(Ok(self.initial())),
-                Reply::Gateway(GatewayUpdate::Connected),
-            ],
+            Command::LoadInitial => {
+                let mut out = vec![
+                    Reply::Initial(Ok(self.initial())),
+                    Reply::Gateway(GatewayUpdate::Connected),
+                ];
+                // A new stream starts with the voice snapshot, when anyone is in voice.
+                out.extend(self.voice_snapshot());
+                out
+            }
             Command::Refresh => vec![Reply::Refreshed(Ok(self.initial()))],
             Command::LoadChannels { guild } => {
                 let channels = self
@@ -1326,6 +1352,14 @@ impl World {
                 let result = if self.fail_sends > 0 {
                     self.fail_sends -= 1;
                     Err(ApiError::Network("simulated outage".into()))
+                } else if self
+                    .channels
+                    .iter()
+                    .any(|c| c.id == channel && c.kind == ChannelKind::Voice)
+                {
+                    Err(ApiError::Precondition(
+                        "voice channels have no messages".into(),
+                    ))
                 } else if content.trim().is_empty() || content.chars().count() > MAX_CHARS {
                     Err(ApiError::InvalidArgument(
                         "message must be 1 to 4000 characters".into(),
@@ -1388,6 +1422,7 @@ impl World {
                     icon_ref: ChannelIconRef::Default,
                     color: PaletteColor::None,
                     topic: String::new(),
+                    kind: ChannelKind::Text,
                 });
                 self.members.insert(id, vec![me]);
                 self.layouts.insert(
@@ -1424,6 +1459,7 @@ impl World {
             Command::CreateChannel {
                 guild,
                 name,
+                kind,
                 section,
                 icon,
                 color,
@@ -1451,6 +1487,7 @@ impl World {
                         icon_ref: icon,
                         color,
                         topic: String::new(),
+                        kind,
                     };
                     self.channels.push(c.clone());
                     let l = self.layouts.entry(guild).or_default();
@@ -2245,6 +2282,43 @@ impl FakeBackend {
             .iter()
             .find(|c| c.id == id)
             .cloned()
+    }
+
+    /// Voice is not configured on the server: joining fails like it does without LiveKit.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn voice_unavailable(&self, on: bool) {
+        self.0.borrow_mut().voice.unavailable = on;
+    }
+
+    /// The server's voice states of `guild`, in join order (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn voice_states(&self, guild: u64) -> Vec<VoiceState> {
+        self.0.borrow().voice_states_of(guild)
+    }
+
+    /// `user` joins (or switches to) a voice channel, announced on the gateway (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn voice_join_as(&self, user: u64, channel: u64) {
+        self.0.borrow_mut().voice_join_as(user, channel);
+    }
+
+    /// `user` leaves voice, announced on the gateway (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn voice_leave_as(&self, user: u64) {
+        self.0.borrow_mut().voice_leave_as(user);
+    }
+
+    /// A moderator moves `user` (the gateway also tells them to rejoin when it is us), no
+    /// permission checks (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn voice_move_as_moderator(&self, user: u64, channel: u64) {
+        self.0.borrow_mut().voice_move_as_moderator(user, channel);
+    }
+
+    /// Changes what a role grants, announced on the gateway (tests of the moderation controls).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_role_permissions(&self, guild: u64, role: u64, permissions: Permissions) {
+        self.0.borrow_mut().set_role_permissions(guild, role, permissions);
     }
 
     /// The server's custom emojis of `guild`, by name (tests).

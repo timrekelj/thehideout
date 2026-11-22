@@ -8,8 +8,12 @@ use thehideout_api::{Guild, Permissions, Role};
 /// Every bit set, which is what the owner holds.
 pub const ALL: Permissions = Permissions(u64::MAX);
 
+/// What every member has without any role (there is no @everyone role): the voice basics.
+/// Mirrors the server's `permissions::BASELINE`.
+pub const BASELINE: Permissions = Permissions::BASELINE;
+
 /// `me`'s effective permissions in `guild`, given the guild's roles and the role ids they hold.
-/// Unknown role ids (a role deleted since) contribute nothing.
+/// Unknown role ids (a role deleted since) contribute nothing; the baseline always counts.
 pub fn effective(guild: &Guild, me: u64, my_roles: &[u64], roles: &[Role]) -> Permissions {
     if guild.owner_id == me {
         return ALL;
@@ -17,7 +21,37 @@ pub fn effective(guild: &Guild, me: u64, my_roles: &[u64], roles: &[Role]) -> Pe
     roles
         .iter()
         .filter(|r| my_roles.contains(&r.id))
-        .fold(Permissions::NONE, |p, r| p | r.permissions)
+        .fold(BASELINE, |p, r| p | r.permissions)
+}
+
+/// The seniority of the highest of `held` among `roles`; `None` for a member without roles.
+pub fn top_position(held: &[u64], roles: &[Role]) -> Option<i32> {
+    roles
+        .iter()
+        .filter(|r| held.contains(&r.id))
+        .map(|r| r.position)
+        .max()
+}
+
+/// Whether `me` may moderate (server-mute, move, disconnect) `target`, by the server's rule: the
+/// owner always (themself included); nobody else the owner; anyone else only members whose top
+/// role is strictly below theirs (a member without roles is below any role).
+pub fn outranks_member(
+    guild: &Guild,
+    me: u64,
+    my_roles: &[u64],
+    target: u64,
+    target_roles: &[u64],
+    roles: &[Role],
+) -> bool {
+    if guild.owner_id == me {
+        return true;
+    }
+    if guild.owner_id == target {
+        return false;
+    }
+    top_position(my_roles, roles)
+        .is_some_and(|top| top_position(target_roles, roles).is_none_or(|p| p < top))
 }
 
 #[cfg(test)]
@@ -69,7 +103,35 @@ mod tests {
             !p.contains(Permissions::MANAGE_SERVER),
             "role 3 is not theirs"
         );
-        assert!(effective(&guild(9), 7, &[], &roles).is_empty());
+        assert_eq!(effective(&guild(9), 7, &[], &roles), BASELINE);
+    }
+
+    #[test]
+    fn every_member_has_the_voice_baseline_but_not_moderation() {
+        let p = effective(&guild(9), 7, &[], &[]);
+        assert!(p.contains(Permissions::CONNECT | Permissions::SPEAK | Permissions::VIDEO));
+        assert!(!p.contains(Permissions::MUTE_MEMBERS) && !p.contains(Permissions::MOVE_MEMBERS));
+    }
+
+    #[test]
+    fn moderation_follows_the_role_hierarchy() {
+        let mut senior = role(1, Permissions::MUTE_MEMBERS);
+        senior.position = 5;
+        let mut junior = role(2, Permissions::NONE);
+        junior.position = 2;
+        let roles = [senior, junior];
+        let g = guild(9);
+        // Strictly below, and a member without roles is below any role.
+        assert!(outranks_member(&g, 7, &[1], 8, &[2], &roles));
+        assert!(outranks_member(&g, 7, &[1], 8, &[], &roles));
+        // Not equal, not above, not without roles themselves, never the owner.
+        assert!(!outranks_member(&g, 7, &[1], 8, &[1], &roles));
+        assert!(!outranks_member(&g, 7, &[2], 8, &[1], &roles));
+        assert!(!outranks_member(&g, 7, &[], 8, &[], &roles));
+        assert!(!outranks_member(&g, 7, &[1], 9, &[], &roles));
+        // The owner outranks everyone, themself included.
+        assert!(outranks_member(&g, 9, &[], 7, &[1], &roles));
+        assert!(outranks_member(&g, 9, &[], 9, &[], &roles));
     }
 
     #[test]

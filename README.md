@@ -5,7 +5,8 @@ A Discord-style chat app for me and my friends, built to learn handling lots of 
 
 Start ScyllaDB (single dev node), a local S3-compatible object store
 (SeaweedFS) for avatars and guild icons, and Mailpit (catches all outgoing
-email: SMTP on 1025, web inbox at <http://127.0.0.1:8025>). A one-shot
+email: SMTP on 1025, web inbox at <http://127.0.0.1:8025>), and LiveKit (the
+voice channel media server: ws on 7880, TCP 7881, UDP 50000-50100). A one-shot
 `seaweedfs-init` container creates the `thehideout-media` bucket; all services
 listen on 127.0.0.1 only:
 
@@ -81,6 +82,86 @@ Two guards keep a development setup from sending real mail:
 - Mail to reserved test domains (`example.com`, `example.net`, `example.org`,
   `*.test`, `*.example`, `*.invalid`, `localhost`) is never sent through
   Resend: it is logged and dropped, and the flow carries on as if it was sent.
+
+## Voice (LiveKit)
+
+Voice channels (`Channel.kind = CHANNEL_KIND_VOICE`, chosen at creation, never
+changed; posting a message in one is `FAILED_PRECONDITION`) carry audio, camera
+and screen share through a self-hosted [LiveKit](https://livekit.io) SFU. The
+server is the authority on who may join and who is in which channel; LiveKit
+only moves media. The `livekit` service in `docker-compose.yml` runs
+`livekit/livekit-server` (pinned) with the dev key `devkey` / `secret`, bound to
+127.0.0.1, and posts webhooks to `host.docker.internal:8080/livekit/webhook`
+(the server on the host; `host-gateway` makes that name work on Linux too).
+`curl http://127.0.0.1:7880` answers `OK` when it is up. LiveKit logs "secret is
+too short" for the dev secret; it is harmless on loopback.
+
+| Variable | Dev default | Meaning |
+| --- | --- | --- |
+| `LIVEKIT_URL` | `ws://127.0.0.1:7880` | URL clients connect to |
+| `LIVEKIT_API_URL` | `LIVEKIT_URL` with ws -> http | URL the server calls LiveKit's API on |
+| `LIVEKIT_API_KEY` | `devkey` | API key (also signs join tokens and verifies webhooks) |
+| `LIVEKIT_API_SECRET` | `secret` | API secret |
+
+Unset (all of URL, key and secret empty) = voice off: voice channels still list,
+`JoinVoice` answers `UNAVAILABLE` "voice is not configured on this server" and
+the webhook endpoint answers 503. Setting only some of them is a startup error.
+
+- **Names.** Room `voice-<channel_id>`, participant identity = user id (decimal),
+  participant name = username.
+- **Join.** `VoiceService.JoinVoice(channel_id)` needs guild membership
+  (`NOT_FOUND` otherwise) and `CONNECT`, on a voice channel. It returns
+  `{ url, token, channel_id }`; the token (about 10 minutes to connect) allows
+  joining that room and subscribing, and publishing only if the caller has
+  `SPEAK`, limited to `microphone` plus `camera`, `screen_share` and
+  `screen_share_audio` with `VIDEO` (no microphone while server-muted). A user is in
+  one voice channel at a time: joining another closes their LiveKit connection to
+  the old room. Joining the channel you are in reissues a token and keeps the state.
+- **Permissions** (`types.proto`): `CONNECT`=64, `SPEAK`=128, `VIDEO`=256,
+  `MUTE_MEMBERS`=512, `MOVE_MEMBERS`=1024 (moving includes disconnecting). There
+  is no @everyone role, so `CONNECT`, `SPEAK` and `VIDEO` are a baseline every
+  member has regardless of roles (the bits are accepted in roles and harmless;
+  this means they cannot be taken away yet). `MUTE_MEMBERS` / `MOVE_MEMBERS` are
+  held by nobody by default: the owner and `ADMINISTRATOR` imply them, and roles
+  can grant them under the usual "only grant what you hold" rule.
+- **Moderation.** `ServerMuteMember`, `MoveMember` and `DisconnectMember` need the
+  permission and a top role strictly above the target's (the owner outranks all;
+  nobody but the owner can act on the owner; you may move or disconnect yourself
+  but not server-mute yourself). The target must be in a voice channel of that guild.
+  - *Mute* is enforced, not advisory: the server updates the participant's LiveKit
+    permissions (RoomService `UpdateParticipant`) to drop the microphone source, which
+    makes LiveKit unpublish a live microphone track. If the member has not connected yet
+    it is applied when LiveKit reports `participant_joined`. The flag survives a move
+    within the guild but not leaving voice.
+  - *Disconnect* removes the voice state and the LiveKit participant
+    (`RemoveParticipant`).
+  - *Move* switches the voice state to the new channel, removes the old participant,
+    and sends the target a gateway `voice_moved { guild_id, channel_id }`; their client
+    then calls `JoinVoice(channel_id)` for a fresh token. A target that does not
+    reconnect within about 30 seconds is dropped.
+- **Voice state** (`VoiceState`: guild, channel, user, `self_mute`, `self_deaf`,
+  `server_mute`, `self_video`, `self_stream`, `joined_at`) lives in server memory only
+  (single node, lost on restart; clients and LiveKit then reconcile through the
+  webhooks below and by calling `JoinVoice` again). Changes are published as
+  `voice_state_update { guild_id, user_id, state? }` (state unset = left) to guild
+  members. A new gateway stream sends `voice_snapshot { guild_ids, states }` right after
+  its first heartbeat when anyone is in voice in the user's guilds (nothing when nobody
+  is, so clients clear voice states when a stream opens and then apply a snapshot if
+  one comes); joining a guild sends one for that guild after `guild_added`.
+  `UpdateVoiceState` changes the caller's own flags (video / stream need `VIDEO`).
+- **Staying consistent.** LiveKit's webhooks (`POST /livekit/webhook`, verified with
+  the `Authorization` JWT, which signs the SHA-256 of the body) drive it:
+  `participant_joined` confirms a join (and disconnects a participant we have no join
+  for, e.g. a stale token), `participant_left` and `room_finished` clear the state. A
+  user who joined but is not confirmed within 30 seconds is dropped. Deleting a channel,
+  or a member leaving, being removed or banned, must call
+  `voice::on_channel_deleted` / `voice::on_member_removed`; those RPCs do not exist yet,
+  so nothing calls them today. A reconnect of the same identity can make LiveKit send a
+  late `participant_left` for the old connection, which drops the state; the client sees
+  its own state go away and calls `JoinVoice` again.
+- Production: run LiveKit with its own config (real keys of 32+ characters, TLS in front
+  of the signalling port, `rtc.use_external_ip: true` or a `node_ip`, the UDP range open),
+  and point its `webhook.urls` at the server's `/livekit/webhook`.
 
 ## Media storage (S3)
 

@@ -105,6 +105,8 @@ fn every_operable_element_has_a_role_and_a_name() {
         "main",
         "home-dms",
         "settings-security",
+        "settings-voice",
+        "settings-voice-ptt",
         "admin-overview",
         "admin-invites",
         "invite-by-email",
@@ -113,6 +115,14 @@ fn every_operable_element_has_a_role_and_a_name() {
         "attachments-messages",
         "embeds",
         "sections",
+        "voice-sidebar",
+        "voice-connected",
+        "voice-server-muted",
+        "voice-stage",
+        "voice-stage-screen",
+        "voice-screen-picker",
+        "voice-sidebar-live",
+        "dialog-create-voice",
     ] {
         let n = audit(s);
         assert!(
@@ -210,6 +220,8 @@ fn page_headers_close_button_lines_its_glyph_up_with_the_content_edge() {
     use crate::tests::rect_of;
     for name in [
         "settings-appearance",
+        "settings-voice",
+        "settings-voice-ptt",
         "settings-security",
         "server-settings-overview",
         "server-settings-roles",
@@ -223,4 +235,49 @@ fn page_headers_close_button_lines_its_glyph_up_with_the_content_edge() {
         let close = rect_of(&rt, "settings-close");
         assert_eq!(close[0] + close[2], header[0] + header[2] + 8.0, "{name}: close button");
     }
+}
+
+#[test]
+fn the_voice_page_names_every_control_and_reads_the_meter_and_slider_as_ranges() {
+    let rt = scene("settings-voice");
+    let tree = rt.accessibility_json();
+    assert_eq!(name(by_key(&tree, "settings-nav-voice")), "Voice & audio");
+    // The selects, the toggle and the switches are named for what they do.
+    for (key, want) in [
+        ("voice-input-select-trigger", "Input device"),
+        ("voice-output-select-trigger", "Output device"),
+        ("voice-mic-test", "Stop test"),
+        ("voice-key-mute", "Mute shortcut"),
+        ("voice-key-deafen", "Deafen shortcut"),
+    ] {
+        let n = by_key(&tree, key);
+        assert!(name(n).contains(want), "{key}: {n}");
+    }
+    // The sensitivity slider is a slider with a number, steps with the arrows and reads in percent.
+    let slider = by_key(&tree, "voice-sensitivity");
+    assert_eq!(slider["role"], "slider", "{slider}");
+    assert_eq!(name(slider), "Sensitivity");
+    assert!(actions(slider).contains(&"increment") && actions(slider).contains(&"decrement"), "{slider}");
+    // The meter is a meter, named, not operable.
+    let meter = by_key(&tree, "meter");
+    assert_eq!(meter["role"], "meter", "{meter}");
+    assert_eq!(name(meter), "Microphone level");
+    assert!(!actions(meter).iter().any(|a| OPERATE.contains(a)), "{meter}");
+    // The push-to-talk page has its recorder, named, and no slider.
+    let ptt = scene("settings-voice-ptt");
+    let tree = ptt.accessibility_json();
+    assert!(name(by_key(&tree, "voice-key-ptt")).contains("Push to talk key"));
+    assert!(nodes(&tree).iter().all(|n| n["key"] != "voice-sensitivity"));
+}
+
+#[test]
+fn in_push_to_talk_the_mute_button_says_so() {
+    let mut rt = scene("voice-connected");
+    let tree = rt.accessibility_json();
+    assert!(by_key(&tree, "voice-mute")["description"].is_null());
+    rt.state.state.voice.prefs.mode = crate::voice::InputMode::PushToTalk;
+    rt.update(|a, _| a.act(|_| {}));
+    settle(&mut rt, 3);
+    let tree = rt.accessibility_json();
+    assert_eq!(by_key(&tree, "voice-mute")["description"], "Push to talk");
 }

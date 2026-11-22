@@ -272,7 +272,7 @@ async fn invite_people_is_a_valid_role_permission() {
     let owner = user(&app, "owner").await;
     let g = guild(&app, &owner).await;
     role(&app, &owner, g.id, "ok", INVITE_PEOPLE | MANAGE_EMOJIS).await.unwrap();
-    assert_eq!(code(role(&app, &owner, g.id, "bad", 64).await), ErrorCode::InvalidArgument);
+    assert_eq!(code(role(&app, &owner, g.id, "bad", 1 << 20).await), ErrorCode::InvalidArgument);
     app.cleanup().await;
 }
 

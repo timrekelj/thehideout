@@ -7,6 +7,7 @@
 //! | [`GuildBadge`], [`RailTile`] | `guild_badge` |
 //! | [`Segmented`] | `segmented` |
 //! | [`NavRow`], [`ChannelRow`], [`SidebarSection`] | `nav_row`, `section` |
+//! | [`VoiceParticipantRow`], [`VoiceTile`] | `voice_row`, `voice_tile` |
 //! | [`MessageGroup`], [`ChatMessage`] | `message`, `body`, `markdown` |
 //! | [`DateDivider`], [`NewMessagesDivider`] | `dividers` |
 //! | [`Composer`] | `composer` |
@@ -39,6 +40,8 @@ pub mod nav_row;
 pub mod pickers;
 pub mod section;
 pub mod toast;
+pub mod voice_row;
+pub mod voice_tile;
 
 pub use attachments::{AudioRow, Cell, Chip, ChipState, FileCard, FileKind, GridImage, LightboxView, VideoCard, VideoUi, Wire, file_kind, human_size, image_grid, image_grid_el, lightbox, tray, tray_note};
 pub use composer::Composer;
@@ -58,3 +61,5 @@ pub use pickers::{ColorSwatches, IconGrid, PickerTabs};
 pub use segmented::Segmented;
 pub use section::SidebarSection;
 pub use toast::{Toast, ToastKind};
+pub use voice_row::VoiceParticipantRow;
+pub use voice_tile::{TileMedia, TileSize, VoiceTile};

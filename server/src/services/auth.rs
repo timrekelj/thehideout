@@ -49,6 +49,9 @@ const USER_CHECK_WINDOW: Duration = Duration::from_secs(60 * 60);
 
 /// Passkey ceremonies started per peer IP within [`LOGIN_WINDOW`].
 pub const PASSKEY_IP_MAX: usize = 30;
+/// Passkey login attempts per login name within [`LOGIN_WINDOW`], so a distributed
+/// caller cannot use many peer IPs to enumerate which accounts have passkeys.
+pub const PASSKEY_USER_MAX: usize = 10;
 const CEREMONY_TTL: Duration = Duration::from_secs(5 * 60);
 const TOTP_SETUP_TTL: Duration = Duration::from_secs(10 * 60);
 const RECOVERY_CODES: usize = 10;
@@ -933,8 +936,12 @@ impl AuthService for AuthSvc {
         self.state
             .limiter
             .check(&format!("passkey:ip:{}", peer_key(&ctx)), PASSKEY_IP_MAX, LOGIN_WINDOW)?;
+        self.state
+            .limiter
+            .check(&format!("passkey:user:{}", key_part(&req.username)), PASSKEY_USER_MAX, LOGIN_WINDOW)?;
         let webauthn = passkeys::webauthn(&self.state)?;
-        // Username-first: this reveals whether an account has passkeys (rate limited).
+        // Username-first: this reveals whether an account has passkeys (rate limited
+        // per peer IP and per login name).
         let no_passkey = || ConnectError::failed_precondition("no passkey for this account");
         let account = accounts::find_by_login(&self.state, req.username).await?.ok_or_else(no_passkey)?;
         let stored = passkeys::list(&self.state, account.id).await?;

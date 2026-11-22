@@ -9,9 +9,21 @@ use crate::error::ApiError;
 use crate::proto::thehideout::v1 as pb;
 use crate::content::{Emoji, ReactionEmoji};
 use crate::structure::{ChannelIcon, ChannelIconRef, GuildLayout, Member, PaletteColor, Section};
-use crate::types::{Channel, DmChannel, Event, Guild, Message, Page, User};
+use crate::types::{Channel, ChannelKind, DmChannel, Event, Guild, Message, Page, User};
 
 type Result<T> = std::result::Result<T, ApiError>;
+
+/// A TLS transport for `https://` base URLs, trusting the webpki root certificates.
+fn tls_client() -> HttpClient {
+    use connectrpc::rustls;
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let tls = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    HttpClient::with_tls(Arc::new(tls))
+}
 
 /// Typed client for the thehideout server.
 ///
@@ -27,13 +39,23 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a client for `base_url` (e.g. `http://127.0.0.1:8080`), without a token.
+    /// Creates a client for `base_url` (e.g. `http://127.0.0.1:8080` or
+    /// `https://hideout.example.com`), without a token.
     ///
-    /// Only plaintext `http://` is supported for now.
+    /// `https://` URLs use TLS with the system webpki root certificates; `http://`
+    /// stays plaintext, which is only safe for loopback or trusted networks, so the
+    /// session token and passwords in login bodies must never cross an untrusted
+    /// network over it.
     pub fn new(base_url: impl Into<String>) -> Self {
+        let base_url = base_url.into();
+        let http = if base_url.starts_with("https://") {
+            tls_client()
+        } else {
+            HttpClient::plaintext()
+        };
         Self {
-            http: HttpClient::plaintext(),
-            base_url: base_url.into(),
+            http,
+            base_url,
             token: Arc::default(),
             max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
         }
@@ -256,6 +278,19 @@ impl Client {
         icon: &ChannelIconRef,
         color: PaletteColor,
     ) -> Result<Channel> {
+        self.create_channel_of_kind(guild_id, name, ChannelKind::Text, section_id, icon, color).await
+    }
+
+    /// Like [`create_channel_with_ref`](Self::create_channel_with_ref) for a text or voice channel.
+    pub async fn create_channel_of_kind(
+        &self,
+        guild_id: u64,
+        name: &str,
+        kind: ChannelKind,
+        section_id: Option<u64>,
+        icon: &ChannelIconRef,
+        color: PaletteColor,
+    ) -> Result<Channel> {
         let res = self
             .guilds()?
             .create_channel(pb::CreateChannelRequest {
@@ -264,6 +299,7 @@ impl Client {
                 section_id,
                 icon_ref: Some(icon.to_proto()).into(),
                 color: color.as_key().into(),
+                kind: kind.to_proto().into(),
                 ..Default::default()
             })
             .await?

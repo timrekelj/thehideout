@@ -3,7 +3,7 @@
 Connect/protobuf contract in `proto/thehideout/v1`. Lint: `buf lint`; compatibility: `buf breaking --against '.git#branch=main'`. Changes are additive only.
 
 ## Permissions and roles (`RoleService`, `types.proto`)
-- `uint64` bit flags (`Permission`): ADMINISTRATOR=1, MANAGE_SERVER=2, MANAGE_CHANNELS=4, MANAGE_ROLES=8, MANAGE_EMOJIS=16, INVITE_PEOPLE=32 (owner / ADMINISTRATOR imply it).
+- `uint64` bit flags (`Permission`): ADMINISTRATOR=1, MANAGE_SERVER=2, MANAGE_CHANNELS=4, MANAGE_ROLES=8, MANAGE_EMOJIS=16, INVITE_PEOPLE=32, CONNECT=64, SPEAK=128, VIDEO=256, MUTE_MEMBERS=512, MOVE_MEMBERS=1024 (owner / ADMINISTRATOR imply them; CONNECT, SPEAK and VIDEO are also a baseline every member has, there is no @everyone role).
 - The guild owner has every permission; a member's permissions are the OR of their roles; ADMINISTRATOR implies all.
 - Hierarchy: non-owners may only manage roles strictly below their highest role (and only grant permissions they hold).
 - `RoleService` is separate from `GuildService` because roles have their own version counter and rules. `ListGuildMembersResponse.members` carries role IDs (`users` is kept for compatibility).
@@ -84,3 +84,8 @@ Connect/protobuf contract in `proto/thehideout/v1`. Lint: `buf lint`; compatibil
 
 ## Gateway events
 New `Event` payloads (fields 13–16): emojis_updated (full list), reaction_added, reaction_removed, message_updated. Earlier (fields 7–12): guild_updated, channel_updated, layout_updated, roles_updated (full list), member_updated, user_updated (audience: users sharing a guild or DM with the user).
+
+## Voice (`VoiceService`, `voice_service.proto`)
+- `Channel.kind` (`ChannelKind`: UNSPECIFIED = TEXT, TEXT, VOICE) is set in `CreateChannel` and never changes; `SendMessage` in a voice channel is `FAILED_PRECONDITION`.
+- Media goes through LiveKit; `JoinVoice(channel_id)` returns `{ url, token, channel_id }` (room `voice-<channel_id>`, identity = user id, name = username). `UNAVAILABLE` when the server has no LiveKit settings. One voice channel per user; joining another moves the caller. Details and flows (mute enforcement, move, webhooks): README "Voice".
+- `VoiceState` is in server memory. Events: `voice_state_update { guild_id, user_id, state? }` (unset = left) to guild members, `voice_snapshot { guild_ids, states }` after the first heartbeat of a stream (and after `guild_added`) only when someone is in voice, `voice_moved { guild_id, channel_id }` to a moved user (rejoin with `JoinVoice`). Clients clear voice states when a stream opens.

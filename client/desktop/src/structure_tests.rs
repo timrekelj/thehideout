@@ -14,7 +14,7 @@ use crate::app::{fake_now, App};
 use crate::backend::Command;
 use crate::fake::{
     FakeBackend, ANA, ARCHIVE, BUILDING, COOK_MODS, DESIGN, DEV, GAMING, GENERAL, HANGOUT, MEMES,
-    MUSIC, PLANS, RANDOM, TIM,
+    MUSIC, PLANS, RANDOM, TIM, VOICE,
 };
 use crate::format::Tz;
 use crate::scenes::{booted, booted_as};
@@ -387,7 +387,7 @@ fn dragging_a_section_header_reorders_the_sections() {
     let l = fake.layout(1);
     assert_eq!(
         l.sections.iter().map(|s| s.id).collect::<Vec<_>>(),
-        [HANGOUT, BUILDING, ARCHIVE]
+        [HANGOUT, BUILDING, ARCHIVE, VOICE]
     );
 }
 
@@ -410,7 +410,7 @@ fn a_section_menu_renames_moves_and_creates_a_channel_in_it() {
             .iter()
             .map(|s| s.id)
             .collect::<Vec<_>>(),
-        [HANGOUT, BUILDING, ARCHIVE]
+        [HANGOUT, BUILDING, ARCHIVE, VOICE]
     );
     // Create channel here
     act(&mut rt, |s| s.open_create_channel_in(1, ARCHIVE));

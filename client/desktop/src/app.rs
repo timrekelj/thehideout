@@ -15,6 +15,7 @@ use crate::look::{self, Saver};
 use crate::real::{RealBackend, SharedPrefs, default_server, open_prefs};
 use crate::state::{AppState, Auth, Screen};
 use crate::ui;
+use crate::voice::{self, VoiceSink};
 
 /// Rune's `S`: everything handlers can reach.
 pub struct App {
@@ -25,6 +26,8 @@ pub struct App {
     boot: u8,
     /// Writes look changes to the prefs on a background thread. `None` in scenes and tests.
     saver: Option<Saver>,
+    /// The audio engine, once one is wired: it gets the state's voice intents on every flush.
+    voice_sink: Option<Box<dyn VoiceSink>>,
 }
 
 impl App {
@@ -34,6 +37,7 @@ impl App {
             backend,
             boot: 0,
             saver: None,
+            voice_sink: None,
         }
     }
 
@@ -44,17 +48,37 @@ impl App {
         state.ui.collapsed = look::load_collapsed(&prefs);
         state.ui.recents = look::load_recents(&prefs);
         state.ui.attach.embeds_collapsed = look::load_embeds(&prefs);
+        state.load_voice_prefs(look::load_voice(&prefs));
         let mut app = App::new(backend, state);
         app.saver = Some(Saver::spawn(prefs));
         app
     }
 
-    /// Hands the commands queued on the state to the backend.
+    /// Installs the audio engine that receives the voice intents.
+    pub fn set_voice_sink(&mut self, sink: Box<dyn VoiceSink>) {
+        self.voice_sink = Some(sink);
+    }
+
+    /// The live picture of a video track the stage watches (the sink draws it), if there is one.
+    pub fn video_pixels(&self, track: &str) -> Option<rune::Pixels> {
+        self.voice_sink.as_ref()?.video_pixels(track)
+    }
+
+    /// Hands the commands queued on the state to the backend, and the voice intents to the
+    /// audio engine (dropped while there is none).
     pub fn flush(&mut self) {
+        self.state.settle_voice_page();
+        self.state.settle_video();
+        voice::send_intents(&mut self.state, self.voice_sink.as_deref_mut());
         if std::mem::take(&mut self.state.ui.look_dirty)
             && let Some(saver) = &self.saver
         {
             saver.save(self.state.ui.look);
+        }
+        if std::mem::take(&mut self.state.voice.prefs_dirty)
+            && let Some(saver) = &self.saver
+        {
+            saver.save_voice(self.state.voice_prefs());
         }
         if std::mem::take(&mut self.state.ui.collapsed_dirty)
             && let Some(saver) = &self.saver
@@ -92,7 +116,8 @@ impl App {
         loop {
             self.flush();
             let replies = self.backend.poll(self.state.clock);
-            if replies.is_empty() {
+            let heard = voice::take_events(&mut self.state, self.voice_sink.as_deref_mut());
+            if replies.is_empty() && !heard {
                 break;
             }
             for r in replies {
@@ -171,7 +196,10 @@ pub fn init() -> App {
         if headless() {
             return App::new(backend, state);
         }
-        return App::start(backend, state, open_prefs());
+        let mut app = App::start(backend, state, open_prefs());
+        // The fake world's audio: a device list and a fixed mic level, no real audio.
+        app.set_voice_sink(Box::new(crate::fake::FakeAudio::demo()));
+        return app;
     }
     let prefs = open_prefs();
     let mut state = AppState::new(real_now, Tz::Local);
@@ -183,6 +211,9 @@ pub fn init() -> App {
         prefs,
     );
     app.boot = 1;
+    // Only the network backend gets the audio engine (built on the first join); the fake world
+    // and every scene stay silent.
+    app.set_voice_sink(Box::new(crate::voice_engine::app_sink()));
     app
 }
 
@@ -190,6 +221,9 @@ pub fn setup(a: &mut App, waker: Waker) {
     // Pictures decode off the frame loop and wake the window when they are ready.
     a.state.data.media.set_waker(waker.clone());
     a.state.ui.attach.waker = Some(waker.clone());
+    if let Some(sink) = &mut a.voice_sink {
+        sink.set_waker(waker.clone());
+    }
     a.backend.set_waker(waker);
 }
 
@@ -211,7 +245,8 @@ pub fn poll(a: &mut App, clock: f64, tx: &mut Tx) -> bool {
     loop {
         a.flush();
         let replies = a.backend.poll(clock);
-        if replies.is_empty() {
+        let heard = voice::take_events(&mut a.state, a.voice_sink.as_deref_mut());
+        if replies.is_empty() && !heard {
             break;
         }
         changed = true;
@@ -245,7 +280,8 @@ pub fn on_open_url(a: &mut App, url: &str, _tx: &mut Tx) {
 }
 
 /// Keys no focused control took: Cmd/Ctrl+W closes the window, Cmd/Ctrl+Q quits, Alt+Up and
-/// Alt+Down move between channels, Escape leaves the settings, Cmd/Ctrl+Shift+A opens the admin dashboard (admins only). (Escape belongs to an open modal
+/// Alt+Down move between channels, Escape leaves the settings, Cmd/Ctrl+Shift+A opens the admin dashboard (admins only), and the voice hotkeys
+/// (mute, deafen and push to talk, rebindable on the Voice & audio page) work. (Escape belongs to an open modal
 /// or menu first.)
 pub fn on_key(a: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
     match ev.key {
@@ -269,6 +305,7 @@ pub fn on_key(a: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
         Key::Escape if a.state.ui.admin.is_some() => a.act(|s| s.close_admin()),
         Key::Escape if a.state.ui.settings.is_some() => a.act(|s| s.close_settings()),
         Key::Escape if a.state.ui.server_settings.is_some() => a.act(|s| s.close_server_settings()),
+        _ if a.state.voice_hotkey(ev, tx.physical_key(), tx.key_repeat()) => a.flush(),
         Key::Up if ev.mods.alt && a.state.screen == Screen::Main => a.act(|s| s.step_channel(-1)),
         Key::Down if ev.mods.alt && a.state.screen == Screen::Main => a.act(|s| s.step_channel(1)),
         _ => return false,
@@ -325,6 +362,7 @@ pub fn view(a: &App, cx: &mut Cx<App>) -> El {
     };
     let screen = screen.absolute(0.0, 0.0).w_full().h_full().transition(fade);
     ui::dialogs::build(a, k, &mut layer, lay.height);
+    ui::voice_stage::picker(a, k, &mut layer);
     ui::security::dialogs(a, k, &mut layer, lay.height);
     ui::emoji::build(a, k, &mut layer);
     ui::attach::lightbox_layer(a, k, &mut layer, (lay.width, lay.height));
@@ -346,5 +384,17 @@ pub fn view(a: &App, cx: &mut Cx<App>) -> El {
                 .window_drag(),
         );
     }
+    // The push-to-talk key's release, and the window going quiet, which would otherwise leave the
+    // mic open: both are heard on the root (a release no focused control took).
     rune_kit::root(stage, layer)
+        .on_key_up(|a: &mut App, ev: &KeyEvent, tx: &mut Tx| {
+            let taken = a.state.voice_key_up(ev, tx.physical_key());
+            if taken {
+                a.flush();
+            }
+            taken
+        })
+        .on_window_focus(|a: &mut App, focused: bool, _tx: &mut Tx| {
+            a.act(|s| s.voice_window_focus(focused))
+        })
 }

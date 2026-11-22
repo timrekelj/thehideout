@@ -131,7 +131,7 @@ impl GuildService for GuildSvc {
             .map_err(internal)?;
         crate::stats::guild_created(&self.state).await;
         self.add_member(id, user_id).await?;
-        let channel = self.insert_channel(id, DEFAULT_CHANNEL, None, 0, None, "").await?;
+        let channel = self.insert_channel(id, DEFAULT_CHANNEL, None, 0, None, "", ChannelKind::CHANNEL_KIND_TEXT).await?;
         self.state.events.publish_to_guild(id, EventPayload::ChannelCreated(channel));
         let guild = guild_to_proto(db_id, name.to_owned(), id_to_db(user_id), invite_code, created_at, None);
         self.state.events.notify_user_joined_guild(user_id, guild.clone());
@@ -294,6 +294,11 @@ impl GuildService for GuildSvc {
             self.parse_legacy_icon(req.icon)?
         };
         validate_color(req.color)?;
+        let kind = match req.kind.as_known() {
+            Some(ChannelKind::CHANNEL_KIND_VOICE) => ChannelKind::CHANNEL_KIND_VOICE,
+            Some(ChannelKind::CHANNEL_KIND_UNSPECIFIED | ChannelKind::CHANNEL_KIND_TEXT) => ChannelKind::CHANNEL_KIND_TEXT,
+            None => return Err(ConnectError::invalid_argument("unknown channel kind")),
+        };
 
         let data = layout::load(&self.state, guild_id).await?;
         let built = layout::build(guild_id, &data, 0);
@@ -312,7 +317,7 @@ impl GuildService for GuildSvc {
 
         self.reserve_channel_slot(guild_id).await?;
         let channel = self
-            .insert_channel(guild_id, &name, section, position, icon.as_ref(), req.color)
+            .insert_channel(guild_id, &name, section, position, icon.as_ref(), req.color, kind)
             .await?;
         versions::bump(&self.state, guild_id, versions::LAYOUT, None).await?;
         self.state
@@ -745,6 +750,7 @@ impl GuildSvc {
     }
 
     /// Writes `channels` and `channels_by_id` in one logged batch.
+    #[allow(clippy::too_many_arguments)]
     async fn insert_channel(
         &self,
         guild_id: u64,
@@ -753,6 +759,7 @@ impl GuildSvc {
         position: i32,
         icon: Option<&IconRef>,
         color: &str,
+        kind: ChannelKind,
     ) -> Result<Channel, ConnectError> {
         let mirror = IconRef::legacy_mirror(icon);
         let (icon_kind, icon_value) = IconRef::columns_of(icon);
@@ -762,7 +769,7 @@ impl GuildSvc {
         let mut batch = Batch::new(BatchType::Logged);
         batch.append_statement(
             "INSERT INTO channels (guild_id, id, name, created_at, section_id, position, icon, color, topic, \
-             icon_kind, icon_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
+             icon_kind, icon_value, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)",
         );
         batch.append_statement("INSERT INTO channels_by_id (id, guild_id) VALUES (?, ?)");
         self.state
@@ -770,7 +777,7 @@ impl GuildSvc {
             .batch(
                 &batch,
                 (
-                    (db_guild_id, db_id, name, created_at, section_id.map(id_to_db), position, mirror, color, icon_kind, &icon_value),
+                    (db_guild_id, db_id, name, created_at, section_id.map(id_to_db), position, mirror, color, icon_kind, &icon_value, layout::kind_column(kind)),
                     (db_id, db_guild_id),
                 ),
             )
@@ -787,6 +794,7 @@ impl GuildSvc {
             icon: mirror.to_owned(),
             icon_ref: icon.map(IconRef::to_proto).into(),
             color: color.to_owned(),
+            kind: kind.into(),
             ..Default::default()
         })
     }

@@ -28,6 +28,7 @@ fn main() {
             "thehideout/v1/admin_service.proto",
             "thehideout/v1/emoji_service.proto",
             "thehideout/v1/invite_service.proto",
+            "thehideout/v1/voice_service.proto",
             "thehideout/v1/attachment.proto",
             "thehideout/v1/types.proto",
         ])

@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use rune::TextEdit;
-use thehideout_api::{ApiError, Channel, ChannelIconRef, InvitePreview, SecondFactorMethod};
+use thehideout_api::{ApiError, Channel, ChannelIconRef, ChannelKind, InvitePreview, SecondFactorMethod};
 use thehideout_design::components::EmojiPickerState;
 
 use crate::emoji::IconEmoji;
@@ -217,6 +217,8 @@ pub enum DialogKind {
 /// The look and place fields of the channel dialogs (create and settings): where the channel
 /// goes, its icon and colour, topic, and the icon picker's search.
 pub struct ChannelForm {
+    /// Text or voice (the create dialog offers the choice; a channel's kind never changes).
+    pub kind: ChannelKind,
     /// `None` = top level. Only the create dialog offers the choice.
     pub section: Option<u64>,
     pub section_open: bool,
@@ -243,6 +245,7 @@ pub struct ChannelForm {
 impl ChannelForm {
     pub fn new(section: Option<u64>) -> ChannelForm {
         ChannelForm {
+            kind: ChannelKind::Text,
             section,
             section_open: false,
             icon: String::new(),
@@ -261,6 +264,7 @@ impl ChannelForm {
 
     pub fn of(c: &Channel) -> ChannelForm {
         let mut f = ChannelForm::new(c.section_id);
+        f.kind = c.kind;
         match &c.icon_ref {
             ChannelIconRef::Unicode(g) => f.emoji = Some(IconEmoji::Unicode(g.clone())),
             ChannelIconRef::Custom(id) => f.emoji = Some(IconEmoji::Custom(*id)),

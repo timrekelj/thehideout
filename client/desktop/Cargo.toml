@@ -8,7 +8,14 @@ publish.workspace = true
 name = "thehideout-desktop"
 path = "src/main.rs"
 
+[features]
+# The camera: `thehideout-voice`'s nokhwa (AVFoundation) capture. On by default; build with
+# `--no-default-features` for a binary whose camera button reports "camera unsupported".
+default = ["camera"]
+camera = ["thehideout-voice/camera"]
+
 [dependencies]
+cpal = "0.18.2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gethostname = "1"
 image = { version = "0.25.10", default-features = false, features = ["gif", "webp", "png", "jpeg"] }
@@ -17,6 +24,7 @@ rune-kit = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 thehideout-api = { workspace = true }
 thehideout-design = { workspace = true }
+thehideout-voice = { path = "../voice" }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "net", "io-util"] }
 
 [dev-dependencies]

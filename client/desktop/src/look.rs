@@ -15,6 +15,8 @@ use thehideout_design::ThemeSpec;
 
 /// The prefs key.
 pub const KEY: &str = "appearance";
+/// The prefs key of the Voice & audio settings.
+pub const VOICE_KEY: &str = "voice";
 /// The prefs key of the folded sidebar sections: `{"<guild>": [<section>, ...]}`.
 pub const COLLAPSED_KEY: &str = "collapsed_sections";
 /// The prefs key of the folded embeds: `[[<message>, <embed>], ...]`, oldest first.
@@ -60,6 +62,11 @@ pub fn load(prefs: &SharedPrefs) -> Look {
     prefs.lock().unwrap_or_else(|e| e.into_inner()).get(KEY).unwrap_or_default()
 }
 
+/// The saved voice settings, or the defaults when there are none (or they don't parse).
+pub fn load_voice(prefs: &SharedPrefs) -> crate::voice::VoicePrefs {
+    prefs.lock().unwrap_or_else(|e| e.into_inner()).get(VOICE_KEY).unwrap_or_default()
+}
+
 /// The folded sections as `(guild, section)` pairs; unreadable prefs mean none are folded.
 pub fn load_collapsed(prefs: &SharedPrefs) -> HashSet<(u64, u64)> {
     let saved: HashMap<String, Vec<u64>> = prefs.lock().unwrap_or_else(|e| e.into_inner()).get(COLLAPSED_KEY).unwrap_or_default();
@@ -85,6 +92,7 @@ enum Save {
     Embeds(Vec<(u64, u32)>),
     Collapsed(HashMap<String, Vec<u64>>),
     Recents(Vec<String>),
+    Voice(crate::voice::VoicePrefs),
 }
 
 /// Writes looks and folded sections to the prefs on its own thread; a burst of changes is
@@ -101,31 +109,36 @@ impl Saver {
             .name("thehideout-prefs".into())
             .spawn(move || {
                 while let Ok(first) = rx.recv() {
-                    let (mut look, mut collapsed, mut recents, mut embeds) = (None, None, None, None);
+                    let (mut look, mut collapsed, mut recents, mut embeds, mut voice) = (None, None, None, None, None);
                     let mut take = |s: Save| match s {
                         Save::Look(l) => look = Some(l),
                         Save::Collapsed(c) => collapsed = Some(c),
                         Save::Recents(r) => recents = Some(r),
                         Save::Embeds(e) => embeds = Some(e),
+                        Save::Voice(v) => voice = Some(v),
                     };
                     take(first);
                     while let Ok(newer) = rx.try_recv() {
                         take(newer);
                     }
                     // A pref that can't be saved only costs the next launch's choice.
-                    let mut p = prefs.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(l) = look {
-                        p.set(KEY, &l).ok();
-                    }
-                    if let Some(c) = collapsed {
-                        p.set(COLLAPSED_KEY, &c).ok();
-                    }
-                    if let Some(r) = recents {
-                        p.set(RECENTS_KEY, &r).ok();
-                    }
-                    if let Some(e) = embeds {
-                        p.set(EMBEDS_KEY, &e).ok();
-                    }
+                    crate::real::with_prefs(&prefs, |p| {
+                        if let Some(l) = look {
+                            p.set(KEY, &l).ok();
+                        }
+                        if let Some(c) = collapsed {
+                            p.set(COLLAPSED_KEY, &c).ok();
+                        }
+                        if let Some(r) = recents {
+                            p.set(RECENTS_KEY, &r).ok();
+                        }
+                        if let Some(e) = embeds {
+                            p.set(EMBEDS_KEY, &e).ok();
+                        }
+                        if let Some(v) = voice {
+                            p.set(VOICE_KEY, &v).ok();
+                        }
+                    });
                 }
             })
             .ok();
@@ -135,6 +148,12 @@ impl Saver {
     pub fn save(&self, look: Look) {
         if let Some(tx) = &self.tx {
             tx.send(Save::Look(look)).ok();
+        }
+    }
+
+    pub fn save_voice(&self, voice: crate::voice::VoicePrefs) {
+        if let Some(tx) = &self.tx {
+            tx.send(Save::Voice(voice)).ok();
         }
     }
 

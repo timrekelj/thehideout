@@ -234,7 +234,7 @@ async fn role_validation() {
     let invalid = ErrorCode::InvalidArgument;
     assert_eq!(role(&app, &alice, guild.id, "  ", 0).await.unwrap_err().code, invalid);
     assert_eq!(role(&app, &alice, guild.id, &"x".repeat(101), 0).await.unwrap_err().code, invalid);
-    assert_eq!(role(&app, &alice, guild.id, "r", 64).await.unwrap_err().code, invalid);
+    assert_eq!(role(&app, &alice, guild.id, "r", 1 << 20).await.unwrap_err().code, invalid);
     let err = roles(&app, &alice)
         .create_role(CreateRoleRequest {
             guild_id: guild.id,

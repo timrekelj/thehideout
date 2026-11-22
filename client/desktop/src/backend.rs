@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use thehideout_api::{
     ActivityPoint, AdminFileKind, AdminFileRow, AdminGuildRow, AdminUserRow, ApiError, AuditEntry,
-    Channel, ChannelIconRef, DeviceSession, DmChannel, Emoji, GatewayUpdate, Guild, GuildLayout,
+    Channel, ChannelIconRef, ChannelKind, DeviceSession, DmChannel, Emoji, GatewayUpdate, Guild, GuildLayout,
     Invite, InvitePreview, Member, Message, NewInvite, Overview, Page, Paged, PaletteColor, Passkey,
     PendingAttachment, Permissions, ReactionEmoji, Role, RoleList, SecondFactorMethod, Section, SecuritySummary,
-    TotpSetup, User,
+    TotpSetup, User, VoiceJoin, VoiceState,
 };
 
 /// What a picked picture is for.
@@ -203,9 +203,45 @@ pub enum Command {
     CreateChannel {
         guild: u64,
         name: String,
+        kind: ChannelKind,
         section: Option<u64>,
         icon: ChannelIconRef,
         color: PaletteColor,
+    },
+    // ---- voice ------------------------------------------------------------------------------
+    /// Joins a voice channel (leaving the one we are in): `Reply::VoiceJoined`.
+    JoinVoice {
+        channel: u64,
+    },
+    /// Leaves voice (a no-op when in none): `Reply::VoiceLeft`.
+    LeaveVoice,
+    /// Our own mute and deafen flags, while in a voice channel: `Reply::VoiceFlags`.
+    UpdateVoiceState {
+        self_mute: bool,
+        self_deaf: bool,
+    },
+    /// Our camera and LIVE (screen share) flags, while in a voice channel; `None` leaves one
+    /// unchanged: `Reply::VoiceFlags`.
+    UpdateVideoState {
+        self_video: Option<bool>,
+        self_stream: Option<bool>,
+    },
+    /// Needs MUTE_MEMBERS and a higher top role: `Reply::VoiceModerated`.
+    ServerMuteMember {
+        guild: u64,
+        user: u64,
+        muted: bool,
+    },
+    /// Needs MOVE_MEMBERS and a higher top role; the member's client rejoins on `voice_moved`.
+    MoveMember {
+        guild: u64,
+        user: u64,
+        channel: u64,
+    },
+    /// Needs MOVE_MEMBERS and a higher top role.
+    DisconnectMember {
+        guild: u64,
+        user: u64,
     },
     /// The guild's roles and who holds which: what decides the controls shown.
     LoadAccess {
@@ -577,6 +613,22 @@ pub enum Reply {
     GuildCreated(R<Guild>),
     GuildJoined(R<Guild>),
     ChannelCreated(R<Channel>),
+    /// Answer to `JoinVoice`: what to connect to.
+    VoiceJoined {
+        channel: u64,
+        result: R<VoiceJoin>,
+    },
+    /// Answer to `UpdateVoiceState`.
+    VoiceFlags(R<VoiceState>),
+    /// Answer to `LeaveVoice`.
+    VoiceLeft(R<()>),
+    /// Answer to `ServerMuteMember`, `MoveMember` and `DisconnectMember` (the new state itself
+    /// arrives as a gateway event).
+    VoiceModerated {
+        guild: u64,
+        user: u64,
+        result: R<()>,
+    },
     Members {
         guild: u64,
         result: R<Vec<User>>,

@@ -109,3 +109,24 @@ pub async fn find_user(state: &AppState, db_id: i64) -> Result<Option<User>, Con
         .map_err(internal)?
         .map(|(username, created_at, avatar)| user_to_proto(id_from_db(db_id), &username, created_at, avatar)))
 }
+
+/// Kind of a guild channel (text for channels stored before voice existed).
+pub async fn channel_kind(
+    state: &AppState,
+    guild_id: u64,
+    channel_id: u64,
+) -> Result<crate::proto::thehideout::v1::ChannelKind, ConnectError> {
+    let row = state
+        .session
+        .execute_unpaged(
+            "SELECT kind FROM channels WHERE guild_id = ? AND id = ?",
+            (id_to_db(guild_id), id_to_db(channel_id)),
+        )
+        .await
+        .map_err(internal)?
+        .into_rows_result()
+        .map_err(internal)?
+        .maybe_first_row::<(Option<String>,)>()
+        .map_err(internal)?;
+    Ok(crate::layout::kind_from_column(row.and_then(|(k,)| k).as_deref()))
+}

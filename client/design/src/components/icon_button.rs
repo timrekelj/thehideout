@@ -6,11 +6,11 @@
 //!
 //! Sm is 24x24 with a 14pt icon (`icon::XS`), Md is 32x32 with a 16pt icon (`icon::SM`).
 
-use rune::{El, Icon, icon, row};
+use rune::{icon, row, El, Icon};
 use rune_kit::{Kit, State};
 
-use super::button::{Size, Variant, skin};
-use super::util::{Acts, paint};
+use super::button::{skin, Size, Variant};
+use super::util::{paint, Acts};
 use crate::theme_of;
 use crate::tokens::icon as size;
 
@@ -21,6 +21,8 @@ pub struct IconButton {
     size: Size,
     state: State,
     selected: bool,
+    ink: Option<rune::Color>,
+    hover: Option<rune::Color>,
     acts: Acts,
 }
 
@@ -34,6 +36,8 @@ impl IconButton {
             size: Size::Md,
             state: State::Rest,
             selected: false,
+            ink: None,
+            hover: None,
             acts: Acts::default(),
         }
     }
@@ -48,6 +52,17 @@ impl IconButton {
     /// A toggle that is on. Only the Ghost variant changes: quiet fill, accent icon.
     pub fn selected(mut self, on: bool) -> Self {
         self.selected = on;
+        self
+    }
+    /// The glyph's ink instead of the variant's (a state that is on and means trouble or
+    /// attention, such as a muted microphone in `danger`). A `selected` toggle keeps its own ink.
+    pub fn ink(mut self, c: rune::Color) -> Self {
+        self.ink = Some(c);
+        self
+    }
+    /// The wash a hover paints (a destructive button: `danger_bg`) instead of the variant's.
+    pub fn hover_fill(mut self, c: rune::Color) -> Self {
+        self.hover = Some(c);
         self
     }
     pub fn state(mut self, s: State) -> Self {
@@ -67,6 +82,9 @@ impl IconButton {
 
     pub fn build(self, k: &Kit) -> El {
         let mut s = skin(k, self.variant);
+        if let Some(c) = self.hover {
+            s.surface.hover = c;
+        }
         let on = self.selected && self.variant == Variant::Ghost;
         if on {
             s.surface.fill = theme_of(k).accent_subtle.color();
@@ -80,6 +98,8 @@ impl IconButton {
         };
         let ink = if on {
             theme_of(k).accent_text.color()
+        } else if let Some(c) = self.ink {
+            c
         } else if self.variant == Variant::Ghost {
             k.c.icon_muted
         } else {
@@ -94,7 +114,13 @@ impl IconButton {
         if let Some(b) = s.border {
             e = e.border(1.0, b);
         }
-        e = paint(k, e, s.surface, self.state, (crate::space::RING_WIDTH, crate::space::RING_OFFSET));
+        e = paint(
+            k,
+            e,
+            s.surface,
+            self.state,
+            (crate::space::RING_WIDTH, crate::space::RING_OFFSET),
+        );
         e = e.child(icon(self.glyph, px).key("icon").color(ink).a11y_hidden());
         self.acts.apply(e, self.state != State::Disabled)
     }

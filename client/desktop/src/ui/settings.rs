@@ -1,5 +1,5 @@
-//! The settings page: a full-window view that replaces the shell, a nav on the left (Appearance
-//! and Security, see `security.rs`) and the page on an inset panel, laid out like the main screen.
+//! The settings page: a full-window view that replaces the shell, a nav on the left (Appearance,
+//! Voice & audio, see `voice_settings.rs`, and Security, see `security.rs`) and the page on an inset panel, laid out like the main screen.
 //!
 //! Every control applies at once. Each press asks Rune for its calm colour spring
 //! (`tx.color_motion`), so a change of look is colours crossing and nothing else moving. Presets
@@ -43,9 +43,10 @@ fn resize(a: &mut App, tx: &mut Tx, f: impl FnOnce(&mut Look)) {
     change(a, tx, f);
 }
 
-pub fn build(a: &App, k: &Kit, section: Section, bar: f32) -> El {
+pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, section: Section, bar: f32) -> El {
     let page = match section {
         Section::Appearance => appearance(a, k),
+        Section::Voice => super::voice_settings::page(a, k, layer),
         Section::Security => super::security::page(a, k),
     };
     frame(a, k, bar, nav(k, section), page)
@@ -102,6 +103,12 @@ fn nav(k: &Kit, section: Section) -> El {
                 .on_press(|a: &mut App| a.act(|s| s.ui.settings = Some(Section::Appearance)))
                 .build(k)
                 .key("settings-nav-appearance"),
+            NavRow::new("Voice & audio", &icons::SPEAKER_HIGH)
+                .selected(section == Section::Voice)
+                .highlight_group("settings-nav")
+                .on_press(|a: &mut App| a.act(|s| s.open_voice_settings()))
+                .build(k)
+                .key("settings-nav-voice"),
             NavRow::new("Security", &icons::SHIELD_CHECK)
                 .selected(section == Section::Security)
                 .highlight_group("settings-nav")
