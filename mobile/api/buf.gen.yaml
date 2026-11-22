@@ -1,0 +1,34 @@
+# Client SDK generation for the native apps. Run from anywhere with `mobile/api/generate.sh`
+# (it runs `buf generate` at the repository root so the module in /buf.yaml is the input).
+#
+# Plugins are BSR remote plugins pinned to exact versions, so output is reproducible and needs
+# no local protoc. Bump a version here, rerun the script and commit the diff.
+version: v2
+managed:
+  enabled: true # java_package = com.thehideout.v1, java_multiple_files = true
+clean: true # each `out` below is generated-only: nothing hand-written lives there
+plugins:
+  # --- Swift: SwiftProtobuf messages + connect-swift clients (built on URLSession).
+  - remote: buf.build/apple/swift:v1.38.0
+    out: mobile/ios/Packages/HideoutAPI/Sources/HideoutAPI/Generated
+    opt:
+      - Visibility=Public
+  - remote: buf.build/connectrpc/swift:v1.2.3
+    out: mobile/ios/Packages/HideoutAPI/Sources/HideoutAPI/Generated
+    opt:
+      - Visibility=Public
+      - GenerateAsyncMethods=true
+      - GenerateCallbackMethods=false
+
+  # --- Kotlin: protobuf-javalite messages (+ Kotlin DSL) + connect-kotlin clients (OkHttp).
+  # Lite keeps the Android APK small; connect-kotlin works with either flavour.
+  - remote: buf.build/protocolbuffers/java:v36.2
+    out: mobile/android/api/src/main/java
+    opt:
+      - lite
+  - remote: buf.build/protocolbuffers/kotlin:v36.2
+    out: mobile/android/api/src/main/kotlin
+    opt:
+      - lite
+  - remote: buf.build/connectrpc/kotlin:v0.10.0
+    out: mobile/android/api/src/main/kotlin

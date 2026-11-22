@@ -91,6 +91,29 @@ jobs:
         run: cargo test --locked -p thehideout-design -p thehideout-desktop --bin thehideout-desktop
       - name: test api (lib only)
         run: cargo test --locked -p thehideout-api --lib
+      # mobile/tokens/tokens.json is exported from the design crate; a token change must land with it.
+      - name: mobile tokens.json is current
+        run: |
+          cargo run --locked -q -p thehideout-design --example export_tokens -- "$RUNNER_TEMP/tokens.json"
+          diff -q "$RUNNER_TEMP/tokens.json" ../mobile/tokens/tokens.json || {
+            echo "::error::mobile/tokens/tokens.json is stale: cd client && cargo run -p thehideout-design --example export_tokens -- ../mobile/tokens/tokens.json && python3 -I ../mobile/tokens/generate.py"; exit 1; }
+
+  mobile:
+    name: mobile (tokens, API clients, HideoutAPI)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: generated design tokens are current
+        run: python3 -I mobile/tokens/generate.py --check
+      - name: generated API clients are current
+        run: mobile/api/generate.sh --check
+      - name: swift build HideoutAPI
+        working-directory: mobile/ios/Packages/HideoutAPI
+        run: swift build
 
   deny:
     name: cargo deny
