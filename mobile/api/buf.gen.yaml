@@ -23,12 +23,12 @@ plugins:
   # --- Kotlin: protobuf-javalite messages (+ Kotlin DSL) + connect-kotlin clients (OkHttp).
   # Lite keeps the Android APK small; connect-kotlin works with either flavour.
   - remote: buf.build/protocolbuffers/java:v36.2
-    out: mobile/android/api/generated/java
+    out: mobile/android/api/src/main/java
     opt:
       - lite
   - remote: buf.build/protocolbuffers/kotlin:v36.2
-    out: mobile/android/api/generated/kotlin
+    out: mobile/android/api/src/main/kotlin
     opt:
       - lite
   - remote: buf.build/connectrpc/kotlin:v0.10.0
-    out: mobile/android/api/generated/kotlin
+    out: mobile/android/api/src/main/kotlin
