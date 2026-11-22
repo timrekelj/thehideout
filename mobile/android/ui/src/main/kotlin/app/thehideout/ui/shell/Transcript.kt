@@ -1,6 +1,9 @@
 package app.thehideout.ui.shell
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.layout.Arrangement
@@ -22,10 +25,11 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.clearText
-import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,7 +38,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.LoadingIndicator
@@ -42,15 +48,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.thehideout.core.model.Channel
-import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.autocomplete.Autocomplete
+import app.thehideout.core.autocomplete.Trigger
+import app.thehideout.core.emoji.EmojiEntry
+import app.thehideout.core.model.Emoji
 import app.thehideout.core.model.Message
+import app.thehideout.core.model.ReactionEmoji
+import app.thehideout.core.model.User
 import app.thehideout.core.store.AppState
+import app.thehideout.core.store.ConnectionStatus
 import app.thehideout.core.store.Delivery
 import app.thehideout.core.store.Marker
 import app.thehideout.ui.components.*
@@ -103,8 +119,8 @@ internal fun transcriptItems(state: AppState, channel: Long, zone: ZoneId): List
     return out
 }
 
-/** The channel (or DM) on screen: a top bar, the messages, and the composer. */
-@OptIn(ExperimentalMaterial3Api::class)
+/** The channel (or DM) on screen: a top bar, the reconnect banner, the messages, and the composer. */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TranscriptPane(
     state: AppState,
@@ -114,6 +130,10 @@ fun TranscriptPane(
     actions: ShellActions,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    members: List<User> = emptyList(),
+    serverEmojis: List<Emoji> = emptyList(),
+    canManageMessages: Boolean = false,
+    onOpenMembers: (() -> Unit)? = null,
 ) {
     val c = Hideout.colors
     val zone = app.thehideout.ui.components.LocalTimeZone.current
@@ -121,33 +141,63 @@ fun TranscriptPane(
     val log = state.log(channelId)
     val today = LocalToday.current ?: LocalDate.now(zone)
     val listState = rememberLazyListState()
-    // Opening a channel reads it; the keyboard comes up when the reader taps the composer, not before.
-    // The adaptive scaffold moves focus into a pane it navigates to, and the only focusable thing
-    // in touch mode is the composer's text field: park focus on an inert target instead.
     val sink = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(channelId) { sink.requestFocus() }
+
+    var actionMessage by remember { mutableStateOf<Message?>(null) }
+    var editing by remember(channelId) { mutableStateOf<Message?>(null) }
+    val text = rememberSaveable(channelId, saver = TextFieldState.Saver) { TextFieldState(state.draft(channelId)) }
+    LaunchedEffect(channelId) { snapshotFlow { text.text.toString() }.collect { if (editing == null) actions.setDraft(channelId, it) } }
+
     Scaffold(
         modifier = modifier.focusRequester(sink).focusable(),
         containerColor = c.bg,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    navigationIcon = { if (onBack != null) IconButton(onClick = onBack) { SymIcon(Sym.ArrowBack, "Back") } },
+                    actions = {
+                        if (onOpenMembers != null) IconButton(onClick = onOpenMembers) { SymIcon(Sym.Person, "Members") }
+                        IconButton(onClick = {}) { SymIcon(Sym.Search, "Search") }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = c.bg, scrolledContainerColor = c.surface),
+                )
+                ReconnectBanner(state.connection)
+            }
+        },
+        bottomBar = {
+            Composer(
+                channelName = title,
+                text = text,
+                members = members,
+                serverEmojis = serverEmojis,
+                editing = editing,
+                onCancelEdit = { editing = null; text.clearText() },
+                onSend = { body ->
+                    val e = editing
+                    if (e != null) {
+                        actions.editMessage(channelId, e.id, body)
+                        editing = null
+                    } else {
+                        actions.send(body)
                     }
+                    text.clearText()
                 },
-                navigationIcon = { if (onBack != null) IconButton(onClick = onBack) { SymIcon(Sym.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = {}) { SymIcon(Sym.Search, "Search") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = c.bg, scrolledContainerColor = c.surface),
             )
         },
-        bottomBar = { Composer(title, actions.send) },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (log == null || (!log.loaded && items.isEmpty())) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
+            } else if (items.isEmpty()) {
+                EmptyState(Sym.Tag, "This is the start", "No messages here yet. Say hello.", Modifier.align(Alignment.Center))
             } else {
                 // Reversed so the newest message sits at the bottom and older pages load upward.
                 val reversed = remember(items) { items.asReversed() }
@@ -158,7 +208,15 @@ fun TranscriptPane(
                 ) {
                     items(reversed.size, key = null) { i ->
                         when (val item = reversed[i]) {
-                            is TranscriptItem.Row -> MessageRow(item.ui, onRetry = { item.ui.message.nonce.takeIf { it.isNotEmpty() }?.let(actions.retry) })
+                            is TranscriptItem.Row -> MessageRow(
+                                item.ui,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = { if (item.ui.message.id != 0L) actionMessage = item.ui.message },
+                                ),
+                                onReact = { r -> actions.react(channelId, item.ui.message.id, r.emoji) },
+                                onRetry = { item.ui.message.nonce.takeIf { it.isNotEmpty() }?.let(actions.retry) },
+                            )
                             is TranscriptItem.Day -> DayDivider(item.date, today)
                             TranscriptItem.New -> NewDivider()
                         }
@@ -169,6 +227,40 @@ fun TranscriptPane(
             }
         }
     }
+
+    actionMessage?.let { m ->
+        val mine = m.authorId == state.myId
+        MessageActionSheet(
+            message = m,
+            canEdit = mine,
+            canDelete = mine || canManageMessages,
+            onDismiss = { actionMessage = null },
+            onReact = { emoji -> actions.react(channelId, m.id, emoji) },
+            onReply = {
+                val name = state.users[m.authorId]?.username
+                if (name != null) text.setTextAndPlaceCursorAtEnd("${text.text}@$name ".trimStart())
+            },
+            onEdit = { editing = m; text.setTextAndPlaceCursorAtEnd(m.content) },
+            onDelete = { actions.deleteMessage(channelId, m.id) },
+            serverEmojis = serverEmojis,
+        )
+    }
+}
+
+/** The connection pill: hidden while live, shown while connecting or reconnecting (TRANS-09). */
+@Composable
+private fun ReconnectBanner(status: ConnectionStatus) {
+    val c = Hideout.colors
+    AnimatedVisibility(visible = status != ConnectionStatus.Connected) {
+        Surface(color = c.surfaceOverlay, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                if (status == ConnectionStatus.Reconnecting) "Reconnecting…" else "Connecting…",
+                style = MaterialTheme.typography.labelMedium,
+                color = c.textMuted,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -177,28 +269,116 @@ private fun LoadOlderWhenReached(state: LazyListState, count: Int, hasMore: Bool
     LaunchedEffect(atTop, hasMore) { if (atTop && hasMore) load() }
 }
 
-/** The message field. Attachments, emoji and mentions arrive with the chat phase. */
+/**
+ * The message field: multi-line, `@mention`/`:emoji` autocomplete above it (MSG-10, simplified to
+ * assume the caret sits at the end of the text while typing), an emoji button opening the picker,
+ * and an inline edit mode (own message) with Cancel/Save instead of Send.
+ */
 @Composable
-private fun Composer(channelName: String, onSend: (String) -> Unit) {
+private fun Composer(
+    channelName: String,
+    text: TextFieldState,
+    members: List<User>,
+    serverEmojis: List<Emoji>,
+    editing: Message?,
+    onCancelEdit: () -> Unit,
+    onSend: (String) -> Unit,
+) {
     val c = Hideout.colors
-    val text = rememberTextFieldState()
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    val current = text.text.toString()
+    val trigger = remember(current) { Autocomplete.trigger(current, current.length) }
+
+    Column {
+        when (trigger) {
+            is Trigger.Mention -> {
+                val matches = Autocomplete.mentionMatches(trigger.query, members)
+                if (matches.isNotEmpty()) {
+                    AutocompleteStrip(matches.map { it.username }) { name ->
+                        text.setTextAndPlaceCursorAtEnd(current.substring(0, trigger.start) + "@$name ")
+                    }
+                }
+            }
+            is Trigger.EmojiShortcode -> {
+                val matches = Autocomplete.emojiMatches(trigger.query, serverEmojis)
+                if (matches.isNotEmpty()) {
+                    AutocompleteStrip(matches.map { entryLabel(it) }) { label ->
+                        val picked = matches.first { entryLabel(it) == label }
+                        val replacement = when (picked) {
+                            is EmojiEntry.Unicode -> picked.emoji + " "
+                            is EmojiEntry.Custom -> ":${picked.name}: "
+                        }
+                        text.setTextAndPlaceCursorAtEnd(current.substring(0, trigger.start) + replacement)
+                    }
+                }
+            }
+            Trigger.None -> Unit
+        }
+        if (editing != null) {
+            Row(Modifier.fillMaxWidth().background(c.surfaceRaised).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Editing message", style = MaterialTheme.typography.labelMedium, color = c.textMuted)
+                TextButton(onClick = onCancelEdit) { Text("Cancel") }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().background(c.bg).navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(onClick = { showEmojiPicker = true }, modifier = Modifier.padding(bottom = 2.dp)) { SymIcon(Sym.Mood, "Emoji") }
+            OutlinedTextField(
+                state = text,
+                modifier = Modifier.weight(1f).testTag("composer-field"),
+                placeholder = { Text(if (editing != null) "Edit message" else "Message $channelName") },
+                lineLimits = TextFieldLineLimits.MultiLine(1, 5),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.xl),
+            )
+            FilledIconButton(
+                onClick = { if (text.text.isNotBlank()) onSend(text.text.toString()) },
+                enabled = text.text.isNotBlank(),
+                modifier = Modifier.padding(bottom = 6.dp),
+                shapes = androidx.compose.material3.IconButtonDefaults.shapes(),
+            ) { SymIcon(if (editing != null) Sym.Check else Sym.Send, if (editing != null) "Save" else "Send") }
+        }
+    }
+
+    if (showEmojiPicker) {
+        EmojiPickerSheet(
+            onDismiss = { showEmojiPicker = false },
+            onPick = { entry ->
+                val insert = when (entry) {
+                    is EmojiEntry.Unicode -> entry.emoji
+                    is EmojiEntry.Custom -> ":${entry.name}:"
+                }
+                text.setTextAndPlaceCursorAtEnd("$current$insert")
+                showEmojiPicker = false
+            },
+            serverEmojis = serverEmojis,
+        )
+    }
+}
+
+private fun entryLabel(e: EmojiEntry): String = when (e) {
+    is EmojiEntry.Unicode -> "${e.emoji} ${e.name}"
+    is EmojiEntry.Custom -> "${e.name}"
+}
+
+/** A row of tappable suggestions above the keyboard (member names or emoji). */
+@Composable
+private fun AutocompleteStrip(labels: List<String>, onPick: (String) -> Unit) {
+    val c = Hideout.colors
     Row(
-        Modifier.fillMaxWidth().background(c.bg).navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
+        Modifier.fillMaxWidth().background(c.surfaceRaised).padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedTextField(
-            state = text,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("Message $channelName") },
-            lineLimits = TextFieldLineLimits.MultiLine(1, 5),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.xl),
-        )
-        FilledIconButton(
-            onClick = { onSend(text.text.toString()); text.clearText() },
-            enabled = text.text.isNotBlank(),
-            modifier = Modifier.padding(bottom = 6.dp),
-            shapes = androidx.compose.material3.IconButtonDefaults.shapes(),
-        ) { SymIcon(Sym.Send, "Send") }
+        labels.forEach { label ->
+            Surface(
+                onClick = { onPick(label) },
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.md),
+                color = c.surfaceOverlay,
+            ) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = c.text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+            }
+        }
     }
 }

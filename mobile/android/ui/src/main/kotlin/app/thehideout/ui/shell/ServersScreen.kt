@@ -22,8 +22,10 @@ import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.toMutableStateList
@@ -73,10 +75,23 @@ fun ServersScreen(state: AppState, actions: ShellActions, modifier: Modifier = M
         detailPane = {
             AnimatedPane {
                 if (guild != null && channel != null) {
+                    var showMembers by remember { mutableStateOf(false) }
+                    val members = state.members[guild.id].orEmpty().mapNotNull { state.users[it] }
                     TranscriptPane(
                         state, channel.id, "# ${channel.name}", channel.topic.ifBlank { guild.name }, actions,
                         onBack = if (navigator.canNavigateBack()) ({ scope.launch { navigator.navigateBack() } }) else null,
+                        members = members,
+                        serverEmojis = state.emojis[guild.id].orEmpty(),
+                        canManageMessages = app.thehideout.core.model.Perm.has(state.perms(guild.id), app.thehideout.core.model.Perm.MANAGE_MESSAGES),
+                        onOpenMembers = { showMembers = true },
                     )
+                    if (showMembers) {
+                        MembersSheet(state, guild.id, onDismiss = { showMembers = false }, onMessage = { userId ->
+                            showMembers = false
+                            actions.startDm(userId)
+                            actions.navigateToDms()
+                        })
+                    }
                 } else {
                     Box(Modifier.fillMaxSize().background(Hideout.colors.bg)) { EmptyState(Sym.Tag, "Pick a channel", "Its messages show up here.", Modifier.align(Alignment.Center)) }
                 }
