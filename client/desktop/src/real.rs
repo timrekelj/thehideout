@@ -677,8 +677,9 @@ impl Backend for RealBackend {
             Command::LookupInvite { code } => {
                 self.signed_out(move |c| async move { c.lookup_invite(&code).await }, Reply::InviteLookup)
             }
-            Command::AcceptInvite { code, username, password } => self.sign_in(move |c| async move {
-                let (token, user) = c.accept_invite(&code, &username, password.as_deref(), &device_label()).await?;
+            Command::AcceptInvite { code, username, password, terms_version, age_confirmed } => self.sign_in(move |c| async move {
+                let terms = thehideout_api::InviteTerms { version: &terms_version, age_confirmed };
+                let (token, user) = c.accept_invite(&code, &username, password.as_deref(), &device_label(), terms).await?;
                 Ok(LoginOutcome::Session { token, user })
             }),
             Command::LoadSecurity => {
@@ -1372,6 +1373,48 @@ impl Backend for RealBackend {
                 self.call(
                     async move { client.admin_delete_file(&sent, &reason).await },
                     move |result| Reply::AdminFileDeleted { key, result },
+                );
+            }
+            Command::CheckTerms => {
+                self.call(async move { client.get_me_with_terms().await.map(|(_, t)| t) }, Reply::Terms);
+            }
+            Command::AcceptTerms { version } => {
+                let sent = version.clone();
+                self.call(
+                    async move { client.accept_terms(&sent).await },
+                    move |result| Reply::TermsAccepted { version, result },
+                );
+            }
+            Command::RequestAccountDeletionCode => {
+                self.call(async move { client.request_account_deletion_code().await }, Reply::DeletionCodeSent);
+            }
+            Command::DeleteAccount { password, email_code, totp_code } => {
+                self.call(
+                    async move {
+                        client.delete_account(thehideout_api::DeleteCredentials { password, email_code, totp_code }).await
+                    },
+                    Reply::AccountDeleted,
+                );
+            }
+            Command::ExportData => {
+                self.call(async move { client.export_data().await }, Reply::DataExportQueued);
+            }
+            Command::AdminSuspendUser { user, reason, until } => {
+                self.call(
+                    async move { client.admin_suspend_user(user, &reason, until).await },
+                    move |result| Reply::AdminUserSuspended { user, result },
+                );
+            }
+            Command::AdminUnsuspendUser { user } => {
+                self.call(
+                    async move { client.admin_unsuspend_user(user).await },
+                    move |result| Reply::AdminUserUnsuspended { user, result },
+                );
+            }
+            Command::AdminDeleteUser { user, force_transfer, reason } => {
+                self.call(
+                    async move { client.admin_delete_user(user, force_transfer, &reason).await },
+                    move |result| Reply::AdminUserDeleted { user, result },
                 );
             }
             Command::SignOut => {

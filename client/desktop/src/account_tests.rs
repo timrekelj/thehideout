@@ -466,6 +466,9 @@ fn looked_up(code: &str) -> (App, FakeBackend) {
     app.state.auth.invite.replace_text(code);
     app.act(|s| s.submit_auth());
     app.pump();
+    // The invitee ticks the terms and age boxes (the screen's checkboxes set these).
+    app.state.auth.accept_terms = true;
+    app.state.auth.confirm_age = true;
     (app, fake)
 }
 

@@ -127,6 +127,21 @@ pub struct InvitePreview {
     pub expires_at: SystemTime,
     /// Only [`InviteStatus::Pending`] invites can be accepted.
     pub status: InviteStatus,
+    /// The terms version [`Client::accept_invite`] must be given ([`InviteTerms::version`]).
+    pub terms_version: String,
+    /// The minimum age the invitee confirms (16).
+    pub minimum_age: u32,
+}
+
+/// What an invitee agreed to: the terms version they were shown and the age confirmation.
+/// The server refuses an invite without both ([`ApiError::TermsUpdateRequired`] /
+/// [`ApiError::InvalidArgument`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InviteTerms<'a> {
+    /// [`InvitePreview::terms_version`].
+    pub version: &'a str,
+    /// The invitee confirmed they are at least [`InvitePreview::minimum_age`].
+    pub age_confirmed: bool,
 }
 
 /// What to create with [`Client::create_invite`].
@@ -294,19 +309,23 @@ impl Client {
             guild_names: res.guild_names,
             expires_at: time(res.expires_at.as_option()),
             status: res.status.into(),
+            terms_version: res.terms_version,
+            minimum_age: res.minimum_age,
         })
     }
 
     /// Creates the account an invite is for and stores its session token.
     /// `password: None` makes a passwordless account (email code / passkey sign-in).
     /// A taken username is [`ApiError::AlreadyExists`]; a used, expired or
-    /// revoked invite is [`ApiError::Precondition`].
+    /// revoked invite is [`ApiError::Precondition`]. `terms` must carry the current terms version
+    /// and the age confirmation, else [`ApiError::TermsUpdateRequired`] / [`ApiError::InvalidArgument`].
     pub async fn accept_invite(
         &self,
         token_or_code: &str,
         username: &str,
         password: Option<&str>,
         device_name: &str,
+        terms: InviteTerms<'_>,
     ) -> Result<(String, User)> {
         let res = self
             .invites()?
@@ -315,6 +334,8 @@ impl Client {
                 username: username.into(),
                 password: password.map(str::to_owned),
                 device_name: device_name.into(),
+                accepted_terms_version: terms.version.into(),
+                age_confirmed: terms.age_confirmed,
                 ..Default::default()
             })
             .await?

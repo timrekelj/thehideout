@@ -44,6 +44,8 @@ pub struct Config {
     /// Email that gets the first admin invite on an empty install
     /// (`THEHIDEOUT_BOOTSTRAP_ADMIN_EMAIL`).
     pub bootstrap_admin_email: Option<String>,
+    /// Operator contact, name and minimum client version (legal pages, update gate).
+    pub policy: crate::policy::Policy,
     /// LiveKit (voice channels); `None` = voice is not configured and
     /// `JoinVoice` answers UNAVAILABLE.
     pub livekit: Option<LiveKitConfig>,
@@ -320,7 +322,12 @@ impl Config {
         if max_streams_per_user == 0 || max_streams == 0 {
             bail!("THEHIDEOUT_MAX_STREAMS_PER_USER and THEHIDEOUT_MAX_STREAMS must be at least 1");
         }
+        let policy = policy_from_env(&public_url, &non_empty)?;
         Ok(Self {
+            policy: crate::policy::Policy {
+                bootstrap_admin_email: non_empty("THEHIDEOUT_BOOTSTRAP_ADMIN_EMAIL").map(|e| crate::accounts::normalize_email(&e)),
+                ..policy
+            },
             public_url,
             email_from: non_empty("THEHIDEOUT_EMAIL_FROM")
                 .unwrap_or_else(|| crate::email::DEFAULT_FROM.to_owned()),
@@ -353,6 +360,29 @@ impl Config {
             max_streams,
         })
     }
+}
+
+/// `THEHIDEOUT_CONTACT_EMAIL` (required away from development hosts),
+/// `THEHIDEOUT_OPERATOR_NAME` and `THEHIDEOUT_MIN_CLIENT_VERSION[_DESKTOP|_IOS|_ANDROID]`.
+fn policy_from_env(public_url: &url::Url, non_empty: &dyn Fn(&str) -> Option<String>) -> Result<crate::policy::Policy> {
+    use crate::policy::{MinClient, Policy};
+    let contact_email = non_empty("THEHIDEOUT_CONTACT_EMAIL").map(|e| crate::accounts::normalize_email(&e));
+    match &contact_email {
+        Some(email) if !crate::accounts::valid_email(email) => bail!("invalid THEHIDEOUT_CONTACT_EMAIL {email:?}"),
+        None if !public_url.host().is_some_and(|h| crate::email::is_dev_host(&h)) => bail!(
+            "THEHIDEOUT_CONTACT_EMAIL is required for a non-development deployment: the privacy notice and terms show it \
+             (THEHIDEOUT_PUBLIC_URL={public_url})"
+        ),
+        _ => {}
+    }
+    let version = |name: &str| MinClient::parse_var(name, non_empty(name).as_deref()).map_err(anyhow::Error::msg);
+    let mut min_client = MinClient { default: version("THEHIDEOUT_MIN_CLIENT_VERSION")?, ..Default::default() };
+    for platform in ["desktop", "ios", "android"] {
+        if let Some(v) = version(&format!("THEHIDEOUT_MIN_CLIENT_VERSION_{}", platform.to_uppercase()))? {
+            min_client.platforms.insert(platform.to_owned(), v);
+        }
+    }
+    Ok(Policy { contact_email, operator_name: non_empty("THEHIDEOUT_OPERATOR_NAME"), min_client, bootstrap_admin_email: None })
 }
 
 impl S3Config {
@@ -697,5 +727,45 @@ mod s3_credentials_tests {
             &url::Url::parse("https://hideout.example.com").unwrap()
         )
         .is_ok());
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| pairs.iter().find(|(k, _)| *k == name).map(|(_, v)| (*v).to_owned())
+    }
+
+    fn url(s: &str) -> url::Url {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn the_contact_email_is_required_away_from_development() {
+        let none = env(&[]);
+        assert!(policy_from_env(&url("https://chat.example.org"), &none).is_err());
+        let ok = policy_from_env(&url("https://chat.example.org"), &env(&[("THEHIDEOUT_CONTACT_EMAIL", " Privacy@Example.org ")])).unwrap();
+        assert_eq!(ok.contact_email.as_deref(), Some("privacy@example.org"));
+        // Development hosts fall back to the marked placeholder.
+        for dev in ["http://localhost:8080", "http://127.0.0.1:8080", "https://hideout.test"] {
+            assert!(policy_from_env(&url(dev), &none).unwrap().contact_email.is_none(), "{dev}");
+        }
+        assert!(policy_from_env(&url("http://localhost"), &env(&[("THEHIDEOUT_CONTACT_EMAIL", "nope")])).is_err());
+    }
+
+    #[test]
+    fn minimum_versions_parse_with_platform_overrides() {
+        let p = policy_from_env(
+            &url("http://localhost"),
+            &env(&[("THEHIDEOUT_MIN_CLIENT_VERSION", "1.2.0"), ("THEHIDEOUT_MIN_CLIENT_VERSION_IOS", "2.0.1"), ("THEHIDEOUT_OPERATOR_NAME", "Us")]),
+        )
+        .unwrap();
+        assert_eq!(p.operator_name.as_deref(), Some("Us"));
+        assert_eq!(p.min_client.minimum("desktop"), Some(crate::policy::Version(1, 2, 0)));
+        assert_eq!(p.min_client.minimum("ios"), Some(crate::policy::Version(2, 0, 1)));
+        assert!(policy_from_env(&url("http://localhost"), &env(&[("THEHIDEOUT_MIN_CLIENT_VERSION", "soon")])).is_err());
+        assert_eq!(policy_from_env(&url("http://localhost"), &env(&[])).unwrap().min_client.minimum("desktop"), None);
     }
 }

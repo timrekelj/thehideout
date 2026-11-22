@@ -24,7 +24,7 @@ impl Client {
         Ok(pb::MediaServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    fn admin(&self) -> Result<pb::AdminServiceClient<HttpClient>> {
+    pub(crate) fn admin(&self) -> Result<pb::AdminServiceClient<HttpClient>> {
         Ok(pb::AdminServiceClient::new(self.http.clone(), self.config()?))
     }
 

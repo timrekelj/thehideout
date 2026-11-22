@@ -24,6 +24,8 @@ fn accept_req(token_or_code: &str, username: &str, password: Option<&str>) -> Ac
         username: username.into(),
         password: password.map(str::to_owned),
         device_name: "new laptop".into(),
+        accepted_terms_version: thehideout_server::policy::LEGAL_VERSION.into(),
+        age_confirmed: true,
         ..Default::default()
     }
 }

@@ -387,6 +387,33 @@ async fn scope_page(state: &AppState, scope: &str, before: Option<u64>, limit: u
         .collect())
 }
 
+/// Revokes the pending invites `user_id` sent (their account is being deleted).
+pub async fn withdraw_by_inviter(state: &AppState, user_id: u64) -> Result<(), ConnectError> {
+    let mut before = None;
+    loop {
+        let ids = scope_page(state, "all", before, MAX_LIMIT).await?;
+        let Some(last) = ids.last().copied() else { return Ok(()) };
+        for id in ids {
+            let Some(invite) = load(state, id).await? else { continue };
+            if invite.inviter_id != Some(user_id) || invite.status != "pending" {
+                continue;
+            }
+            let applied = lwt_applied(
+                state
+                    .session
+                    .execute_unpaged("UPDATE invites SET status = 'revoked' WHERE id = ? IF status = 'pending'", (id_to_db(id),))
+                    .await
+                    .map_err(internal)?,
+            )?;
+            if applied {
+                unindex_hashes(state, &invite).await?;
+                crate::admin::audit(state, user_id, "invite.revoke", &format!("invite:{id}"), "inviter deleted their account").await?;
+            }
+        }
+        before = Some(last);
+    }
+}
+
 async fn is_site_admin(state: &AppState, user_id: u64) -> Result<bool, ConnectError> {
     Ok(accounts::load(state, user_id).await?.is_some_and(|a| a.is_admin))
 }
@@ -579,6 +606,8 @@ impl InviteService for InviteSvc {
             guild_names: guild_names(&self.state, &invite.guild_ids).await?,
             expires_at: datetime_to_proto(invite.expires_at).into(),
             status: invite.status().into(),
+            terms_version: crate::policy::LEGAL_VERSION.to_owned(),
+            minimum_age: crate::policy::MIN_AGE,
             ..Default::default()
         })
     }
@@ -596,6 +625,18 @@ impl InviteService for InviteSvc {
             .ok_or_else(|| ConnectError::not_found("invite not found"))?;
         if invite.status() != InviteStatus::INVITE_STATUS_PENDING {
             return Err(not_pending(invite.status()));
+        }
+        if req.accepted_terms_version != crate::policy::LEGAL_VERSION {
+            return Err(ConnectError::invalid_argument(format!(
+                "you must accept the terms and privacy notice (version {})",
+                crate::policy::LEGAL_VERSION
+            )));
+        }
+        if !req.age_confirmed {
+            return Err(ConnectError::invalid_argument(format!(
+                "you must confirm that you are at least {} years old",
+                crate::policy::MIN_AGE
+            )));
         }
         accounts::check_username(&accounts::normalize_username(req.username))?;
         if let Some(password) = req.password {
@@ -640,6 +681,8 @@ impl InviteService for InviteSvc {
             )
             .await
             .map_err(internal)?;
+        crate::lifecycle::record_terms(&self.state, account.id).await?;
+        account.accepted_terms_version = Some(crate::policy::LEGAL_VERSION.to_owned());
         if invite.make_admin && !account.is_admin {
             crate::admin::set_flag(&self.state, account.id, true).await?;
             account.is_admin = true;
@@ -676,7 +719,8 @@ async fn landing(Path(token): Path<String>) -> impl IntoResponse {
          <body style=\"font-family:-apple-system,Segoe UI,sans-serif;max-width:480px;margin:15vh auto;padding:0 16px;color:#1b1b1f\">\
          <h2>You're invited to thehideout</h2>\
          <p>Open the thehideout app, choose <b>Accept an invite</b> and paste this invite (or the code from your email):</p>\
-         <p><code style=\"word-break:break-all;font-size:14px\">{token}</code></p></body></html>"
+         <p><code style=\"word-break:break-all;font-size:14px\">{token}</code></p>\
+         <p style=\"font-size:13px;color:#6b6b76\">By creating an account you agree to the <a href=\"/terms\">terms</a> and the <a href=\"/privacy\">privacy notice</a>; you must be at least 16.</p></body></html>"
     );
     (
         [

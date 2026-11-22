@@ -817,6 +817,87 @@ impl GuildService for GuildSvc {
         let user_id = authenticate(&self.state, &ctx).await?;
         let guild_id = req.guild_id;
         let guild = self.owned_guild(user_id, guild_id, req.confirm_name).await?;
+        self.delete_guild_now(user_id, &guild).await?;
+        Response::ok(DeleteGuildResponse::default())
+    }
+
+    async fn rotate_invite_code(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, RotateInviteCodeRequest>,
+    ) -> ServiceResult<RotateInviteCodeResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let guild_id = req.guild_id;
+        require_permission(&self.state, user_id, guild_id, MANAGE_SERVER).await?;
+        self.throttle_layout(user_id)?;
+        let old = self
+            .find_guild(id_to_db(guild_id))
+            .await?
+            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
+        let code = self.claim_invite_code(id_to_db(guild_id)).await?;
+        self.state
+            .session
+            .execute_unpaged("UPDATE guilds SET invite_code = ? WHERE id = ?", (&code, id_to_db(guild_id)))
+            .await
+            .map_err(internal)?;
+        self.state
+            .session
+            .execute_unpaged("DELETE FROM guilds_by_invite WHERE invite_code = ?", (&old.invite_code,))
+            .await
+            .map_err(internal)?;
+        if let Some(guild) = self.find_guild(id_to_db(guild_id)).await? {
+            self.state.events.publish_to_guild(guild_id, EventPayload::GuildUpdated(guild));
+        }
+        moderation::audit(&self.state, user_id, "guild.rotate_invite", &format!("guild:{guild_id}"), "").await;
+        Response::ok(RotateInviteCodeResponse { invite_code: code, ..Default::default() })
+    }
+
+    async fn transfer_ownership(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, TransferOwnershipRequest>,
+    ) -> ServiceResult<TransferOwnershipResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let guild_id = req.guild_id;
+        self.owned_guild(user_id, guild_id, req.confirm_name).await?;
+        if req.user_id == user_id {
+            return Err(ConnectError::invalid_argument("you already own this guild"));
+        }
+        if !is_member(&self.state, req.user_id, guild_id).await? || crate::accounts::load(&self.state, req.user_id).await?.is_none() {
+            return Err(ConnectError::not_found("the new owner must be a member of the guild"));
+        }
+        // Only the current owner's transfer wins if two race.
+        let (applied, _) = self
+            .state
+            .session
+            .execute_unpaged(
+                "UPDATE guilds SET owner_id = ? WHERE id = ? IF owner_id = ?",
+                (id_to_db(req.user_id), id_to_db(guild_id), id_to_db(user_id)),
+            )
+            .await
+            .map_err(internal)?
+            .into_rows_result()
+            .map_err(internal)?
+            .first_row::<(bool, Option<i64>)>()
+            .map_err(internal)?;
+        if !applied {
+            return Err(ConnectError::aborted("ownership changed: refetch and retry"));
+        }
+        let guild = self
+            .find_guild(id_to_db(guild_id))
+            .await?
+            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
+        self.state.events.publish_to_guild(guild_id, EventPayload::GuildUpdated(guild.clone()));
+        moderation::audit(&self.state, user_id, "guild.transfer", &member_target(guild_id, req.user_id), "").await;
+        Response::ok(TransferOwnershipResponse { guild: guild.into(), ..Default::default() })
+    }
+}
+
+impl GuildSvc {
+    /// Deletes a guild: unreachable at once, the rest purged in the background.
+    /// `actor` is audit-logged. Callers check who may do this.
+    pub async fn delete_guild_now(&self, actor: u64, guild: &Guild) -> Result<(), ConnectError> {
+        let guild_id = guild.id;
         let channel_ids: Vec<u64> = layout::load(&self.state, guild_id).await?.channels.iter().map(|c| c.id).collect();
         let members: Vec<i64> = self
             .state
@@ -867,82 +948,11 @@ impl GuildService for GuildSvc {
             self.state.events.notify_user_removed_from_guild(id_from_db(*user), guild_id);
         }
         crate::stats::guild_deleted(&self.state, channel_ids.len()).await;
-        moderation::audit(&self.state, user_id, "guild.delete", &format!("guild:{guild_id}"), &guild.name).await;
+        moderation::audit(&self.state, actor, "guild.delete", &format!("guild:{guild_id}"), &guild.name).await;
         let state = self.state.clone();
         tokio::spawn(async move { moderation::purge_deleted_guild(&state, guild_id, channel_ids).await });
-        tracing::info!(guild_id, user_id, "guild deleted");
-        Response::ok(DeleteGuildResponse::default())
-    }
-
-    async fn rotate_invite_code(
-        &self,
-        ctx: RequestContext,
-        req: ServiceRequest<'_, RotateInviteCodeRequest>,
-    ) -> ServiceResult<RotateInviteCodeResponse> {
-        let user_id = authenticate(&self.state, &ctx).await?;
-        let guild_id = req.guild_id;
-        require_permission(&self.state, user_id, guild_id, MANAGE_SERVER).await?;
-        self.throttle_layout(user_id)?;
-        let old = self
-            .find_guild(id_to_db(guild_id))
-            .await?
-            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
-        let code = self.claim_invite_code(id_to_db(guild_id)).await?;
-        self.state
-            .session
-            .execute_unpaged("UPDATE guilds SET invite_code = ? WHERE id = ?", (&code, id_to_db(guild_id)))
-            .await
-            .map_err(internal)?;
-        self.state
-            .session
-            .execute_unpaged("DELETE FROM guilds_by_invite WHERE invite_code = ?", (&old.invite_code,))
-            .await
-            .map_err(internal)?;
-        if let Some(guild) = self.find_guild(id_to_db(guild_id)).await? {
-            self.state.events.publish_to_guild(guild_id, EventPayload::GuildUpdated(guild));
-        }
-        moderation::audit(&self.state, user_id, "guild.rotate_invite", &format!("guild:{guild_id}"), "").await;
-        Response::ok(RotateInviteCodeResponse { invite_code: code, ..Default::default() })
-    }
-
-    async fn transfer_ownership(
-        &self,
-        ctx: RequestContext,
-        req: ServiceRequest<'_, TransferOwnershipRequest>,
-    ) -> ServiceResult<TransferOwnershipResponse> {
-        let user_id = authenticate(&self.state, &ctx).await?;
-        let guild_id = req.guild_id;
-        self.owned_guild(user_id, guild_id, req.confirm_name).await?;
-        if req.user_id == user_id {
-            return Err(ConnectError::invalid_argument("you already own this guild"));
-        }
-        if !is_member(&self.state, req.user_id, guild_id).await? {
-            return Err(ConnectError::not_found("the new owner must be a member of the guild"));
-        }
-        // Only the current owner's transfer wins if two race.
-        let (applied, _) = self
-            .state
-            .session
-            .execute_unpaged(
-                "UPDATE guilds SET owner_id = ? WHERE id = ? IF owner_id = ?",
-                (id_to_db(req.user_id), id_to_db(guild_id), id_to_db(user_id)),
-            )
-            .await
-            .map_err(internal)?
-            .into_rows_result()
-            .map_err(internal)?
-            .first_row::<(bool, Option<i64>)>()
-            .map_err(internal)?;
-        if !applied {
-            return Err(ConnectError::aborted("ownership changed: refetch and retry"));
-        }
-        let guild = self
-            .find_guild(id_to_db(guild_id))
-            .await?
-            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
-        self.state.events.publish_to_guild(guild_id, EventPayload::GuildUpdated(guild.clone()));
-        moderation::audit(&self.state, user_id, "guild.transfer", &member_target(guild_id, req.user_id), "").await;
-        Response::ok(TransferOwnershipResponse { guild: guild.into(), ..Default::default() })
+        tracing::info!(guild_id, actor, "guild deleted");
+        Ok(())
     }
 }
 

@@ -17,8 +17,11 @@ use sha2::{Digest, Sha256};
 use crate::AppState;
 use crate::convert::{id_from_db, id_to_db};
 
-/// How long a session token stays valid.
+/// How long a session token stays valid after its last refresh.
 pub const SESSION_TTL_SECS: i32 = 30 * 24 * 60 * 60;
+/// A session in use has its expiry pushed out at most this often (sliding
+/// expiry), so active users stay signed in while the writes stay bounded.
+pub const SESSION_REFRESH_AFTER: chrono::Duration = chrono::Duration::days(1);
 
 /// A valid argon2id hash that never matches a real password; verified against
 /// when a username is unknown so the response time looks the same.
@@ -55,16 +58,28 @@ pub async fn user_id_for_token(state: &AppState, token: &str) -> Result<u64, Con
     let token_hash = hash_token(token);
     let rows = state
         .session
-        .execute_unpaged("SELECT user_id FROM sessions WHERE token_hash = ?", (&token_hash,))
+        .execute_unpaged(
+            "SELECT user_id, created_at, refreshed_at, id, device_name FROM sessions WHERE token_hash = ?",
+            (&token_hash,),
+        )
         .await
         .map_err(internal)?
         .into_rows_result()
         .map_err(internal)?;
-    let user_id = rows
-        .maybe_first_row::<(i64,)>()
+    let (db_user, created_at, refreshed_at, session_id, device_name) = rows
+        .maybe_first_row::<(i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<i64>, Option<String>)>()
         .map_err(internal)?
-        .map(|(id,)| id_from_db(id))
         .ok_or_else(|| ConnectError::unauthenticated("invalid or expired session token"))?;
+    let user_id = id_from_db(db_user);
+    if session_id.is_none() && crate::accounts::load(state, user_id).await?.is_none() {
+        // Sessions from before session tracking are not listed, so deletion could not revoke them.
+        return Err(ConnectError::unauthenticated("invalid or expired session token"));
+    }
+    // Sliding expiry: rewrite the session rows with a fresh TTL, at most once a day.
+    let last_refresh = refreshed_at.or(created_at);
+    if last_refresh.is_none_or(|t| Utc::now() - t >= SESSION_REFRESH_AFTER) {
+        refresh_session(state, &token_hash, db_user, created_at, session_id, device_name.as_deref()).await;
+    }
     if state.seen.due(&token_hash) {
         // Best effort: a failed write only makes "last seen" a bit older.
         if let Err(e) = state
@@ -79,6 +94,50 @@ pub async fn user_id_for_token(state: &AppState, token: &str) -> Result<u64, Con
         }
     }
     Ok(user_id)
+}
+
+/// Pushes a session's expiry out by [`SESSION_TTL_SECS`]: INSERTs (not
+/// UPDATEs) every row with a fresh TTL, so the row marker lives on too.
+/// Best effort: a failure only means the old expiry stays.
+async fn refresh_session(
+    state: &AppState,
+    token_hash: &str,
+    db_user: i64,
+    created_at: Option<DateTime<Utc>>,
+    session_id: Option<i64>,
+    device_name: Option<&str>,
+) {
+    let now = Utc::now();
+    let result = async {
+        state
+            .session
+            .execute_unpaged(
+                "INSERT INTO sessions (token_hash, user_id, created_at, id, device_name, refreshed_at) VALUES (?, ?, ?, ?, ?, ?) USING TTL ?",
+                (token_hash, db_user, created_at, session_id, device_name, now, SESSION_TTL_SECS),
+            )
+            .await?;
+        if let Some(session_id) = session_id {
+            state
+                .session
+                .execute_unpaged(
+                    "INSERT INTO sessions_by_user (user_id, session_id, token_hash, device_name, created_at) VALUES (?, ?, ?, ?, ?) USING TTL ?",
+                    (db_user, session_id, token_hash, device_name, created_at, SESSION_TTL_SECS),
+                )
+                .await?;
+        }
+        state
+            .session
+            .execute_unpaged(
+                "INSERT INTO session_seen (token_hash, last_seen_at) VALUES (?, ?) USING TTL ?",
+                (token_hash, now, SESSION_TTL_SECS),
+            )
+            .await?;
+        Ok::<_, scylla::errors::ExecutionError>(())
+    }
+    .await;
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "refreshing a session failed");
+    }
 }
 
 /// Whether a session still exists. Scylla's TTL deletes the row at expiry, so
@@ -109,6 +168,11 @@ pub fn device_label(raw: &str) -> String {
 /// Creates a session for `user_id` and returns the plaintext token (only its
 /// hash is stored). The session is also listed under the user.
 pub async fn create_session(state: &AppState, user_id: u64, device_name: &str) -> Result<String, ConnectError> {
+    // No sessions for suspended, deleted or unknown accounts, whatever the sign-in path.
+    crate::accounts::load(state, user_id)
+        .await?
+        .ok_or_else(|| ConnectError::unauthenticated("user no longer exists"))?
+        .ensure_not_suspended()?;
     let token = generate_token();
     let token_hash = hash_token(&token);
     let session_id = id_to_db(state.snowflake.next_id());
@@ -117,7 +181,7 @@ pub async fn create_session(state: &AppState, user_id: u64, device_name: &str) -
     state
         .session
         .execute_unpaged(
-            "INSERT INTO sessions (token_hash, user_id, created_at, id, device_name) VALUES (?, ?, toTimestamp(now()), ?, ?) USING TTL ?",
+            "INSERT INTO sessions (token_hash, user_id, created_at, id, device_name, refreshed_at) VALUES (?, ?, toTimestamp(now()), ?, ?, toTimestamp(now())) USING TTL ?",
             (&token_hash, db_user, session_id, &device, SESSION_TTL_SECS),
         )
         .await

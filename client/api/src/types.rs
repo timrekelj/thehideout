@@ -21,6 +21,9 @@ pub struct User {
     /// The account's email; only known for yourself (and to site admins).
     /// `None` for legacy accounts without one.
     pub email: Option<String>,
+    /// The account was deleted and anonymized: `username` is "Deleted user", no avatar. Messages
+    /// keep their author id, which resolves to this user.
+    pub deleted: bool,
 }
 
 /// A guild (server) that groups members and channels.
@@ -242,6 +245,7 @@ impl From<pb::User> for User {
             avatar: media_key(u.avatar),
             is_admin: u.is_admin,
             email: u.email.filter(|e| !e.is_empty()),
+            deleted: u.deleted,
         }
     }
 }

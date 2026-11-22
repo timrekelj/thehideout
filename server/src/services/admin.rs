@@ -99,6 +99,32 @@ async fn scan_rows<T: for<'f, 'm> scylla::deserialize::row::DeserializeRow<'f, '
 }
 
 impl AdminSvc {
+    /// Fills the suspension and deletion fields of a user row.
+    async fn standing_into(&self, id: u64, row: &mut AdminUserRow) -> Result<(), ConnectError> {
+        if let Some(account) = crate::accounts::load_any(&self.state, id).await? {
+            row.deleted = account.deletion_state.is_some();
+            if let Some((reason, until)) = account.active_suspension() {
+                row.suspended = true;
+                row.suspended_reason = reason;
+                row.suspended_until = until.map(datetime_to_proto).into();
+            }
+        }
+        Ok(())
+    }
+
+    /// The full admin row of one user (without the usage numbers of listings).
+    async fn user_row(&self, id: u64) -> Result<AdminUserRow, ConnectError> {
+        let user = self.user(id).await?.ok_or_else(|| ConnectError::not_found("user not found"))?;
+        let mut row = AdminUserRow { user: user.into(), ..Default::default() };
+        self.standing_into(id, &mut row).await?;
+        Ok(row)
+    }
+
+    /// The account a destructive admin call targets: it must exist and not be deleted.
+    async fn target(&self, id: u64) -> Result<crate::accounts::Account, ConnectError> {
+        crate::accounts::load(&self.state, id).await?.ok_or_else(|| ConnectError::not_found("user not found"))
+    }
+
     async fn user(&self, id: u64) -> Result<Option<User>, ConnectError> {
         admin::load_user(&self.state, id).await
     }
@@ -448,14 +474,16 @@ impl AdminService for AdminSvc {
                     .maybe_first_row::<(Option<DateTime<Utc>>,)>()
                     .map_err(internal)?
                     .and_then(|(t,)| t);
-                Ok::<_, ConnectError>(Some(AdminUserRow {
+                let mut row = AdminUserRow {
                     user: user.into(),
                     guild_count: guild_count as u64,
                     message_count: messages as u64,
                     storage_bytes,
                     last_active_at: last_active_at.map(datetime_to_proto).into(),
                     ..Default::default()
-                }))
+                };
+                self.standing_into(id, &mut row).await?;
+                Ok::<_, ConnectError>(Some(row))
             })
             .buffered(CONCURRENCY)
             .try_collect::<Vec<_>>()
@@ -546,6 +574,70 @@ impl AdminService for AdminSvc {
         self.remove_file(&entry).await?;
         admin::audit(&self.state, actor, "file.delete", req.key, req.reason).await?;
         Response::ok(DeleteFileResponse::default())
+    }
+
+    async fn suspend_user(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, SuspendUserRequest>,
+    ) -> ServiceResult<SuspendUserResponse> {
+        let actor = require_admin(&self.state, &ctx).await?;
+        let target = self.target(req.user_id).await?;
+        if target.is_admin || target.id == actor {
+            return Err(ConnectError::failed_precondition("site admins cannot be suspended: remove their admin rights first"));
+        }
+        if req.reason.chars().count() > crate::moderation::MAX_REASON_CHARS {
+            return Err(ConnectError::invalid_argument("reason is too long"));
+        }
+        let until = match req.until.as_option() {
+            Some(ts) => {
+                let until = DateTime::from_timestamp(ts.seconds, ts.nanos.max(0) as u32).ok_or_else(|| ConnectError::invalid_argument("invalid until"))?;
+                if until <= Utc::now() {
+                    return Err(ConnectError::invalid_argument("until must be in the future"));
+                }
+                Some(until)
+            }
+            None => None,
+        };
+        crate::lifecycle::suspend(&self.state, actor, target.id, req.reason.trim(), until).await?;
+        Response::ok(SuspendUserResponse { user: self.user_row(target.id).await?.into(), ..Default::default() })
+    }
+
+    async fn unsuspend_user(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, UnsuspendUserRequest>,
+    ) -> ServiceResult<UnsuspendUserResponse> {
+        let actor = require_admin(&self.state, &ctx).await?;
+        let target = self.target(req.user_id).await?;
+        crate::lifecycle::unsuspend(&self.state, actor, target.id).await?;
+        Response::ok(UnsuspendUserResponse { user: self.user_row(target.id).await?.into(), ..Default::default() })
+    }
+
+    async fn admin_delete_user(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, AdminDeleteUserRequest>,
+    ) -> ServiceResult<AdminDeleteUserResponse> {
+        let actor = require_admin(&self.state, &ctx).await?;
+        let target = self.target(req.user_id).await?;
+        let bootstrap = self.state.admins.contains(&target.username)
+            || (self.state.policy.bootstrap_admin_email.is_some() && target.email == self.state.policy.bootstrap_admin_email);
+        if target.is_admin || bootstrap {
+            return Err(ConnectError::failed_precondition("site admins cannot be deleted: remove their admin rights first"));
+        }
+        if req.reason.chars().count() > crate::moderation::MAX_REASON_CHARS {
+            return Err(ConnectError::invalid_argument("reason is too long"));
+        }
+        let owned = crate::lifecycle::owned_guilds(&self.state, target.id).await?;
+        if !owned.is_empty() {
+            if !req.force_transfer {
+                return Err(crate::lifecycle::owned_guilds_error(owned));
+            }
+            crate::lifecycle::hand_over_guilds(&self.state, actor, target.id).await?;
+        }
+        crate::lifecycle::delete_account(&self.state, &target, actor, req.reason.trim()).await?;
+        Response::ok(AdminDeleteUserResponse::default())
     }
 
     async fn list_audit_log(

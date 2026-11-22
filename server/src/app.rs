@@ -78,6 +78,8 @@ pub struct AppState {
     pub shutdown: Shutdown,
     /// Caps on concurrent gateway streams.
     pub streams: Arc<StreamGate>,
+    /// Operator name and contact (legal pages) and the minimum client version.
+    pub policy: Arc<crate::policy::Policy>,
 }
 
 impl AppState {
@@ -110,7 +112,21 @@ impl AppState {
             trusted_proxies: Arc::default(),
             shutdown: Shutdown::default(),
             streams: Arc::default(),
+            policy: Arc::default(),
         }
+        .with_legal_footer()
+    }
+
+    /// Sets operator contact details and the minimum client version.
+    pub fn with_policy(mut self, policy: crate::policy::Policy) -> Self {
+        self.policy = Arc::new(policy);
+        self
+    }
+
+    fn with_legal_footer(mut self) -> Self {
+        let base = self.public_base();
+        self.mailer = self.mailer.clone().with_legal_links(&base);
+        self
     }
 
     /// Sets the trusted reverse proxies (`THEHIDEOUT_TRUSTED_PROXIES`).
@@ -141,13 +157,13 @@ impl AppState {
     pub fn with_public_url(mut self, url: Url) -> Self {
         self.webauthn = crate::passkeys::relying_party(&url);
         self.public_url = url;
-        self
+        self.with_legal_footer()
     }
 
     /// Sets the email sender.
     pub fn with_mailer(mut self, mailer: Mailer) -> Self {
         self.mailer = mailer;
-        self
+        self.with_legal_footer()
     }
 
     /// `public_url` without a trailing slash, for building links.
@@ -250,6 +266,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 /// (`POST /livekit/webhook`), and CORS for the configured public origin only.
 pub fn build_app(state: AppState) -> Router {
     crate::voice::spawn_sweeper(&state);
+    crate::lifecycle::spawn_background(&state);
     let public_url = state.public_url.clone();
     let connect = ConnectRouter::new()
         .add_service(Arc::new(AuthSvc::new(state.clone())))
@@ -283,8 +300,11 @@ pub fn build_app(state: AppState) -> Router {
         .merge(media::attachments::attachments_route().with_state(state.clone()))
         .merge(crate::passkeys::routes().with_state(state.clone()))
         .merge(crate::services::voice::routes().with_state(state.clone()))
-        .merge(crate::services::invite::routes().with_state(state))
+        .merge(crate::services::invite::routes().with_state(state.clone()))
+        .merge(crate::legal::routes().with_state(state.clone()))
+        .merge(crate::lifecycle::routes().with_state(state.clone()))
         .fallback_service(connect.into_axum_service())
+        .layer(middleware::from_fn_with_state(state.policy.min_client.clone(), crate::policy::client_version_middleware))
         .layer(cors(&public_url))
         .layer(middleware::from_fn(timeout_middleware))
         .layer(

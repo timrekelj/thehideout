@@ -154,6 +154,8 @@ fn wrong_password_and_taken_name_show_inline_errors() {
     rt.update(|a, _| {
         a.state.auth.username.replace_text("taken");
         a.state.auth.password.replace_text("secret123");
+        a.state.auth.accept_terms = true;
+        a.state.auth.confirm_age = true;
     });
     settle(&mut rt, 3);
     click(&mut rt, "auth-submit");

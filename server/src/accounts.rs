@@ -95,14 +95,45 @@ pub struct Account {
     pub created_at: DateTime<Utc>,
     pub avatar: Option<String>,
     pub is_admin: bool,
+    /// `deleting` / `deleted` once account deletion started.
+    pub deletion_state: Option<String>,
+    pub suspended: bool,
+    pub suspended_until: Option<DateTime<Utc>>,
+    pub suspended_reason: Option<String>,
+    /// The terms version the user accepted last, if any.
+    pub accepted_terms_version: Option<String>,
 }
 
 impl Account {
+    /// The suspension in force now (reason, end), if any. A suspension with
+    /// an `until` in the past is over.
+    pub fn active_suspension(&self) -> Option<(String, Option<DateTime<Utc>>)> {
+        if !self.suspended || self.suspended_until.is_some_and(|until| until <= Utc::now()) {
+            return None;
+        }
+        Some((self.suspended_reason.clone().unwrap_or_default(), self.suspended_until))
+    }
+
+    /// Fails with the sign-in refusal (`AccountSuspended` detail) when suspended.
+    pub fn ensure_not_suspended(&self) -> Result<(), ConnectError> {
+        match self.active_suspension() {
+            Some((reason, until)) => Err(suspended_error(&reason, until)),
+            None => Ok(()),
+        }
+    }
+
+    /// `Some(version)` while the user still has to accept the current terms.
+    pub fn terms_update_required(&self) -> Option<String> {
+        (self.accepted_terms_version.as_deref() != Some(crate::policy::LEGAL_VERSION))
+            .then(|| crate::policy::LEGAL_VERSION.to_owned())
+    }
+
     /// The user as shown to themself (with `is_admin` and `email`).
     pub fn to_proto(&self) -> User {
         let mut user = user_to_proto(self.id, &self.username, self.created_at, self.avatar.clone());
         user.is_admin = self.is_admin;
         user.email = self.email.clone();
+        user.deleted = self.deletion_state.is_some();
         user
     }
 
@@ -120,14 +151,38 @@ type AccountRow = (
     Option<DateTime<Utc>>,
     Option<String>,
     Option<bool>,
+    Option<String>,
+    Option<bool>,
+    Option<DateTime<Utc>>,
+    Option<String>,
+    Option<String>,
 );
 
-/// Loads the account with id `id`.
+/// The sign-in refusal of a suspended account: PERMISSION_DENIED with an
+/// `AccountSuspended` detail.
+pub fn suspended_error(reason: &str, until: Option<DateTime<Utc>>) -> ConnectError {
+    let detail = crate::proto::thehideout::v1::AccountSuspended {
+        reason: reason.to_owned(),
+        until: until.map(crate::convert::datetime_to_proto).into(),
+        ..Default::default()
+    };
+    ConnectError::permission_denied("Your account is suspended")
+        .with_detail(connectrpc::ErrorDetail::from_message("thehideout.v1.AccountSuspended", &detail))
+}
+
+/// Loads the account with id `id`; `None` for unknown and for deleted (or
+/// being deleted) accounts, which are gone as far as every caller is concerned.
 pub async fn load(state: &AppState, id: u64) -> Result<Option<Account>, ConnectError> {
+    Ok(load_any(state, id).await?.filter(|a| a.deletion_state.is_none()))
+}
+
+/// Like [`load`], including accounts whose deletion started (the cleanup job's view).
+pub async fn load_any(state: &AppState, id: u64) -> Result<Option<Account>, ConnectError> {
     let row = state
         .session
         .execute_unpaged(
-            "SELECT username, password_hash, email, totp_secret, totp_last_step, created_at, avatar, is_admin FROM users WHERE id = ?",
+            "SELECT username, password_hash, email, totp_secret, totp_last_step, created_at, avatar, is_admin, \
+             deletion_state, suspended, suspended_until, suspended_reason, accepted_terms_version FROM users WHERE id = ?",
             (id_to_db(id),),
         )
         .await
@@ -136,7 +191,7 @@ pub async fn load(state: &AppState, id: u64) -> Result<Option<Account>, ConnectE
         .map_err(internal)?
         .maybe_first_row::<AccountRow>()
         .map_err(internal)?;
-    Ok(row.and_then(|(username, hash, email, totp, step, created_at, avatar, is_admin)| {
+    Ok(row.and_then(|(username, hash, email, totp, step, created_at, avatar, is_admin, deletion_state, suspended, suspended_until, suspended_reason, accepted)| {
         Some(Account {
             id,
             username: username?,
@@ -147,6 +202,11 @@ pub async fn load(state: &AppState, id: u64) -> Result<Option<Account>, ConnectE
             created_at: created_at.unwrap_or_else(|| snowflake_datetime(id)),
             avatar,
             is_admin: is_admin.unwrap_or(false),
+            deletion_state: deletion_state.filter(|s| !s.is_empty()),
+            suspended: suspended.unwrap_or(false),
+            suspended_until,
+            suspended_reason,
+            accepted_terms_version: accepted.filter(|v| !v.is_empty()),
         })
     }))
 }
@@ -305,6 +365,11 @@ pub async fn create_user(state: &AppState, new: NewUser<'_>) -> Result<Account, 
         created_at,
         avatar: None,
         is_admin,
+        deletion_state: None,
+        suspended: false,
+        suspended_until: None,
+        suspended_reason: None,
+        accepted_terms_version: None,
     })
 }
 

@@ -25,6 +25,8 @@ mod format;
 mod forms;
 #[path = "../src/layout.rs"]
 mod layout;
+#[path = "../src/lifecycle.rs"]
+mod lifecycle;
 #[path = "../src/look.rs"]
 mod look;
 #[path = "../src/media.rs"]
@@ -119,6 +121,8 @@ impl Server {
             Duration::from_millis(200),
         );
         state.storage = storage;
+        // The production per-user message rate (a burst of 10) would refuse the pagination test's 60 sends.
+        state.limiter = Arc::new(thehideout_server::ratelimit::RateLimiter::new().with_message_rate(100_000, 1_000.0));
         if voice {
             let config = thehideout_server::config::LiveKitConfig::new(
                 "ws://127.0.0.1:7880",
@@ -2024,6 +2028,8 @@ fn an_invite_then_two_factor_then_a_second_device() {
                 code: code.clone(),
                 username: "erin".into(),
                 password: Some(PASSWORD.into()),
+                terms_version: preview.terms_version.clone(),
+                age_confirmed: true,
             },
             |r| match r {
                 Reply::Auth(a) => Some(a.clone()),
@@ -2036,7 +2042,13 @@ fn an_invite_then_two_factor_then_a_second_device() {
     assert!(desk.saved().is_some(), "the new session is saved");
     // The invite is spent.
     let again = desk.ask(
-        Command::AcceptInvite { code, username: "erin2".into(), password: Some(PASSWORD.into()) },
+        Command::AcceptInvite {
+            code,
+            username: "erin2".into(),
+            password: Some(PASSWORD.into()),
+            terms_version: preview.terms_version.clone(),
+            age_confirmed: true,
+        },
         |r| match r {
             Reply::Auth(a) => Some(a.clone()),
             _ => None,

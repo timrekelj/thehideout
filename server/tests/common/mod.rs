@@ -69,9 +69,16 @@ pub struct Builder {
     livekit: bool,
     connect_grace: Option<Duration>,
     message_rate: (u32, f64),
+    policy: thehideout_server::policy::Policy,
 }
 
 impl Builder {
+    /// Operator contact and minimum client version (see `policy::Policy`).
+    pub fn policy(mut self, policy: thehideout_server::policy::Policy) -> Self {
+        self.policy = policy;
+        self
+    }
+
     /// The per-user message rate (a burst, then per second). Tests default to
     /// an effectively unlimited rate so they can send freely; the rate-limit
     /// tests set the production one.
@@ -154,6 +161,7 @@ impl TestApp {
             livekit: false,
             connect_grace: None,
             message_rate: (100_000, 1_000.0),
+            policy: Default::default(),
         }
     }
 
@@ -233,7 +241,9 @@ impl TestApp {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         // `localhost` (not the IP): WebAuthn needs a domain name as RP id.
-        let state = state.with_public_url(format!("http://localhost:{}", addr.port()).parse().unwrap());
+        let state = state
+            .with_public_url(format!("http://localhost:{}", addr.port()).parse().unwrap())
+            .with_policy(options.policy.clone());
         let livekit = options.livekit.then(|| Arc::new(voice::RecordingLiveKit::default()));
         let state = match &livekit {
             Some(fake) => {
@@ -361,4 +371,5 @@ impl TestApp {
 }
 
 pub mod fixtures;
+pub mod http;
 pub mod voice;

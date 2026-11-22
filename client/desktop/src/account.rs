@@ -308,7 +308,23 @@ impl AppState {
                 if password.chars().count() < MIN_PASSWORD {
                     return self.auth_invalid(AuthField::Password, "Use at least 8 characters.");
                 }
-                Command::AcceptInvite { code, username: login, password: Some(password) }
+                if !self.auth.accept_terms {
+                    return self.auth_invalid(AuthField::Form, "Accept the terms and privacy notice to continue.");
+                }
+                if !self.auth.confirm_age {
+                    return self.auth_invalid(AuthField::Form, "Confirm that you are at least 16 years old.");
+                }
+                let terms_version = match &self.auth.step {
+                    AuthStep::InviteAccept { preview, .. } => preview.terms_version.clone(),
+                    _ => String::new(),
+                };
+                Command::AcceptInvite {
+                    code,
+                    username: login,
+                    password: Some(password),
+                    terms_version,
+                    age_confirmed: self.auth.confirm_age,
+                }
             }
         };
         self.auth.error = None;

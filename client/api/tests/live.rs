@@ -340,11 +340,24 @@ async fn invite_accept_and_sign_in() {
     let zoe = Client::new(&server.url);
     let preview = zoe.lookup_invite(&code).await.unwrap();
     assert_eq!((preview.masked_email.as_str(), preview.guild_names.clone()), ("z***@example.test", vec!["friends".to_owned()]));
-    let (token, me) = zoe.accept_invite(&code, "zoe", Some(PASSWORD), "laptop").await.expect("accept");
+    let preview_terms = preview.terms_version.clone();
+    assert_eq!(preview.minimum_age, 16);
+    // The terms and the age confirmation are required.
+    assert!(matches!(
+        zoe.accept_invite(&code, "zoe", Some(PASSWORD), "laptop", thehideout_api::InviteTerms { version: "", age_confirmed: true }).await,
+        Err(ApiError::TermsUpdateRequired)
+    ));
+    assert!(matches!(
+        zoe.accept_invite(&code, "zoe", Some(PASSWORD), "laptop", thehideout_api::InviteTerms { version: &preview_terms, age_confirmed: false }).await,
+        Err(ApiError::InvalidArgument(_))
+    ));
+    let (token, me) = zoe.accept_invite(&code, "zoe", Some(PASSWORD), "laptop", thehideout_api::InviteTerms { version: &preview_terms, age_confirmed: true }).await.expect("accept");
+    let (_, terms) = zoe.get_me_with_terms().await.unwrap();
+    assert_eq!((terms.update_required, terms.current), (None, preview_terms.clone()));
     assert_eq!(zoe.token().as_deref(), Some(token.as_str()));
     assert_eq!(me.email.as_deref(), Some("zoe@example.test"));
     assert_eq!(zoe.list_guilds().await.unwrap()[0].id, guild.id);
-    assert!(matches!(zoe.accept_invite(&code, "zoe2", None, "").await, Err(ApiError::Precondition(_))));
+    assert!(matches!(zoe.accept_invite(&code, "zoe2", None, "", thehideout_api::InviteTerms { version: &preview_terms, age_confirmed: true }).await, Err(ApiError::Precondition(_))));
     let listed = admin.list_invites(None, None, 10).await.unwrap();
     assert_eq!(listed.items[0].status, InviteStatus::Accepted);
 

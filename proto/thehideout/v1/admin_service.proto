@@ -29,6 +29,19 @@ service AdminService {
   rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
   // Lists audit entries, newest first.
   rpc ListAuditLog(ListAuditLogRequest) returns (ListAuditLogResponse);
+  // Suspends a user: sessions are revoked and sign-in is refused with a
+  // `thehideout.v1.AccountSuspended` detail until `until` (or unsuspended).
+  // Site admins cannot be suspended (FAILED_PRECONDITION). Audit-logged.
+  rpc SuspendUser(SuspendUserRequest) returns (SuspendUserResponse);
+  // Lifts a suspension. Audit-logged.
+  rpc UnsuspendUser(UnsuspendUserRequest) returns (UnsuspendUserResponse);
+  // Deletes (anonymizes) a user's account like the user's own DeleteAccount.
+  // Refused for site admins and the bootstrap admin (FAILED_PRECONDITION).
+  // Without `force_transfer` it fails with FAILED_PRECONDITION and an
+  // `OwnedGuilds` detail while the user owns guilds; with it, ownership of each
+  // guild passes to its member with the highest role (ties: the longest
+  // member) and guilds where the user is alone are deleted. Audit-logged.
+  rpc AdminDeleteUser(AdminDeleteUserRequest) returns (AdminDeleteUserResponse);
 }
 
 // Bytes of stored media per category.
@@ -158,7 +171,56 @@ message AdminUserRow {
   uint64 storage_bytes = 4;
   // Last time the user sent a message or opened a gateway stream; unset if never.
   optional google.protobuf.Timestamp last_active_at = 5;
+  // The user is currently suspended.
+  bool suspended = 6;
+  // When the suspension ends; unset = indefinite (only with `suspended`).
+  optional google.protobuf.Timestamp suspended_until = 7;
+  // The suspension reason (only with `suspended`).
+  string suspended_reason = 8;
+  // The account was deleted (anonymized) or is being deleted.
+  bool deleted = 9;
 }
+
+// Request to suspend a user.
+message SuspendUserRequest {
+  // The user; NOT_FOUND if unknown.
+  uint64 user_id = 1;
+  // Shown to the user on sign-in and kept in the audit log (≤ 512 chars).
+  string reason = 2;
+  // When it ends; unset = until lifted. Must be in the future.
+  optional google.protobuf.Timestamp until = 3;
+}
+
+// The user after suspension.
+message SuspendUserResponse {
+  // The suspended user's row.
+  AdminUserRow user = 1;
+}
+
+// Request to lift a suspension.
+message UnsuspendUserRequest {
+  // The user; NOT_FOUND if unknown.
+  uint64 user_id = 1;
+}
+
+// The user after the change.
+message UnsuspendUserResponse {
+  // The user's row.
+  AdminUserRow user = 1;
+}
+
+// Request to delete a user's account.
+message AdminDeleteUserRequest {
+  // The user; NOT_FOUND if unknown or already deleted.
+  uint64 user_id = 1;
+  // Hand guilds over or delete them (see the RPC).
+  bool force_transfer = 2;
+  // Kept in the audit log (≤ 512 chars).
+  string reason = 3;
+}
+
+// The deletion was accepted.
+message AdminDeleteUserResponse {}
 
 // A page of users.
 message ListUsersResponse {

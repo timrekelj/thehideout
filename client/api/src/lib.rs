@@ -101,6 +101,7 @@ mod content;
 mod client_ext;
 mod error;
 mod gateway;
+mod lifecycle;
 mod moderation;
 mod state;
 mod structure;
@@ -113,7 +114,7 @@ pub(crate) mod proto {
 }
 
 pub use account::{
-    DeviceSession, Invite, InvitePreview, InviteStatus, LoginOutcome, NewInvite, Passkey, PasskeyCeremony, SecondFactor,
+    DeviceSession, Invite, InvitePreview, InviteStatus, InviteTerms, LoginOutcome, NewInvite, Passkey, PasskeyCeremony, SecondFactor,
     SecondFactorMethod, SecuritySummary, TotpSetup,
 };
 pub use admin::{
@@ -121,7 +122,8 @@ pub use admin::{
 };
 pub use client::{CLIENT_HEADER, Client, client_header_value, DEFAULT_MAX_UPLOAD_BYTES, MAX_EMOJI_BYTES, MAX_MEDIA_BYTES, MAX_MESSAGE_CHARS};
 pub use content::{Attachment, Embed, EmbedKind, EmbedMedia, EmbedMediaKind, Emoji, PendingAttachment, Reaction, ReactionEmoji};
-pub use error::{ApiError, update_required};
+pub use error::{ApiError, OwnedGuild, update_required};
+pub use lifecycle::{DeleteCredentials, TermsStatus};
 pub use gateway::{Gateway, GatewayConfig, GatewayHandle, GatewayUpdate};
 pub use structure::{Ban, ChannelIcon, ChannelIconRef, GuildLayout, LayoutEntry, Member, PaletteColor, Permissions, Role, RoleList, Section};
 pub use types::{Channel, ChannelKind, DmChannel, Event, Guild, MemberRemovalReason, Message, Page, User, VoiceJoin, VoiceState};

@@ -103,6 +103,7 @@ fn time(unix: i64) -> std::time::SystemTime {
 
 fn user(id: u64, name: &str) -> User {
     User {
+        deleted: false,
         id,
         username: name.into(),
         created_at: time(utc(2026, 1, 5, 12, 0)),
@@ -1670,9 +1671,29 @@ impl World {
             | Command::AdminFiles { .. }
             | Command::AdminAudit { .. }
             | Command::AdminSetAdmin { .. }
+            | Command::AdminSuspendUser { .. }
+            | Command::AdminUnsuspendUser { .. }
+            | Command::AdminDeleteUser { .. }
             | Command::AdminDeleteFile { .. }) => {
                 let me = self.me.clone();
-                let replies = self.admin.handle(&me, cmd);
+                let mut replies = self.admin.handle(&me, cmd);
+                // A deleted account shows as "Deleted user" everywhere, and everyone hears of it.
+                for id in self.admin.deleted_ids() {
+                    if let Some(w) = self.users.iter_mut().find(|w| w.id == id && !w.deleted) {
+                        w.username = "Deleted user".to_owned();
+                        w.avatar = None;
+                        w.email = None;
+                        w.is_admin = false;
+                        w.deleted = true;
+                        let gone = w.clone();
+                        for dm in &mut self.dms {
+                            for p in dm.participants.iter_mut().filter(|p| p.id == id) {
+                                *p = gone.clone();
+                            }
+                        }
+                        replies.push(Reply::Gateway(GatewayUpdate::Event(Event::UserUpdated(gone))));
+                    }
+                }
                 // Rights granted or taken away show in the rest of the app too.
                 for u in &self.admin.users {
                     if let Some(w) = self.users.iter_mut().find(|w| w.id == u.id) {
@@ -2169,6 +2190,18 @@ impl FakeBackend {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_latency(&self, secs: f64) {
         self.0.borrow_mut().set_latency(secs);
+    }
+
+    /// The signed-in user has not accepted the current terms (the next `CheckTerms` says so).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn outdate_terms(&self) {
+        self.0.borrow_mut().account.terms_outdated = true;
+    }
+
+    /// Turns an authenticator app on for `username` (recovery codes are `fake::account::RECOVERY`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn enable_totp(&self, username: &str) {
+        self.0.borrow_mut().enable_totp(username);
     }
 
     /// Every admin command answers `Unimplemented`, as a server without the service does.
