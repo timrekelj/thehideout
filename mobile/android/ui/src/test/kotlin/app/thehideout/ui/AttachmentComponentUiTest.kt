@@ -1,12 +1,21 @@
 package app.thehideout.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import app.thehideout.core.attachment.FileKind
 import app.thehideout.core.model.Attachment
 import app.thehideout.ui.components.AttachmentAudioRow
@@ -112,5 +121,42 @@ class AttachmentComponentUiTest {
         compose.onNodeWithContentDescription("Expand").performClick()
         compose.waitForIdle()
         assert(expanded != null) { "expected onExpand to fire with the inline player's position" }
+    }
+
+    /**
+     * Regression: each message in the transcript sits in a `Row` sized by `IntrinsicSize.Min` (so
+     * the avatar column matches the content's height) — reproduced directly here, one such row for
+     * the video and one for the audio row right below it, exactly as `MessageRow` stacks them.
+     * `AttachmentVideoCard`'s custom `Layout` didn't use to report its own intrinsic size once
+     * playing (its child wraps a raw video surface with no natural size of its own, so the default
+     * intrinsic fallback asked it and got back 0): the video's row would then measure itself far too
+     * short for its real content once started, which painted over the row below instead of making
+     * room for it.
+     */
+    @Test fun `an IntrinsicSize-Min row doesn't collapse once the video starts playing`() {
+        compose.setContent {
+            HideoutTheme(Look(), systemDark = true) {
+                Column {
+                    Row(Modifier.height(IntrinsicSize.Min)) {
+                        Box(Modifier.width(40.dp))
+                        Column(Modifier.weight(1f)) { AttachmentVideoCard(video, "") }
+                    }
+                    Row(Modifier.height(IntrinsicSize.Min)) {
+                        Box(Modifier.width(40.dp))
+                        Column(Modifier.weight(1f)) { AttachmentAudioRow(audio, "") }
+                    }
+                }
+            }
+        }
+        compose.onNodeWithText("voice-note.m4a").assertIsDisplayed()
+        val before = compose.onNodeWithText("voice-note.m4a").fetchSemanticsNode().size.height
+
+        compose.onNodeWithContentDescription("Play video").performClick()
+        compose.settle { compose.onAllNodesWithContentDescription("Expand").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Expand").assertIsDisplayed()
+
+        compose.onNodeWithText("voice-note.m4a").assertIsDisplayed()
+        val after = compose.onNodeWithText("voice-note.m4a").fetchSemanticsNode().size.height
+        assert(after > before / 2) { "the audio row's filename shrank from ${before}px to ${after}px: the video above it collapsed its row" }
     }
 }

@@ -78,4 +78,23 @@ class AttachmentUiTest {
         compose.waitForIdle()
         compose.onAllNodesWithText("mood-2.jpg · 2 of 4").assertCountEquals(0)
     }
+
+    /** Regression (ATT-02): starting the inline video used to collapse the `IntrinsicSize.Min`-sized
+     * row it sits in (see `AttachmentComponentUiTest`'s isolated repro), painting over the message
+     * below it in the real transcript. */
+    @Test fun `starting the inline video doesn't squash the audio row below it`() {
+        harness()
+        compose.onNodeWithContentDescription("Play video").performScrollTo()
+        compose.waitForIdle()
+        compose.onNodeWithText("voice-note.m4a").assertIsDisplayed()
+        val before = compose.onNodeWithText("voice-note.m4a").fetchSemanticsNode().size.height
+
+        compose.onNodeWithContentDescription("Play video").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithText("voice-note.m4a").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Download").assertIsDisplayed()
+        val after = compose.onNodeWithText("voice-note.m4a").fetchSemanticsNode().size.height
+        assert(after > before / 2) { "the audio row's filename shrank from ${before}px to ${after}px: the video above it pushed it out of shape" }
+    }
 }

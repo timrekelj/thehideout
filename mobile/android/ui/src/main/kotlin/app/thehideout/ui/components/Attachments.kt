@@ -38,10 +38,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -250,14 +258,44 @@ fun AttachmentVideoCard(attachment: Attachment, mediaBase: String, modifier: Mod
     Layout(
         modifier = modifier,
         content = { AttachmentVideoCardSized(attachment, mediaBase, onExpand) },
-    ) { measurables, constraints ->
-        // A custom Layout, not BoxWithConstraints: see AttachmentImageGrid's measure lambda.
-        val maxW = minOf(constraints.maxWidth.toDp().value, MEDIA_MAX_W)
-        val (w, h) = fitSize(natural, maxW, MEDIA_MAX_H)
-        val fixed = Constraints.fixed(w.dp.roundToPx(), h.dp.roundToPx())
-        val placeable = measurables.single().measure(fixed)
-        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+        measurePolicy = remember(natural) { fitSizeMeasurePolicy(natural) },
+    )
+}
+
+/**
+ * Sizes a single child to [fitSize] of the available width (never past [MEDIA_MAX_W]/[MEDIA_MAX_H]):
+ * see [AttachmentImageGrid]'s measure lambda for why this is a custom `Layout`, not `BoxWithConstraints`.
+ *
+ * Intrinsics are implemented explicitly rather than left to the default fallback, which measures the
+ * child to ask its own intrinsic size: once playback starts this child wraps a raw video surface with
+ * no natural size of its own, which can report zero. Upstream, a message row sized by
+ * `IntrinsicSize.Min` (`MessageRow`) would then squash this card down to that, clipping its real,
+ * correctly-sized content into whatever sat below it in the transcript.
+ */
+private fun fitSizeMeasurePolicy(natural: Pair<Int, Int>?): MeasurePolicy = object : MeasurePolicy {
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val (w, h) = sizeForWidth(natural, constraints.maxWidth)
+        val placeable = measurables.single().measure(Constraints.fixed(w, h))
+        return layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
     }
+
+    override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
+        sizeForWidth(natural, MEDIA_MAX_W.dp.roundToPx()).width
+
+    override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
+        sizeForWidth(natural, MEDIA_MAX_W.dp.roundToPx()).width
+
+    override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+        sizeForWidth(natural, width).height
+
+    override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+        sizeForWidth(natural, width).height
+}
+
+private fun Density.sizeForWidth(natural: Pair<Int, Int>?, maxWidthPx: Int): IntSize {
+    val maxW = minOf(maxWidthPx.toDp().value, MEDIA_MAX_W)
+    val (w, h) = fitSize(natural, maxW, MEDIA_MAX_H)
+    return IntSize(w.dp.roundToPx(), h.dp.roundToPx())
 }
 
 @Composable
