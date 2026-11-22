@@ -44,6 +44,14 @@ pub enum ApiError {
     /// The server refuses this app version (FAILED_PRECONDITION, message starting
     /// "client too old"): the user must install a newer build.
     ClientTooOld,
+    /// Sign-in refused because an admin suspended the account (PERMISSION_DENIED with an
+    /// `AccountSuspended` detail).
+    Suspended { reason: String, until: Option<std::time::SystemTime> },
+    /// The invitee did not accept the current terms (or the version sent is out of date): fetch
+    /// the version from the invite preview and ask again.
+    TermsUpdateRequired,
+    /// The user still owns these guilds: transfer or delete them first (deleting the account).
+    OwnsGuilds(Vec<OwnedGuild>),
     /// The server could not be reached or the connection broke.
     Network(String),
     /// Anything else, with the server's message.
@@ -77,6 +85,13 @@ impl fmt::Display for ApiError {
             Self::Precondition(msg) => write!(f, "not allowed: {msg}"),
             Self::TooLarge => f.write_str("file is too large"),
             Self::ClientTooOld => f.write_str("this version of thehideout is too old, update required"),
+            Self::Suspended { reason, .. } if reason.is_empty() => f.write_str("your account is suspended"),
+            Self::Suspended { reason, .. } => write!(f, "your account is suspended: {reason}"),
+            Self::TermsUpdateRequired => f.write_str("the terms must be accepted first"),
+            Self::OwnsGuilds(guilds) => {
+                let names: Vec<&str> = guilds.iter().map(|g| g.name.as_str()).collect();
+                write!(f, "transfer or delete the servers you own first: {}", names.join(", "))
+            }
             Self::Network(msg) => write!(f, "network error: {msg}"),
             Self::Other(msg) => write!(f, "{msg}"),
         }
@@ -115,6 +130,43 @@ static UPDATE_REQUIRED: AtomicBool = AtomicBool::new(false);
 pub fn update_required() -> bool {
     UPDATE_REQUIRED.load(Ordering::Relaxed)
 }
+/// A guild that blocks deleting its owner's account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedGuild {
+    pub id: u64,
+    pub name: String,
+    /// 1 = only the owner is in it.
+    pub member_count: u32,
+}
+
+const ACCOUNT_SUSPENDED: &str = "thehideout.v1.AccountSuspended";
+const OWNED_GUILDS: &str = "thehideout.v1.OwnedGuilds";
+/// Start of the INVALID_ARGUMENT message of a sign-up that did not accept the terms.
+const TERMS_REQUIRED: &str = "you must accept the terms";
+
+fn detail_bytes(err: &ConnectError, type_name: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let detail = err.details.iter().find(|d| d.type_url.trim_start_matches("type.googleapis.com/") == type_name)?;
+    let raw = detail.value.as_deref()?.trim_end_matches('=');
+    base64::engine::general_purpose::STANDARD_NO_PAD.decode(raw).ok()
+}
+
+/// The suspension or owned-guilds detail of an error, if it has one.
+fn lifecycle_error(err: &ConnectError) -> Option<ApiError> {
+    use buffa::Message as _;
+    if let Some(bytes) = detail_bytes(err, ACCOUNT_SUSPENDED) {
+        let d = pb::AccountSuspended::decode_from_slice(&bytes).ok()?;
+        let until = d.until.as_option().map(|ts| crate::types::time(Some(ts)));
+        return Some(ApiError::Suspended { reason: d.reason, until });
+    }
+    if let Some(bytes) = detail_bytes(err, OWNED_GUILDS) {
+        let d = pb::OwnedGuilds::decode_from_slice(&bytes).ok()?;
+        let guilds = d.guilds.into_iter().map(|g| OwnedGuild { id: g.id, name: g.name, member_count: g.member_count }).collect();
+        return Some(ApiError::OwnsGuilds(guilds));
+    }
+    None
+}
+
 /// Type of the error detail on rejected codes.
 const CODE_ERROR: &str = "thehideout.v1.CodeError";
 
@@ -139,9 +191,13 @@ impl From<ConnectError> for ApiError {
         if let Some(e) = code_error(&err) {
             return e;
         }
+        if let Some(e) = lifecycle_error(&err) {
+            return e;
+        }
         let msg = err.message.clone().unwrap_or_default();
         match err.code {
             ErrorCode::Unauthenticated => Self::Unauthenticated,
+            ErrorCode::InvalidArgument if msg.starts_with(TERMS_REQUIRED) => Self::TermsUpdateRequired,
             ErrorCode::InvalidArgument | ErrorCode::OutOfRange => Self::InvalidArgument(msg),
             ErrorCode::NotFound => Self::NotFound,
             ErrorCode::PermissionDenied => Self::PermissionDenied,
@@ -207,6 +263,36 @@ mod tests {
         assert_eq!(with_detail(ErrorCode::InvalidArgument, CODE_ERROR_REASON_UNSPECIFIED, 0), ApiError::InvalidArgument("boom".into()));
         assert!(!ApiError::TooManyAttempts.is_transient());
         assert_eq!(ApiError::WrongCode { attempts_remaining: 1 }.to_string(), "wrong code, 1 try left");
+    }
+
+    #[test]
+    fn maps_lifecycle_details() {
+        let until = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let suspended = pb::AccountSuspended { reason: "spam".into(), until: Some(buffa_types::google::protobuf::Timestamp::from(until)).into(), ..Default::default() };
+        let err: ApiError = ConnectError::new(ErrorCode::PermissionDenied, "Your account is suspended")
+            .with_detail(connectrpc::ErrorDetail::from_message(ACCOUNT_SUSPENDED, &suspended))
+            .into();
+        assert_eq!(err, ApiError::Suspended { reason: "spam".into(), until: Some(until) });
+        assert_eq!(err.to_string(), "your account is suspended: spam");
+        // Without an `until` the suspension is indefinite.
+        let indefinite = pb::AccountSuspended { reason: String::new(), ..Default::default() };
+        let err: ApiError = ConnectError::new(ErrorCode::PermissionDenied, "x")
+            .with_detail(connectrpc::ErrorDetail::from_message(ACCOUNT_SUSPENDED, &indefinite))
+            .into();
+        assert_eq!(err, ApiError::Suspended { reason: String::new(), until: None });
+        // A bare PERMISSION_DENIED stays one.
+        assert_eq!(map(ErrorCode::PermissionDenied), ApiError::PermissionDenied);
+
+        let owned = pb::OwnedGuilds { guilds: vec![pb::OwnedGuild { id: 7, name: "den".into(), member_count: 3, ..Default::default() }], ..Default::default() };
+        let err: ApiError = ConnectError::new(ErrorCode::FailedPrecondition, "transfer")
+            .with_detail(connectrpc::ErrorDetail::from_message(OWNED_GUILDS, &owned))
+            .into();
+        assert_eq!(err, ApiError::OwnsGuilds(vec![OwnedGuild { id: 7, name: "den".into(), member_count: 3 }]));
+        assert!(err.to_string().contains("den"));
+
+        let terms: ApiError = ConnectError::new(ErrorCode::InvalidArgument, "you must accept the terms and privacy notice (version 1)").into();
+        assert_eq!(terms, ApiError::TermsUpdateRequired);
+        assert_eq!(map(ErrorCode::InvalidArgument), ApiError::InvalidArgument("boom".into()));
     }
 
     #[test]

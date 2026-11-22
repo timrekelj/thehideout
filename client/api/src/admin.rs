@@ -78,6 +78,13 @@ pub struct AdminUserRow {
     pub storage_bytes: u64,
     /// `None` if the user was never active.
     pub last_active_at: Option<SystemTime>,
+    /// The user is suspended right now.
+    pub suspended: bool,
+    /// When the suspension ends; `None` = until an admin lifts it.
+    pub suspended_until: Option<SystemTime>,
+    pub suspended_reason: String,
+    /// The account was deleted (anonymized) or is being deleted.
+    pub deleted: bool,
 }
 
 /// One page of admin rows.
@@ -242,6 +249,10 @@ impl AdminUserRow {
             message_count: r.message_count,
             storage_bytes: r.storage_bytes,
             last_active_at: r.last_active_at.as_option().map(|ts| time(Some(ts))),
+            suspended: r.suspended,
+            suspended_until: r.suspended_until.as_option().map(|ts| time(Some(ts))),
+            suspended_reason: r.suspended_reason,
+            deleted: r.deleted,
         })
     }
 }
