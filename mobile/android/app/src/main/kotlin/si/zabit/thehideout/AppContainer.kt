@@ -18,8 +18,10 @@ import app.thehideout.core.fake.FakeBackend
 import app.thehideout.core.store.AppStore
 import app.thehideout.ui.theme.Look
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import java.io.File
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -91,8 +93,10 @@ class AppContainer(private val context: Context) {
         return AppStore(api, scope, keystoreTokens, cache)
     }
 
-    /** Whether the server answers at all (a `HEAD /`), so the server sheet can refuse a typo before saving it. */
-    suspend fun probeServer(url: String): Boolean = runCatching {
-        probe.newCall(Request.Builder().head().url(url).build()).execute().use { it.isSuccessful }
-    }.getOrDefault(false)
+    /** Whether the server answers at all (`GET /health`), so the server sheet can refuse a typo before saving it. */
+    suspend fun probeServer(url: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            probe.newCall(Request.Builder().url("$url/health").build()).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
 }
