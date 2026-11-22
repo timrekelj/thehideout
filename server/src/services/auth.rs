@@ -938,7 +938,7 @@ impl AuthService for AuthSvc {
             .check(&format!("passkey:ip:{}", peer_key(&ctx)), PASSKEY_IP_MAX, LOGIN_WINDOW)?;
         self.state
             .limiter
-            .check(&format!("passkey:user:{}", key_part(&req.username)), PASSKEY_USER_MAX, LOGIN_WINDOW)?;
+            .check(&format!("passkey:user:{}", key_part(req.username)), PASSKEY_USER_MAX, LOGIN_WINDOW)?;
         let webauthn = passkeys::webauthn(&self.state)?;
         // Username-first: this reveals whether an account has passkeys (rate limited
         // per peer IP and per login name).
