@@ -33,6 +33,7 @@ import app.thehideout.core.model.Reaction
 import app.thehideout.core.model.ReactionEmoji
 import app.thehideout.core.model.User
 import app.thehideout.core.store.Delivery
+import app.thehideout.core.store.PendingPreview
 import app.thehideout.design.Radius
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
@@ -66,6 +67,8 @@ data class MessageUi(
     /** The signed-in user's name, to highlight mentions of them. */
     val me: String? = null,
     val delivery: Delivery? = null,
+    /** A pending send's local file previews, shown until the server's message replaces it. */
+    val pending: List<PendingPreview> = emptyList(),
 )
 
 /**
@@ -109,6 +112,7 @@ fun MessageRow(
                 MarkdownText(m.content, me = ui.me)
             }
             if (m.editedAt != null) Text("edited", style = MaterialTheme.typography.bodySmall, color = c.textFaint)
+            if (ui.pending.isNotEmpty()) PendingAttachmentPreviews(ui.pending)
             if (m.attachments.isNotEmpty()) MessageAttachments(m.attachments, onOpenLightbox = onOpenLightbox)
             m.embeds.forEach { EmbedCard(it) }
             if (m.reactions.isNotEmpty()) {

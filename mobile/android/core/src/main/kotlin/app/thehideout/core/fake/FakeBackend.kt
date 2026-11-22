@@ -1,6 +1,9 @@
 package app.thehideout.core.fake
 
 import app.thehideout.core.api.*
+import app.thehideout.core.attachment.DEFAULT_MAX_UPLOAD_BYTES
+import app.thehideout.core.attachment.FileKind
+import app.thehideout.core.attachment.fileKind
 import app.thehideout.core.auth.InvitePreview
 import app.thehideout.core.auth.PasskeyCeremony
 import app.thehideout.core.auth.PasskeyFinish
@@ -124,6 +127,14 @@ class FakeBackend(
     var failSends: Int = 0
     /** The next [n] edits fail with a network error, independent of [failSends]. */
     var failEdits: Int = 0
+    /** The next [n] uploads fail with a network error, after their simulated progress (for the failed-chip/retry state). */
+    var failUploads: Int = 0
+    /** The fake's stand-in for the server's per-upload cap (ATT-09); a file over this throws [AppError.TooLarge] at once. */
+    var maxUploadBytes: Long = DEFAULT_MAX_UPLOAD_BYTES
+    /** How many `progress` calls a simulated upload makes on its way to 100%. */
+    var uploadTicks: Int = 4
+    private val pendingUploads = mutableMapOf<Long, PendingAttachment>()
+    private var nextPendingId = 90_000L
 
     /** Every message ever sent through [sendMessage], oldest first. */
     val sent: MutableList<Message> = mutableListOf()
@@ -217,10 +228,56 @@ class FakeBackend(
             failSends--
             throw AppError.Unavailable("connection reset")
         }
-        val m = push(channel, TIM, content, now + Duration.ofMinutes(5), nonce)
+        val attachments = attachmentIds.mapNotNull { id -> pendingUploads.remove(id)?.let(::fakeAttachment) }
+        val m = push(channel, TIM, content, now + Duration.ofMinutes(5), nonce, attachments = attachments)
         sent += m
         emit(GatewayEvent.MessageCreated(m))
         return m
+    }
+
+    /**
+     * Simulates a streamed upload: reads [source] whole (the fake has no real network to stream
+     * over), reports [uploadTicks] progress steps paced by [latency], then either fails
+     * ([failUploads]) or answers a [PendingAttachment] good for [sendMessage] within the hour.
+     */
+    override suspend fun uploadAttachment(channel: Long, filename: String, contentType: String, size: Long, source: UploadSource, progress: (Long) -> Unit): PendingAttachment {
+        if (size > maxUploadBytes) throw AppError.TooLarge
+        val bytes = source.open().use { it.readBytes() }
+        val ticks = uploadTicks.coerceAtLeast(1)
+        repeat(ticks) { t ->
+            if (!latency.isZero) delay(latency.toMillis() / ticks)
+            progress(bytes.size.toLong() * (t + 1) / ticks)
+        }
+        if (failUploads > 0) {
+            failUploads--
+            throw AppError.Unavailable("connection reset")
+        }
+        val id = nextPendingId++
+        val pending = PendingAttachment(id, filename, contentType.ifBlank { "application/octet-stream" }, bytes.size.toLong(), now + Duration.ofHours(1))
+        pendingUploads[id] = pending
+        return pending
+    }
+
+    /** A generated `Attachment` for a message that linked [pending]: a bundled asset standing in for the real upload, by its kind. */
+    private fun fakeAttachment(pending: PendingAttachment): Attachment {
+        val kind = fileKind(pending.contentType, pending.filename)
+        val source = when (kind) {
+            FileKind.Image -> "square-1.jpg"
+            FileKind.Video -> "clip-1.mp4"
+            FileKind.Audio -> "tone-1.m4a"
+            else -> "notes-1.txt"
+        }
+        val picture = kind == FileKind.Image
+        return Attachment(
+            id = pending.id,
+            filename = pending.filename,
+            contentType = pending.contentType,
+            size = pending.size,
+            file = "file:///android_asset/fake_media/$source",
+            width = if (picture) 800 else null,
+            height = if (picture) 600 else null,
+            thumbnail = if (kind == FileKind.Video) "file:///android_asset/fake_media/clip-1-poster.jpg" else null,
+        )
     }
 
     private val openedDms = mutableListOf<DmChannel>().apply { addAll(dms) }

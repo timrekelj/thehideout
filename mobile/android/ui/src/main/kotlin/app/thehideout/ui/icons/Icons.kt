@@ -27,12 +27,13 @@ enum class Sym(@DrawableRes val res: Int) {
     MicOff(R.drawable.ic_mic_off), Mic(R.drawable.ic_mic), Mood(R.drawable.ic_mood), MoreVert(R.drawable.ic_more_vert),
     MusicNote(R.drawable.ic_music_note),
     Notifications(R.drawable.ic_notifications), OpenInNew(R.drawable.ic_open_in_new), Palette(R.drawable.ic_palette),
-    Pause(R.drawable.ic_pause), Person(R.drawable.ic_person), PictureAsPdf(R.drawable.ic_picture_as_pdf), PlayArrow(R.drawable.ic_play_arrow),
+    Pause(R.drawable.ic_pause), Person(R.drawable.ic_person), PhotoCamera(R.drawable.ic_photo_camera), PictureAsPdf(R.drawable.ic_picture_as_pdf), PlayArrow(R.drawable.ic_play_arrow),
     Refresh(R.drawable.ic_refresh),
     Reply(R.drawable.ic_reply), ScreenShare(R.drawable.ic_screen_share), Search(R.drawable.ic_search),
     Send(R.drawable.ic_send), Settings(R.drawable.ic_settings), Share(R.drawable.ic_share), Stack(R.drawable.ic_stack), Tag(R.drawable.ic_tag),
     TextFields(R.drawable.ic_text_fields), Tune(R.drawable.ic_tune), Videocam(R.drawable.ic_videocam),
     Visibility(R.drawable.ic_visibility), VolumeOff(R.drawable.ic_volume_off), VolumeUp(R.drawable.ic_volume_up),
+    Warning(R.drawable.ic_warning),
 }
 
 /** A [Sym] tinted with the current content colour (or [tint]). Decorative unless [contentDescription] is given. */

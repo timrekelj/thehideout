@@ -8,6 +8,15 @@ import kotlin.math.roundToInt
 /** What a file is, by its content type then its extension (desktop's `file_kind`, `attachments.rs`). */
 enum class FileKind { Image, Video, Audio, Pdf, Archive, Text, Code, Doc, Other }
 
+/** Files one message may carry (ATT-09, desktop's `attach::MAX_FILES`). */
+const val MAX_ATTACHMENTS = 10
+
+/** The server's default per-upload cap (`server/src/media/attachments.rs::DEFAULT_MAX_UPLOAD_BYTES`), used until a real server answers otherwise. */
+const val DEFAULT_MAX_UPLOAD_BYTES = 50L * 1024 * 1024
+
+/** Uploads of one draft running at once; the rest wait as [app.thehideout.core.store.AttachUploadPhase.Queued]. */
+const val MAX_CONCURRENT_UPLOADS = 3
+
 /** The kind of a file by its content type, then its filename's extension. */
 fun fileKind(contentType: String, filename: String): FileKind {
     val ct = contentType.lowercase()
@@ -26,6 +35,30 @@ fun fileKind(contentType: String, filename: String): FileKind {
             ext in setOf("doc", "docx", "odt", "xls", "xlsx", "ppt", "pptx") -> FileKind.Doc
         else -> FileKind.Other
     }
+}
+
+/** The content type a file of this name is uploaded as, when the picker couldn't say (desktop's `attach::content_type_of`). */
+fun contentTypeOf(filename: String): String = when (filename.substringAfterLast('.', "").lowercase()) {
+    "png" -> "image/png"
+    "jpg", "jpeg" -> "image/jpeg"
+    "webp" -> "image/webp"
+    "gif" -> "image/gif"
+    "heic" -> "image/heic"
+    "heif" -> "image/heif"
+    "mp4", "m4v" -> "video/mp4"
+    "mov" -> "video/quicktime"
+    "webm" -> "video/webm"
+    "mp3" -> "audio/mpeg"
+    "m4a" -> "audio/mp4"
+    "wav" -> "audio/wav"
+    "ogg" -> "audio/ogg"
+    "flac" -> "audio/flac"
+    "pdf" -> "application/pdf"
+    "zip" -> "application/zip"
+    "json" -> "application/json"
+    "txt", "log", "md" -> "text/plain"
+    "csv" -> "text/csv"
+    else -> "application/octet-stream"
 }
 
 /** Whether the server serves it inline, so "Open" shows it rather than downloading it. */
@@ -60,7 +93,9 @@ const val FAKE_ASSET_PREFIX = "file:///android_asset/"
  * `{base}/media/{key}`, unless `key` already names one of the fake backend's bundled assets
  * ([FAKE_ASSET_PREFIX]). Any other scheme (`file://`, `content://`, a foreign host) is rejected
  * rather than passed through, so a malicious media key can't act as a tracking pixel or read a
- * local file in production.
+ * local file in production. A pending message's local preview ([app.thehideout.core.store.PendingPreview])
+ * never goes through this: it is rendered straight from its own `content://` URI, a separate path
+ * from anything a server could put in an `Attachment`.
  */
 fun mediaUrl(baseUrl: String, key: String): String = when {
     key.startsWith(FAKE_ASSET_PREFIX) -> key

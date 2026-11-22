@@ -4,17 +4,27 @@ import app.thehideout.core.TokenStore
 import app.thehideout.core.api.ApiClient
 import app.thehideout.core.api.AppError
 import app.thehideout.core.api.LoginResult
+import app.thehideout.core.api.PendingAttachment
+import app.thehideout.core.attachment.MAX_CONCURRENT_UPLOADS
 import app.thehideout.core.cache.SessionCache
+import app.thehideout.core.gateway.Backoff
 import app.thehideout.core.gateway.GatewayStream
 import app.thehideout.core.model.ReactionEmoji
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.time.Duration
 import java.time.Instant
+
+/** Extra attempts an upload gets after a transient failure, with backoff, before it shows as failed. */
+private const val UPLOAD_RETRIES = 3
 
 /**
  * One store per session: owns the whole mirror (guilds, channels, logs, outgoing messages, voice
@@ -36,6 +46,11 @@ class AppStore(
 
     private val lock = Any()
     private var gatewayJob: Job? = null
+
+    // ---- uploads: a concurrency gate and the running job per file, so the tray's ✕ can cancel one -----
+
+    private val uploadSlots = Semaphore(MAX_CONCURRENT_UPLOADS)
+    private val uploadJobs = mutableMapOf<Long, Job>()
 
     /** Applies [action] and runs the effects it asks for. Safe to call from any thread. */
     fun dispatch(action: Action) {
@@ -148,6 +163,9 @@ class AppStore(
     fun editMessage(channel: Long, message: Long, content: String) = dispatch(Action.EditMessage(channel, message, content))
     fun deleteMessage(channel: Long, message: Long) = dispatch(Action.DeleteMessage(channel, message))
     fun setDraft(channel: Long, text: String) = dispatch(Action.SetDraft(channel, text))
+    fun attachFiles(channel: Long, files: List<PickedFile>) = dispatch(Action.AttachFiles(channel, files))
+    fun removeAttachment(id: Long) = dispatch(Action.RemoveAttachment(id))
+    fun retryAttachment(id: Long) = dispatch(Action.RetryAttachment(id))
     fun dismissNotice(id: Long) = dispatch(Action.DismissNotice(id))
     fun setChannelForeground(visible: Boolean) = dispatch(Action.SetChannelForeground(visible))
 
@@ -185,7 +203,36 @@ class AppStore(
                     Action.MessageDeleteResult(effect.channel, effect.message, guard(runCatching { api.deleteMessage(effect.channel, effect.message) })),
                 )
                 is Effect.OpenDm -> dispatch(Action.DmOpened(guard(runCatching { api.openDm(effect.userId) })))
+                is Effect.UploadAttachment -> {
+                    val job = scope.launch {
+                        uploadSlots.withPermit {
+                            dispatch(Action.AttachStarted(effect.id))
+                            dispatch(Action.AttachUploaded(effect.id, guard(uploadWithRetry(effect))))
+                        }
+                    }
+                    job.invokeOnCompletion { uploadJobs.remove(effect.id, job) }
+                    uploadJobs[effect.id] = job
+                }
+                is Effect.CancelUpload -> uploadJobs.remove(effect.id)?.cancel()
             }
+        }
+    }
+
+    /** Retries a transient failure ([AppError.isTransient]) with backoff, up to [UPLOAD_RETRIES] extra attempts. */
+    private suspend fun uploadWithRetry(effect: Effect.UploadAttachment): Result<PendingAttachment> {
+        val backoff = Backoff(initial = Duration.ofSeconds(1), max = Duration.ofSeconds(8))
+        var attempt = 0
+        while (true) {
+            val r = runCatching {
+                api.uploadAttachment(effect.channel, effect.filename, effect.contentType, effect.size, effect.source) { sent ->
+                    dispatch(Action.AttachProgress(effect.id, sent, effect.size))
+                }
+            }
+            val error = r.exceptionOrNull() ?: return r
+            if (error is CancellationException) throw error
+            if ((error as? AppError)?.isTransient != true || attempt >= UPLOAD_RETRIES) return r
+            attempt++
+            delay(backoff.delayFor(attempt).toMillis())
         }
     }
 
