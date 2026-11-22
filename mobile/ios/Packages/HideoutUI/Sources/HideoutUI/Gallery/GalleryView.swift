@@ -27,25 +27,34 @@ public enum GallerySection: String, CaseIterable, Identifiable, Sendable {
 public struct GalleryView: View {
     @Environment(\.theme) private var theme
     @State private var showLook = false
-    let embedded: Bool
 
-    public init(embedded: Bool = false) { self.embedded = embedded }
+    public init() {}
 
     public var body: some View {
-        if embedded { page } else { NavigationStack { page } }
+        page
     }
 
+    /// A top-level `ScrollView` (not inside a `NavigationStack`) proposes an unbounded width to its content,
+    /// so the column must be capped explicitly to the `GeometryReader`'s size, not left to size itself.
     private var page: some View {
-        ScrollView {
-            GalleryContent(sections: GallerySection.allCases)
-        }
-        .background(theme.colors.bg)
-        .navigationTitle("Gallery")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Look", systemImage: "paintpalette") { showLook = true }
+        GeometryReader { geo in
+            ScrollView {
+                VStack(spacing: 0) {
+                    HStack(spacing: Space.s3) {
+                        Text("Gallery").typeStyle(\.heading)
+                        Spacer()
+                        Button("Look", systemImage: "paintpalette") { showLook = true }
+                            .buttonStyle(.glass)
+                            .accessibilityLabel("Change the look")
+                    }
+                    .padding(.horizontal, Space.s4)
+                    .padding(.vertical, Space.s3)
+                    GalleryContent(sections: GallerySection.allCases)
+                }
+                .frame(maxWidth: geo.size.width, minHeight: geo.size.height)
             }
+            .scrollContentBackground(.hidden)
+            .background(theme.colors.bg)
         }
         .sheet(isPresented: $showLook) { LookSheet() }
     }

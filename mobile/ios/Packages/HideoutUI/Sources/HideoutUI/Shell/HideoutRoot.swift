@@ -8,11 +8,15 @@ public struct HideoutRoot: View {
     let store: AppStore
     let themeStore: ThemeStore
     let options: LaunchOptions
+    let auth: AuthFlow
+    let server: ServerSelection
     @Environment(\.scenePhase) private var scenePhase
 
-    public init(store: AppStore, themeStore: ThemeStore, options: LaunchOptions = LaunchOptions()) {
+    public init(store: AppStore, themeStore: ThemeStore, auth: AuthFlow, server: ServerSelection, options: LaunchOptions = LaunchOptions()) {
         self.store = store
         self.themeStore = themeStore
+        self.auth = auth
+        self.server = server
         self.options = options
     }
 
@@ -25,6 +29,8 @@ public struct HideoutRoot: View {
             }
         }
         .environment(store)
+        .environment(auth)
+        .environment(server)
         .environment(themeStore)
         .environment(\.initialTab, options.tab)
         .themed(themeStore)
@@ -33,6 +39,22 @@ public struct HideoutRoot: View {
             store.setActive(scenePhase == .active)
         }
         .onChange(of: scenePhase) { _, phase in store.setActive(phase == .active) }
+        // Invite links: `thehideout://invite/<token>` and `https://<server>/invite/<token>` (universal link).
+        .onOpenURL { url in if store.state.phase == .signedOut || store.state.phase == .loading { auth.handle(url: url) } }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            if let url = activity.webpageURL, store.state.phase == .signedOut || store.state.phase == .loading { auth.handle(url: url) }
+        }
+        // A sign-out starts the next sign-in from a clean first step.
+        .onChange(of: store.state.phase) { old, new in if new == .signedOut && old != .loading { auth.showSignIn() } }
+        .sensoryFeedback(.success, trigger: auth.signInCount)
+        .confirmationDialog("Switch to \(auth.pendingInviteLink?.host ?? "")?",
+                            isPresented: Binding(get: { auth.pendingInviteLink != nil }, set: { if !$0 { auth.dismissPendingInviteLink() } }),
+                            titleVisibility: .visible) {
+            Button("Switch and open the invite") { auth.switchServerForPendingInviteLink() }
+            Button("Cancel", role: .cancel) { auth.dismissPendingInviteLink() }
+        } message: {
+            Text("This invite is for a different server than the one you're using.")
+        }
     }
 }
 
@@ -44,20 +66,25 @@ extension EnvironmentValues {
 /// Switches on the session phase.
 public struct RootView: View {
     @Environment(AppStore.self) private var store
+    @Environment(AuthFlow.self) private var auth
 
     public init() {}
 
     public var body: some View {
-        switch store.state.phase {
-        case .loading: LoadingScreen()
-        case .signedOut: SignedOutScreen()
-        case .signedIn: MainShell()
-        case .termsRequired(let version):
-            GateScreen(symbol: "doc.text.fill", title: "Updated terms", message: "The terms changed (version \(version)). Accepting them arrives with sign-in in the next phase.")
-        case .updateRequired:
-            GateScreen(symbol: "arrow.down.app.fill", title: "Update required", message: "This version of thehideout is too old for the server. Install the latest build to continue.")
-        case .suspended(let reason, _):
-            GateScreen(symbol: "pause.circle.fill", title: "Account suspended", message: reason.isEmpty ? "An admin suspended this account." : reason)
+        Group {
+            switch store.state.phase {
+            case .loading: SplashScreen()
+            case .signedOut: AuthScreen()
+            case .signedIn:
+                MainShell()
+                    .sheet(isPresented: Binding(get: { auth.welcome != .hidden }, set: { if !$0 { auth.skipWelcome() } })) {
+                        WelcomeSheet().presentationDetents([.medium])
+                    }
+            case .termsRequired: TermsGate()
+            case .updateRequired: UpdateGate()
+            case .suspended(let reason, let until): SuspendedGate(reason: reason, until: until)
+            }
         }
+        .animation(Motion.overlay, value: store.state.phase)
     }
 }

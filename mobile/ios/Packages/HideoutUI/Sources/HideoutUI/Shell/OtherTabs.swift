@@ -80,7 +80,7 @@ struct YouTab: View {
                 Section {
                     Button { showLook = true } label: { Label("Appearance", systemImage: "paintpalette.fill").typeStyle(\.body) }
                     #if DEBUG
-                    NavigationLink { GalleryView(embedded: true) } label: { Label("Design gallery", systemImage: "swatchpalette.fill").typeStyle(\.body) }
+                    NavigationLink { GalleryView() } label: { Label("Design gallery", systemImage: "swatchpalette.fill").typeStyle(\.body) }
                     #endif
                     LabeledContent { Text("0.1.0").typeStyle(\.caption, color: \.textMuted) } label: { Label("About", systemImage: "info.circle.fill").typeStyle(\.body) }
                 }

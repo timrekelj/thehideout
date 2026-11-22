@@ -147,17 +147,20 @@ jobs:
         run: |
           xcodebuild -project Hideout.xcodeproj -scheme Hideout -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
-      # The snapshot tests (GallerySnapshotTests, ShellSnapshotTests) are skipped here: their references are
-      # recorded on one simulator runtime (iPhone 18 Pro, iOS 27.2) and Liquid Glass renders slightly
-      # differently across runtimes, so GitHub's images would fail them for the wrong reason. They run locally
-      # (see mobile/ios/README.md) until a runner matches. The unit tests (look persistence, tokens) do run.
-      - name: xcodebuild test (unit tests; snapshot tests skipped)
+      # The snapshot tests (GallerySnapshotTests, ShellSnapshotTests, AuthSnapshotTests) are skipped here: their
+      # references are recorded on one simulator runtime (iPhone 18 Pro, iOS 27.2) and Liquid Glass renders
+      # slightly differently across runtimes, so GitHub's images would fail them for the wrong reason. They run
+      # locally (see mobile/ios/README.md) until a runner matches. The unit tests (look persistence, tokens) do run.
+      # HideoutUITests is not run here either (see mobile/ios/README.md, "UI tests"): it drives real touch events
+      # and system UI (the keyboard, the strong-password callout) that is unreliable on a headless CI runner.
+      - name: xcodebuild test (unit tests; snapshot and UI tests skipped)
         run: |
           device="$(xcrun simctl list devices available | grep -E '^ +iPhone [0-9]+ Pro \(' | head -1 | sed -E 's/^ +//; s/ \(.*//')"
           echo "Testing on: $device"
           xcodebuild -project Hideout.xcodeproj -scheme Hideout -destination "platform=iOS Simulator,name=$device" \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO test \
-            -only-testing:HideoutTests -skip-testing:HideoutTests/GallerySnapshotTests -skip-testing:HideoutTests/ShellSnapshotTests
+            -only-testing:HideoutTests -skip-testing:HideoutTests/GallerySnapshotTests -skip-testing:HideoutTests/ShellSnapshotTests \
+            -skip-testing:HideoutTests/AuthSnapshotTests
 
   android:
     name: android (unit tests, debug build, snapshots)

@@ -66,10 +66,15 @@ func makeFakeStore(live: Bool = false, open channel: ID? = nil) async -> (AppSto
 extension View {
     /// The environment every snapshot runs in: the store, the look, a pinned clock, zone and locale.
     @MainActor
-    func snapshotEnvironment(store: AppStore, look: Look = Look()) -> some View {
+    func snapshotEnvironment(store: AppStore, look: Look = Look(), auth: AuthFlow? = nil, server: ServerSelection? = nil) -> some View {
         let themeStore = ThemeStore(defaults: nil, look: look)
+        let fake = FakeBackend(now: snapshotNow)
+        let server = server ?? ServerSelection(fixed: fake)
+        let auth = auth ?? AuthFlow(server: server, deviceName: "iPhone", now: { snapshotNow }, onSession: { _ in })
         return self
             .environment(store)
+            .environment(auth)
+            .environment(server)
             .environment(themeStore)
             .themed(themeStore)
             .environment(\.currentDate, snapshotNow)
@@ -90,12 +95,12 @@ class SnapshotCase: XCTestCase {
 
     /// A full screen on a device, in dark and light (or just the ones given).
     @MainActor
-    func assertScreen<V: View>(_ view: @autoclosure () -> V, store: AppStore, device: Device = .iPhone, looks: [(String, Look)] = [("default", Look())],
+    func assertScreen<V: View>(_ view: @autoclosure () -> V, store: AppStore, auth: AuthFlow? = nil, server: ServerSelection? = nil, device: Device = .iPhone, looks: [(String, Look)] = [("default", Look())],
                                 styles: [(String, UIUserInterfaceStyle)] = styles, wait: TimeInterval = 1.0,
                                 file: StaticString = #filePath, testName: String = #function, line: UInt = #line) {
         for (lookName, look) in looks {
             for (styleName, style) in styles {
-                let vc = UIHostingController(rootView: view().snapshotEnvironment(store: store, look: look))
+                let vc = UIHostingController(rootView: view().snapshotEnvironment(store: store, look: look, auth: auth, server: server))
                 let name = [device.rawValue, styleName, lookName == "default" ? nil : lookName].compactMap { $0 }.joined(separator: "-")
                 assertSnapshot(
                     of: vc,
