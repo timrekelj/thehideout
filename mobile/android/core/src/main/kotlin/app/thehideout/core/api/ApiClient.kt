@@ -45,6 +45,13 @@ interface ApiClient {
     suspend fun listChannels(guild: Long): GuildChannels
     suspend fun listMessages(channel: Long, before: Long?, limit: Int = PAGE): MessagePage
     suspend fun sendMessage(channel: Long, content: String, nonce: String, attachmentIds: List<Long> = emptyList()): Message
+    /**
+     * Streams [source] as a new pending attachment of [channel] over plain HTTP (not Connect), so
+     * the body is never buffered whole; [progress] reports bytes sent as chunks are written. Link
+     * the result with [sendMessage] within an hour (`attachment.proto`). Throws [AppError];
+     * [AppError.TooLarge] when the server refuses the size (413).
+     */
+    suspend fun uploadAttachment(channel: Long, filename: String, contentType: String, size: Long, source: UploadSource, progress: (Long) -> Unit): PendingAttachment
     /** Opens a DM with [userId], or returns the existing one (idempotent). */
     suspend fun openDm(userId: Long): DmChannel
     suspend fun listMembers(guild: Long): GuildMembers
