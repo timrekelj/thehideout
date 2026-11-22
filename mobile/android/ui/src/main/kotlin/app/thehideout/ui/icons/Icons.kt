@@ -18,7 +18,7 @@ enum class Sym(@DrawableRes val res: Int) {
     BrightnessAuto(R.drawable.ic_brightness_auto), Check(R.drawable.ic_check), ChevronRight(R.drawable.ic_chevron_right),
     Close(R.drawable.ic_close), ContentCopy(R.drawable.ic_content_copy), Contrast(R.drawable.ic_contrast),
     DarkMode(R.drawable.ic_dark_mode), Delete(R.drawable.ic_delete), DensityMedium(R.drawable.ic_density_medium),
-    Dns(R.drawable.ic_dns), Edit(R.drawable.ic_edit), ExpandMore(R.drawable.ic_expand_more),
+    Dns(R.drawable.ic_dns), Edit(R.drawable.ic_edit), ExpandMore(R.drawable.ic_expand_more), Fingerprint(R.drawable.ic_fingerprint),
     FormatSize(R.drawable.ic_format_size), Forum(R.drawable.ic_forum), Headphones(R.drawable.ic_headphones),
     Home(R.drawable.ic_home), LightMode(R.drawable.ic_light_mode), Lock(R.drawable.ic_lock), Menu(R.drawable.ic_menu),
     MicOff(R.drawable.ic_mic_off), Mic(R.drawable.ic_mic), Mood(R.drawable.ic_mood), MoreVert(R.drawable.ic_more_vert),

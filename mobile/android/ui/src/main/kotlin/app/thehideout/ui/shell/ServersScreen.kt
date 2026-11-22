@@ -95,8 +95,9 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
         Column(Modifier.statusBarsPadding()) {
             LazyRow(contentPadding = PaddingValues(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(0.dp), verticalAlignment = Alignment.CenterVertically) {
                 items(state.guilds, key = { it.id }) { g ->
+                    val railTile = app.thehideout.ui.theme.Hideout.metrics.railTile
                     val u = state.guildUnread(g.id)
-                    ServerBadge(g.name, selected = state.place == Place.InGuild(g.id), unread = u.count, mentions = u.mentions, onClick = { actions.openGuild(g.id) })
+                    ServerBadge(g.name, selected = state.place == Place.InGuild(g.id), unread = u.count, mentions = u.mentions, size = railTile, onClick = { actions.openGuild(g.id) })
                 }
             }
             if (guild != null) {
@@ -108,7 +109,7 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
         } else {
             val layout = state.layouts[guild.id]
             val channels = state.channelsOf(guild.id).associateBy { it.id }
-            LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(app.thehideout.ui.theme.Hideout.metrics.rowGap)) {
                 layout?.normalized()?.entries?.forEach { entry ->
                     val section = layout.sections.firstOrNull { it.id == entry.sectionId }
                     val open = section == null || section.id !in folded

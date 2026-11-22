@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
@@ -38,12 +39,15 @@ fun UnreadPill(count: Int, modifier: Modifier = Modifier) {
     CountPill(if (count > 99) "99+" else count.toString(), c.accent, c.accentFg, modifier, "$count unread")
 }
 
-/** The red pill for mentions of you. */
+/**
+ * The pill for mentions of you. Red is for errors only, so the mention pill uses the accent
+ * (accent fill with accent_fg ink), like desktop's mention pill.
+ */
 @Composable
 fun MentionBadge(count: Int, modifier: Modifier = Modifier) {
     if (count <= 0) return
     val c = Hideout.colors
-    CountPill(if (count > 99) "99+" else count.toString(), c.dangerSolid, c.onDanger, modifier, "$count mentions")
+    CountPill(if (count > 99) "99+" else count.toString(), c.accent, c.accentFg, modifier, "$count mentions")
 }
 
 @Composable
@@ -87,7 +91,7 @@ fun ServerBadge(
         }
         Box(
             Modifier.size(size).clip(RoundedCornerShape(corner)).background(bg)
-                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick).minimumInteractiveComponentSize() else Modifier)
                 .semantics { contentDescription = name },
             contentAlignment = Alignment.Center,
         ) {

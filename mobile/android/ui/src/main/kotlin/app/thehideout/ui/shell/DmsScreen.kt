@@ -95,7 +95,7 @@ private fun DmList(state: AppState, selected: Long?, onClick: (DmChannel) -> Uni
                             Text(peer?.displayName ?: "Direct message", style = MaterialTheme.typography.titleSmall, color = if (dm.id == selected) c.accentText else c.text, fontWeight = if (unread.count > 0) FontWeight(700) else null)
                             if (last != null) Text(last.content.lines().first(), style = MaterialTheme.typography.bodyMedium, color = if (unread.count > 0) c.text else c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (unread.count > 0) MentionBadge(unread.count)
+                        if (unread.mentions > 0) MentionBadge(unread.mentions) else if (unread.count > 0) UnreadPill(unread.count)
                     }
                 }
             }

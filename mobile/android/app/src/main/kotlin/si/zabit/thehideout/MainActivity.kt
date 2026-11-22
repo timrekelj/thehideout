@@ -8,13 +8,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.thehideout.core.auth.inviteTokenFromUrl
+import app.thehideout.core.store.SessionPhase
 import app.thehideout.ui.gallery.GalleryScreen
 import app.thehideout.ui.root.HideoutRoot
 import app.thehideout.ui.shell.ShellActions
@@ -30,6 +35,8 @@ class MainActivity : ComponentActivity() {
     private var mode = false to false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // No flash of the sign-in screen while a saved session is checked: the splash stays until the phase leaves Loading.
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         // A relaunch of this activity (rotation, `recreate()`) comes back with the original launch intent, not the
         // one `onNewIntent` saw, so the debug flags of the latest launch are kept in the process.
@@ -42,25 +49,45 @@ class MainActivity : ComponentActivity() {
         handleLink(intent)
 
         setContent {
-            val state by viewModel.store.state.collectAsStateWithLifecycle()
+            val session by viewModel.session.collectAsStateWithLifecycle()
             val look by viewModel.look.collectAsStateWithLifecycle()
+            val serverUrl by viewModel.serverUrl.collectAsStateWithLifecycle()
             HideoutTheme(look) {
                 SystemBars(Hideout.isDark)
                 if (gallery) {
                     GalleryScreen(look, viewModel::setLook)
                 } else {
-                    // No socket in the background: the gateway runs while the activity is started.
-                    LifecycleStartEffect(viewModel) {
-                        viewModel.store.startGateway()
-                        onStopOrDispose { viewModel.store.stopGateway() }
+                    session?.let { s ->
+                        val state by s.store.state.collectAsStateWithLifecycle()
+                        val authState by s.auth.state.collectAsStateWithLifecycle()
+                        splash.setKeepOnScreenCondition { state.phase == SessionPhase.Loading }
+                        // No socket in the background: the gateway runs while the activity is started.
+                        LifecycleStartEffect(s) {
+                            s.store.startGateway()
+                            onStopOrDispose { s.store.stopGateway() }
+                        }
+                        // A `thehideout://invite/<token>` or App Link that opened the app lands on the sign-in form.
+                        LaunchedEffect(state.phase, viewModel.pendingInvite) {
+                            val token = viewModel.pendingInvite
+                            if (state.phase is SessionPhase.SignedOut && token != null) {
+                                s.auth.openLink("thehideout://invite/$token")
+                                viewModel.pendingInvite = null
+                            }
+                        }
+                        HideoutRoot(
+                            state = state,
+                            look = look,
+                            onLookChange = viewModel::setLook,
+                            actions = ShellActions.of(s.store, useDemo = if (BuildConfig.DEBUG && !fake) ::openDemo else null),
+                            authState = authState,
+                            auth = s.auth,
+                            serverUrl = serverUrl,
+                            onServerChange = viewModel::changeServer,
+                            onProbeServer = container::probeServer,
+                            onOpenUrl = ::openUrl,
+                            versionName = BuildConfig.VERSION_NAME,
+                        )
                     }
-                    HideoutRoot(
-                        state = state,
-                        look = look,
-                        onLookChange = viewModel::setLook,
-                        actions = ShellActions.of(viewModel.store, useDemo = if (BuildConfig.DEBUG && !fake) ::openDemo else null),
-                        versionName = BuildConfig.VERSION_NAME,
-                    )
                 }
             }
         }
@@ -85,6 +112,11 @@ class MainActivity : ComponentActivity() {
         invitePath(intent.data)?.let { viewModel.pendingInvite = it }
     }
 
+    /** Opens a server page (terms, privacy, the ceremony) in a Custom Tab. */
+    private fun openUrl(url: String) {
+        runCatching { CustomTabsIntent.Builder().build().launchUrl(this, Uri.parse(url)) }
+    }
+
     private fun openDemo() {
         startActivity(Intent(this, MainActivity::class.java).putExtra(EXTRA_FAKE, true))
         finish()
@@ -96,9 +128,12 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_FAKE = "fake"
         const val EXTRA_GALLERY = "gallery"
 
-        /** `thehideout://invite/<token>` -> `<token>`. */
-        fun invitePath(uri: Uri?): String? =
-            uri?.takeIf { it.scheme == "thehideout" && it.host == "invite" }?.lastPathSegment?.takeIf { it.isNotBlank() }
+        /** The invite token of a `thehideout://invite/<token>` or `https://<server>/invite/<token>` link. */
+        fun invitePath(uri: Uri?): String? {
+            val u = uri ?: return null
+            if (u.scheme != "thehideout" && u.scheme != "https") return null
+            return inviteTokenFromUrl(u.toString())
+        }
     }
 }
 

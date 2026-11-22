@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Compose draws everything; this only paints the window until it does. -->
-    <style name="Theme.Hideout" parent="android:Theme.DeviceDefault.NoActionBar">
+    <style name="Theme.Hideout" parent="@style/Theme.SplashScreen">
+        <item name="android:windowBackground">@color/hideout_window_bg</item>
+        <item name="android:colorBackground">@color/hideout_window_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/hideout_window_bg</item>
+        <item name="postSplashScreenTheme">@style/Theme.Hideout.Post</item>
+    </style>
+
+    <!-- What the splash hands over to once the session phase is known. -->
+    <style name="Theme.Hideout.Post" parent="android:Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">@color/hideout_window_bg</item>
         <item name="android:colorBackground">@color/hideout_window_bg</item>
     </style>
