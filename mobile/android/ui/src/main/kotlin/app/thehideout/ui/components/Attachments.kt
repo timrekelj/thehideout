@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,7 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,10 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -67,6 +69,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Only one attachment player — an inline video card, an audio row, or the lightbox — may play at
+ * a time: starting one pauses whichever was already playing.
+ */
+internal object ActiveAttachmentPlayer {
+    private var current: Player? = null
+
+    fun play(player: Player) {
+        if (current !== player) current?.pause()
+        current = player
+        player.play()
+    }
+
+    fun released(player: Player) {
+        if (current === player) current = null
+    }
+}
+
 /** What the lightbox shows: one picture or video of a message, by its media key. */
 data class LightboxItem(
     val key: String,
@@ -75,13 +95,20 @@ data class LightboxItem(
     val height: Int,
     val isVideo: Boolean,
     val contentType: String = "",
+    /** Where to start a video: handed off from the inline player that was playing when "Expand" was tapped. */
+    val startPositionMs: Long = 0L,
 )
 
 /** Opens the lightbox on `items`, starting at `startIndex` (ATT-05). */
 data class LightboxRequest(val items: List<LightboxItem>, val startIndex: Int)
 
-private fun Attachment.toLightboxItem(isVideo: Boolean = false) =
-    LightboxItem(file, filename, width ?: 0, height ?: 0, isVideo, contentType)
+private fun Attachment.toLightboxItem(isVideo: Boolean = false, startPositionMs: Long = 0L) =
+    LightboxItem(file, filename, width ?: 0, height ?: 0, isVideo, contentType, startPositionMs)
+
+/** A short, user-safe message for a failed fetch/open/save/share (the exceptions `AttachmentFiles.kt` throws). */
+internal fun attachmentErrorToast(context: Context, e: Exception) {
+    Toast.makeText(context, e.message?.takeIf { it.isNotBlank() } ?: "That didn't work. Try again.", Toast.LENGTH_SHORT).show()
+}
 
 /** An attachment picture with a sized placeholder and a tap-to-retry error state (ATT-01). */
 @Composable
@@ -97,7 +124,7 @@ fun AttachmentImage(
     var retry by remember(url) { mutableIntStateOf(0) }
     var state by remember(url, retry) { mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty) }
     Box(modifier) {
-        androidx.compose.runtime.key(retry) {
+        key(retry) {
             coil3.compose.AsyncImage(
                 model = url,
                 contentDescription = contentDescription,
@@ -127,7 +154,7 @@ fun AttachmentImageGrid(images: List<Attachment>, mediaBase: String, modifier: M
     if (images.isEmpty()) return
     val shown = images.take(4)
     val single = images.first().let { a -> a.width?.let { w -> a.height?.let { h -> w to h } } }
-    androidx.compose.ui.layout.Layout(
+    Layout(
         modifier = modifier,
         content = {
             shown.forEachIndexed { i, att ->
@@ -152,7 +179,7 @@ fun AttachmentImageGrid(images: List<Attachment>, mediaBase: String, modifier: M
         val maxW = minOf(constraints.maxWidth.toDp().value, MEDIA_MAX_W)
         val (gridSize, cells) = imageGrid(shown.size, single, maxW)
         val (gw, gh) = gridSize
-        val placeables = measurables.mapIndexed { i, m -> m.measure(androidx.compose.ui.unit.Constraints.fixed(cells[i].w.dp.roundToPx(), cells[i].h.dp.roundToPx())) }
+        val placeables = measurables.mapIndexed { i, m -> m.measure(Constraints.fixed(cells[i].w.dp.roundToPx(), cells[i].h.dp.roundToPx())) }
         layout(gw.dp.roundToPx(), gh.dp.roundToPx()) {
             placeables.forEachIndexed { i, p -> p.placeRelative(cells[i].x.dp.roundToPx(), cells[i].y.dp.roundToPx()) }
         }
@@ -218,35 +245,41 @@ private fun ScrubBar(fraction: Float, modifier: Modifier = Modifier, trackColor:
 
 /** A video attachment: a poster with a play button, in-place playback with a bar (ATT-02). */
 @Composable
-fun AttachmentVideoCard(attachment: Attachment, mediaBase: String, modifier: Modifier = Modifier, onExpand: () -> Unit = {}) {
+fun AttachmentVideoCard(attachment: Attachment, mediaBase: String, modifier: Modifier = Modifier, onExpand: (startPositionMs: Long) -> Unit = {}) {
     val natural = attachment.width?.let { ww -> attachment.height?.let { hh -> ww to hh } }
-    androidx.compose.ui.layout.Layout(
+    Layout(
         modifier = modifier,
         content = { AttachmentVideoCardSized(attachment, mediaBase, onExpand) },
     ) { measurables, constraints ->
         // A custom Layout, not BoxWithConstraints: see AttachmentImageGrid's measure lambda.
         val maxW = minOf(constraints.maxWidth.toDp().value, MEDIA_MAX_W)
         val (w, h) = fitSize(natural, maxW, MEDIA_MAX_H)
-        val fixed = androidx.compose.ui.unit.Constraints.fixed(w.dp.roundToPx(), h.dp.roundToPx())
+        val fixed = Constraints.fixed(w.dp.roundToPx(), h.dp.roundToPx())
         val placeable = measurables.single().measure(fixed)
         layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
     }
 }
 
 @Composable
-private fun AttachmentVideoCardSized(attachment: Attachment, mediaBase: String, onExpand: () -> Unit) {
+private fun AttachmentVideoCardSized(attachment: Attachment, mediaBase: String, onExpand: (startPositionMs: Long) -> Unit) {
     val context = LocalContext.current
     var player by remember(attachment.file) { mutableStateOf<ExoPlayer?>(null) }
     var started by remember(attachment.file) { mutableStateOf(false) }
-    DisposableEffect(attachment.file) { onDispose { player?.release(); player = null } }
+    DisposableEffect(attachment.file) {
+        onDispose {
+            player?.let { ActiveAttachmentPlayer.released(it) }
+            player?.release()
+            player = null
+        }
+    }
     val ui = rememberMediaPlayerState(player)
 
     fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context).build().apply {
         setMediaItem(MediaItem.fromUri(mediaUrl(mediaBase, attachment.file)))
         prepare()
-        playWhenReady = true
         player = this
         started = true
+        ActiveAttachmentPlayer.play(this)
     }
 
     Box(Modifier.fillMaxSize().clip(RoundedCornerShape(Radius.lg)).background(MediaColors.back)) {
@@ -262,14 +295,14 @@ private fun AttachmentVideoCardSized(attachment: Attachment, mediaBase: String, 
         } else {
             val p = player
             if (p != null) {
-                PlayerSurface(player = p, modifier = Modifier.fillMaxSize().clickable { if (ui.isPlaying) p.pause() else p.play() })
+                PlayerSurface(player = p, modifier = Modifier.fillMaxSize().clickable { if (ui.isPlaying) p.pause() else ActiveAttachmentPlayer.play(p) })
             }
             Row(
                 Modifier.fillMaxWidth().height(36.dp).align(Alignment.BottomCenter).background(MediaColors.dim)
                     .padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { if (ui.isPlaying) p?.pause() else p?.play() }) {
+                IconButton(onClick = { val cur = p; if (ui.isPlaying) cur?.pause() else cur?.let { ActiveAttachmentPlayer.play(it) } }) {
                     SymIcon(if (ui.isPlaying) Sym.Pause else Sym.PlayArrow, if (ui.isPlaying) "Pause" else "Play", tint = MediaColors.ink)
                 }
                 ScrubBar(
@@ -287,7 +320,9 @@ private fun AttachmentVideoCardSized(attachment: Attachment, mediaBase: String, 
                 IconButton(onClick = { p?.volume = if (ui.muted) 1f else 0f }) {
                     SymIcon(if (ui.muted) Sym.VolumeOff else Sym.VolumeUp, if (ui.muted) "Unmute" else "Mute", tint = MediaColors.ink)
                 }
-                IconButton(onClick = onExpand) { SymIcon(Sym.Fullscreen, "Expand", tint = MediaColors.ink) }
+                IconButton(onClick = { val pos = p?.currentPosition ?: 0L; p?.pause(); onExpand(pos) }) {
+                    SymIcon(Sym.Fullscreen, "Expand", tint = MediaColors.ink)
+                }
             }
         }
     }
@@ -300,7 +335,13 @@ fun AttachmentAudioRow(attachment: Attachment, mediaBase: String, modifier: Modi
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var player by remember(attachment.file) { mutableStateOf<ExoPlayer?>(null) }
-    DisposableEffect(attachment.file) { onDispose { player?.release(); player = null } }
+    DisposableEffect(attachment.file) {
+        onDispose {
+            player?.let { ActiveAttachmentPlayer.released(it) }
+            player?.release()
+            player = null
+        }
+    }
     val ui = rememberMediaPlayerState(player)
 
     fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context).build().apply {
@@ -315,7 +356,7 @@ fun AttachmentAudioRow(attachment: Attachment, mediaBase: String, modifier: Modi
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { val p = ensurePlayer(); if (p.isPlaying) p.pause() else p.play() }) {
+        IconButton(onClick = { val p = ensurePlayer(); if (p.isPlaying) p.pause() else ActiveAttachmentPlayer.play(p) }) {
             SymIcon(if (ui.isPlaying) Sym.Pause else Sym.PlayArrow, if (ui.isPlaying) "Pause" else "Play", tint = c.accentText)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -332,12 +373,22 @@ fun AttachmentAudioRow(attachment: Attachment, mediaBase: String, modifier: Modi
                 color = c.textMuted,
             )
         }
-        IconButton(onClick = {
+        var busy by remember { mutableStateOf(false) }
+        IconButton(enabled = !busy, onClick = {
             scope.launch {
-                val bytes = fetchAttachmentBytes(context, mediaUrl(mediaBase, attachment.file))
-                saveAttachmentToDownloads(context, bytes, safeFileName(attachment.filename), attachment.contentType)
+                busy = true
+                try {
+                    saveAttachmentToDownloads(context, mediaUrl(mediaBase, attachment.file), safeFileName(attachment.filename), attachment.contentType)
+                } catch (e: AttachmentIoException) {
+                    attachmentErrorToast(context, e)
+                } finally {
+                    busy = false
+                }
             }
-        }) { SymIcon(Sym.Download, "Download", tint = c.textMuted) }
+        }) {
+            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else SymIcon(Sym.Download, "Download", tint = c.textMuted)
+        }
     }
 }
 
@@ -378,18 +429,27 @@ fun AttachmentFileCard(attachment: Attachment, mediaBase: String, kind: FileKind
                 IconButton(onClick = {
                     scope.launch {
                         busy = true
-                        val bytes = fetchAttachmentBytes(context, mediaUrl(mediaBase, attachment.file))
-                        openAttachmentWithSystem(context, bytes, safeFileName(attachment.filename), attachment.contentType)
-                        busy = false
+                        try {
+                            val file = fetchAttachmentToCache(context, mediaUrl(mediaBase, attachment.file), safeFileName(attachment.filename))
+                            openAttachmentWithSystem(context, file, attachment.contentType)
+                        } catch (e: Exception) {
+                            attachmentErrorToast(context, e)
+                        } finally {
+                            busy = false
+                        }
                     }
                 }) { SymIcon(Sym.OpenInNew, "Open", tint = c.textMuted) }
             }
             IconButton(onClick = {
                 scope.launch {
                     busy = true
-                    val bytes = fetchAttachmentBytes(context, mediaUrl(mediaBase, attachment.file))
-                    saveAttachmentToDownloads(context, bytes, safeFileName(attachment.filename), attachment.contentType)
-                    busy = false
+                    try {
+                        saveAttachmentToDownloads(context, mediaUrl(mediaBase, attachment.file), safeFileName(attachment.filename), attachment.contentType)
+                    } catch (e: AttachmentIoException) {
+                        attachmentErrorToast(context, e)
+                    } finally {
+                        busy = false
+                    }
                 }
             }) { SymIcon(Sym.Download, "Download ${attachment.filename}", tint = c.textMuted) }
         }
@@ -439,7 +499,7 @@ fun MessageAttachments(
                 continue
             }
             when (val kind = fileKind(att.contentType, att.filename)) {
-                FileKind.Video -> AttachmentVideoCard(att, mediaBase, onExpand = { onOpenLightbox(LightboxRequest(listOf(att.toLightboxItem(isVideo = true)), 0)) })
+                FileKind.Video -> AttachmentVideoCard(att, mediaBase, onExpand = { pos -> onOpenLightbox(LightboxRequest(listOf(att.toLightboxItem(isVideo = true, startPositionMs = pos)), 0)) })
                 FileKind.Audio -> AttachmentAudioRow(att, mediaBase)
                 else -> AttachmentFileCard(att, mediaBase, kind)
             }
