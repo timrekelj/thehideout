@@ -43,6 +43,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,6 +73,7 @@ import app.thehideout.core.store.AppState
 import app.thehideout.core.store.ConnectionStatus
 import app.thehideout.core.store.Delivery
 import app.thehideout.core.store.Marker
+import app.thehideout.design.Radius
 import app.thehideout.ui.components.*
 import app.thehideout.ui.components.LocalToday
 import app.thehideout.ui.icons.Sym
@@ -136,19 +141,19 @@ fun TranscriptPane(
     onOpenMembers: (() -> Unit)? = null,
 ) {
     val c = Hideout.colors
-    val zone = app.thehideout.ui.components.LocalTimeZone.current
+    val zone = LocalTimeZone.current
     val items = remember(state.logs[channelId], state.outgoing, state.marker, state.users, zone) { transcriptItems(state, channelId, zone) }
     val log = state.log(channelId)
     val today = LocalToday.current ?: LocalDate.now(zone)
     val listState = rememberLazyListState()
-    val sink = remember { androidx.compose.ui.focus.FocusRequester() }
+    val sink = remember { FocusRequester() }
     LaunchedEffect(channelId) { sink.requestFocus() }
 
     var actionMessage by remember { mutableStateOf<Message?>(null) }
-    var lightboxRequest by remember { mutableStateOf<app.thehideout.ui.components.LightboxRequest?>(null) }
+    var lightboxRequest by remember { mutableStateOf<LightboxRequest?>(null) }
     var editing by remember(channelId) { mutableStateOf<Message?>(null) }
     val text = rememberSaveable(channelId, saver = TextFieldState.Saver) { TextFieldState(state.draft(channelId)) }
-    val composerFocus = remember(channelId) { androidx.compose.ui.focus.FocusRequester() }
+    val composerFocus = remember(channelId) { FocusRequester() }
     LaunchedEffect(channelId) { snapshotFlow { text.text.toString() }.collect { if (editing == null) actions.setDraft(channelId, it) } }
 
     Scaffold(
@@ -254,7 +259,7 @@ fun TranscriptPane(
     }
 
     lightboxRequest?.let { req ->
-        app.thehideout.ui.components.AttachmentLightbox(req, onDismiss = { lightboxRequest = null })
+        AttachmentLightbox(req, onDismiss = { lightboxRequest = null })
     }
 }
 
@@ -292,7 +297,7 @@ private fun Composer(
     members: List<User>,
     serverEmojis: List<Emoji>,
     editing: Message?,
-    focusRequester: androidx.compose.ui.focus.FocusRequester,
+    focusRequester: FocusRequester,
     onCancelEdit: () -> Unit,
     onSend: (String) -> Unit,
 ) {
@@ -343,13 +348,13 @@ private fun Composer(
                 modifier = Modifier.weight(1f).testTag("composer-field").focusRequester(focusRequester),
                 placeholder = { Text(if (editing != null) "Edit message" else "Message $channelName") },
                 lineLimits = TextFieldLineLimits.MultiLine(1, 5),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.xl),
+                shape = RoundedCornerShape(Radius.xl),
             )
             FilledIconButton(
                 onClick = { if (text.text.isNotBlank()) onSend(text.text.toString()) },
                 enabled = text.text.isNotBlank(),
                 modifier = Modifier.padding(bottom = 6.dp),
-                shapes = androidx.compose.material3.IconButtonDefaults.shapes(),
+                shapes = IconButtonDefaults.shapes(),
             ) { SymIcon(if (editing != null) Sym.Check else Sym.Send, if (editing != null) "Save" else "Send") }
         }
     }
@@ -382,7 +387,7 @@ private fun customEmojiToken(e: EmojiEntry.Custom): String = "<${if (e.animated)
 @Composable
 private fun AutocompleteStrip(labels: List<String>, onPick: (String) -> Unit) {
     val c = Hideout.colors
-    androidx.compose.foundation.lazy.LazyRow(
+    LazyRow(
         Modifier.fillMaxWidth().background(c.surfaceRaised).padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -390,7 +395,7 @@ private fun AutocompleteStrip(labels: List<String>, onPick: (String) -> Unit) {
             Surface(
                 onClick = { onPick(label) },
                 modifier = Modifier.testTag("autocomplete-$label"),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.md),
+                shape = RoundedCornerShape(Radius.md),
                 color = c.surfaceOverlay,
             ) {
                 Text(label, style = MaterialTheme.typography.labelMedium, color = c.text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
