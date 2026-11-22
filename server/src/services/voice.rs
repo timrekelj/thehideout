@@ -112,13 +112,10 @@ impl VoiceService for VoiceSvc {
             .map(|u| u.username)
             .ok_or_else(|| ConnectError::unauthenticated("unknown user"))?;
 
-        // Sign first so a failure leaves the voice state untouched. The mute
-        // flag a user keeps within the guild decides the microphone grant.
-        let kept_mute = self
-            .state
-            .voice
-            .get(user_id)
-            .is_some_and(|e| e.guild_id == guild_id && e.server_mute);
+        // Sign first so a failure leaves the voice state untouched. The server
+        // mute kept for the user in this guild (it outlives leaving voice)
+        // decides the microphone grant.
+        let kept_mute = self.state.voice.server_muted(guild_id, user_id);
         let sources = voice::publish_sources(caller.has(SPEAK), caller.has(VIDEO), kept_mute);
         let token = voice::access_token(&config, user_id, &username, channel_id, &sources)?;
 
@@ -161,7 +158,7 @@ impl VoiceService for VoiceSvc {
         let entry = self
             .state
             .voice
-            .update(user_id, |e| {
+            .update_in_guild(user_id, current.guild_id, |e| {
                 e.self_mute = self_mute.unwrap_or(e.self_mute);
                 e.self_deaf = self_deaf.unwrap_or(e.self_deaf);
                 e.self_video = self_video.unwrap_or(e.self_video);
@@ -184,11 +181,12 @@ impl VoiceService for VoiceSvc {
             return Err(ConnectError::invalid_argument("you cannot server-mute yourself"));
         }
         let (entry, _) = self.moderation_target(user_id, &caller, guild_id, target_id).await?;
+        // Applied only if the target is still where the checks saw them; if
+        // they moved or left meanwhile nothing changes and the call fails.
         let entry = self
             .state
             .voice
-            .update(target_id, |e| e.server_mute = muted)
-            .filter(|e| e.channel_id == entry.channel_id)
+            .set_server_mute(guild_id, target_id, entry.channel_id, muted)
             .ok_or_else(|| ConnectError::failed_precondition("member is not in a voice channel"))?;
         publish_state(&self.state.events, &entry);
         voice::enforce_publish_sources(&self.state, &entry).await;
@@ -258,6 +256,7 @@ async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
     };
     let room = event.room.as_ref().map(|r| r.name.as_str()).unwrap_or_default();
     let identity = event.participant.as_ref().map(|p| p.identity.as_str()).unwrap_or_default();
-    voice::handle_webhook_event(&state, &event.event, room, identity).await;
+    let sid = event.participant.as_ref().map(|p| p.sid.as_str()).unwrap_or_default();
+    voice::handle_webhook_event(&state, &event.event, room, identity, sid).await;
     StatusCode::OK
 }

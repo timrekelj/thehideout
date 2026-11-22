@@ -362,7 +362,9 @@ message GuildLayout {
 //     permissions they themselves hold. Only the owner is exempt.
 //   - Voice defaults: there is no @everyone role, so CONNECT, SPEAK and VIDEO
 //     are a baseline every member has, whether or not a role carries the bits
-//     (the bits are accepted in roles and are harmless). MUTE_MEMBERS and
+//     (CreateRole / UpdateRole accept the bits but they add nothing, and
+//     nothing can revoke them: listen-only members need an everyone-level
+//     role, not yet available). MUTE_MEMBERS and
 //     MOVE_MEMBERS are held by nobody by default; ADMINISTRATOR and the owner
 //     imply them, and a role can grant them like any other permission (only
 //     bits the granter holds).

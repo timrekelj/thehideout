@@ -761,7 +761,235 @@ async fn a_user_who_never_connects_is_dropped_and_a_connected_one_stays() {
     assert_eq!(dropped, Some(bob.id));
     assert!(app.state.voice.get(bob.id).is_none());
     assert!(app.state.voice.get(carol.id).is_some_and(|e| e.connected));
+    // The sweeper also disconnects the dropped participant (it may be live after all,
+    // with its participant_joined lost), and leaves the connected one alone.
+    let fake = app.livekit.clone().unwrap();
+    eventually("the sweeper kicks the dropped participant", || fake.removed(&format!("voice-{}", ch.id), bob.id)).await;
+    assert!(!fake.removed(&format!("voice-{}", ch.id), carol.id));
     app.cleanup().await;
+}
+
+/// Polls `cond` for up to two seconds.
+async fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
+    for _ in 0..40 {
+        if cond() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for: {what}");
+}
+
+/// Sends a signed webhook `event` for the participant `who` (connection `sid`) of a voice channel.
+async fn participant_event(app: &TestApp, event: &str, channel_id: u64, who: u64, sid: &str) -> u16 {
+    let (body, auth) =
+        lk::signed_webhook_sid(lk::API_SECRET, event, &format!("voice-{channel_id}"), &who.to_string(), sid);
+    post_webhook(app, Some(&auth), &body).await
+}
+
+#[tokio::test]
+async fn a_same_channel_rejoin_keeps_the_connection_and_the_sweeper_leaves_it_alone() {
+    let app = TestApp::builder()
+        .livekit()
+        .heartbeat(Duration::from_millis(200))
+        .connect_grace(Duration::from_millis(600))
+        .start()
+        .await;
+    let (alice, bob, carol) = (user(&app, "alice").await, user(&app, "bob").await, user(&app, "carol").await);
+    let g = guild(&app, &alice).await;
+    join(&app, &bob, &g).await;
+    join(&app, &carol, &g).await;
+    let ch = voice_channel(&app, &alice, g.id, "lounge").await;
+    let fake = app.livekit.clone().unwrap();
+
+    join_voice(&app, &bob, ch.id).await.unwrap();
+    assert_eq!(participant_event(&app, "participant_joined", ch.id, bob.id, "PA_1").await, 200);
+    let before = state_of(&app, bob.id).unwrap();
+    assert!(before.connected);
+    let again = join_voice(&app, &bob, ch.id).await.unwrap();
+    assert_eq!(claims(&again.token).video.room, format!("voice-{}", ch.id));
+    let after = state_of(&app, bob.id).unwrap();
+    assert!(after.connected && after.sid.as_deref() == Some("PA_1"), "a rejoin keeps the confirmed connection");
+    assert_eq!((after.since, after.joined_at), (before.since, before.joined_at));
+
+    // A join that never connected keeps its original grace timer when it is repeated.
+    join_voice(&app, &carol, ch.id).await.unwrap();
+    let first = state_of(&app, carol.id).unwrap();
+    join_voice(&app, &carol, ch.id).await.unwrap();
+    let second = state_of(&app, carol.id).unwrap();
+    assert!(!second.connected && second.since == first.since);
+
+    // Well past the grace, bob (connected) is still there and was never kicked; carol is dropped.
+    eventually("the unconnected join is dropped", || state_of(&app, carol.id).is_none()).await;
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert!(state_of(&app, bob.id).is_some_and(|e| e.connected));
+    assert!(!fake.removed(&format!("voice-{}", ch.id), bob.id));
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_late_participant_left_of_a_replaced_connection_keeps_the_fresh_rejoin() {
+    let app = start().await;
+    let (alice, bob) = (user(&app, "alice").await, user(&app, "bob").await);
+    let g = guild(&app, &alice).await;
+    join(&app, &bob, &g).await;
+    let ch = voice_channel(&app, &alice, g.id, "lounge").await;
+
+    join_voice(&app, &bob, ch.id).await.unwrap();
+    assert_eq!(participant_event(&app, "participant_joined", ch.id, bob.id, "PA_old").await, 200);
+    // Rejoin: LiveKit replaces the old connection, confirms the new one, then reports the old one gone.
+    join_voice(&app, &bob, ch.id).await.unwrap();
+    assert_eq!(participant_event(&app, "participant_joined", ch.id, bob.id, "PA_new").await, 200);
+    assert_eq!(state_of(&app, bob.id).unwrap().sid.as_deref(), Some("PA_new"));
+    assert_eq!(participant_event(&app, "participant_left", ch.id, bob.id, "PA_old").await, 200);
+    assert!(state_of(&app, bob.id).is_some_and(|e| e.connected), "the old connection's leave is ignored");
+    // The current connection leaving does clear the state.
+    assert_eq!(participant_event(&app, "participant_left", ch.id, bob.id, "PA_new").await, 200);
+    assert!(state_of(&app, bob.id).is_none());
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_server_mute_survives_leaving_rejoining_and_another_guild() {
+    let c = crew().await;
+    let fake = c.app.livekit.clone().unwrap();
+    let no_mic = vec!["camera", "screen_share", "screen_share_audio"];
+    let all = vec!["microphone", "camera", "screen_share", "screen_share_audio"];
+    join_voice(&c.app, &c.plain, c.lounge.id).await.unwrap();
+    assert!(server_mute(&c, &c.mod_, c.plain.id, true).await.unwrap().server_mute);
+
+    // Leave, rejoin: still muted, in the state and in the token.
+    voice(&c.app, &c.plain).leave_voice(LeaveVoiceRequest::default()).await.unwrap();
+    assert!(state_of(&c.app, c.plain.id).is_none());
+    // A mute needs the target in voice (and fails without changing anything when they are not).
+    assert_eq!(server_mute(&c, &c.mod_, c.plain.id, false).await.unwrap_err().code, ErrorCode::FailedPrecondition);
+    assert!(c.app.state.voice.server_muted(c.guild.id, c.plain.id));
+    let token = join_voice(&c.app, &c.plain, c.lounge.id).await.unwrap().token;
+    assert_eq!(claims(&token).video.can_publish_sources, no_mic);
+    assert!(state_of(&c.app, c.plain.id).unwrap().server_mute);
+    // ... also when LiveKit confirms the connection.
+    fake.clear();
+    assert_eq!(participant_event(&c.app, "participant_joined", c.lounge.id, c.plain.id, "PA_1").await, 200);
+    assert!(matches!(fake.calls().as_slice(), [Call::Sources { sources, .. }] if !sources.contains(&PublishSource::Microphone)));
+
+    // Another guild's voice has no mute for them; coming back to this guild brings it back.
+    let (stranger, plain_elsewhere) = (user(&c.app, "stranger").await, c.plain.id);
+    let g2 = guild(&c.app, &stranger).await;
+    join(&c.app, &c.plain, &g2).await;
+    let elsewhere = voice_channel(&c.app, &stranger, g2.id, "elsewhere").await;
+    let token = join_voice(&c.app, &c.plain, elsewhere.id).await.unwrap().token;
+    assert_eq!(claims(&token).video.can_publish_sources, all);
+    assert!(state_of(&c.app, plain_elsewhere).is_some_and(|e| e.guild_id == g2.id && !e.server_mute));
+    let token = join_voice(&c.app, &c.plain, c.lounge.id).await.unwrap().token;
+    assert_eq!(claims(&token).video.can_publish_sources, no_mic);
+    assert!(state_of(&c.app, c.plain.id).is_some_and(|e| e.guild_id == c.guild.id && e.server_mute));
+
+    // Only an unmute lifts it.
+    assert!(!server_mute(&c, &c.mod_, c.plain.id, false).await.unwrap().server_mute);
+    voice(&c.app, &c.plain).leave_voice(LeaveVoiceRequest::default()).await.unwrap();
+    let token = join_voice(&c.app, &c.plain, c.lounge.id).await.unwrap().token;
+    assert_eq!(claims(&token).video.can_publish_sources, all);
+    assert!(!state_of(&c.app, c.plain.id).unwrap().server_mute);
+    c.app.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_server_mute_of_a_member_who_left_or_moved_applies_nothing() {
+    let c = crew().await;
+    join_voice(&c.app, &c.plain, c.lounge.id).await.unwrap();
+    // The checks saw `plain` in the lounge; by the time the mute is applied they moved on.
+    // `set_server_mute` is what ServerMuteMember applies, atomically, to the entry it checked.
+    let states = &c.app.state.voice;
+    states.join(c.plain.id, c.guild.id, c.other.id);
+    assert!(states.set_server_mute(c.guild.id, c.plain.id, c.lounge.id, true).is_none());
+    assert!(!states.server_muted(c.guild.id, c.plain.id));
+    assert!(!state_of(&c.app, c.plain.id).unwrap().server_mute);
+    // The same call for where they are now applies, and the RPC then publishes and enforces.
+    let fake = c.app.livekit.clone().unwrap();
+    fake.clear();
+    assert!(server_mute(&c, &c.mod_, c.plain.id, true).await.unwrap().server_mute);
+    assert_eq!(fake.calls().len(), 1);
+    // A leave right before the mute: the RPC fails and records nothing.
+    voice(&c.app, &c.plain).leave_voice(LeaveVoiceRequest::default()).await.unwrap();
+    assert!(states.set_server_mute(c.guild.id, c.plain.id, c.other.id, false).is_none());
+    assert!(states.server_muted(c.guild.id, c.plain.id), "an unmute that finds nobody changes nothing");
+    c.app.cleanup().await;
+}
+
+#[tokio::test]
+async fn role_changes_during_a_call_reapply_the_publish_permissions() {
+    let c = crew().await;
+    let fake = c.app.livekit.clone().unwrap();
+    let everything = vec![
+        PublishSource::Microphone,
+        PublishSource::Camera,
+        PublishSource::ScreenShare,
+        PublishSource::ScreenShareAudio,
+    ];
+    let sources_of = |who: &Account| -> Vec<Call> {
+        fake.calls()
+            .into_iter()
+            .filter(|call| matches!(call, Call::Sources { identity, .. } if *identity == who.id.to_string()))
+            .collect()
+    };
+    let expected = |who: &Account| Call::Sources {
+        room: format!("voice-{}", c.lounge.id),
+        identity: who.id.to_string(),
+        sources: everything.clone(),
+    };
+    // `mute_only` is connected; `plain` joined but LiveKit has not confirmed them.
+    join_voice(&c.app, &c.mute_only, c.lounge.id).await.unwrap();
+    assert_eq!(participant_event(&c.app, "participant_joined", c.lounge.id, c.mute_only.id, "PA_m").await, 200);
+    join_voice(&c.app, &c.plain, c.lounge.id).await.unwrap();
+    let extra = fixtures::role(&c.app, &c.owner, c.guild.id, "extra", 0).await.unwrap();
+    fake.clear();
+
+    // A member's roles change.
+    fixtures::set_roles(&c.app, &c.owner, c.guild.id, c.mute_only.id, &[extra.id]).await.unwrap();
+    assert_eq!(sources_of(&c.mute_only), vec![expected(&c.mute_only)]);
+    // A member who is not in voice is not touched.
+    fake.clear();
+    fixtures::set_roles(&c.app, &c.owner, c.guild.id, c.senior.id, &[extra.id]).await.unwrap();
+    assert!(fake.calls().is_empty());
+
+    // A role's permissions change: everyone connected in the guild is re-enforced (not the unconfirmed one).
+    roles_client(&c).update_role(UpdateRoleRequest {
+        guild_id: c.guild.id,
+        role_id: extra.id,
+        permissions: Some(MUTE_MEMBERS),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    assert_eq!(sources_of(&c.mute_only), vec![expected(&c.mute_only)]);
+    assert!(sources_of(&c.plain).is_empty());
+
+    // Renaming alone changes no permissions.
+    fake.clear();
+    roles_client(&c).update_role(UpdateRoleRequest {
+        guild_id: c.guild.id,
+        role_id: extra.id,
+        name: Some("renamed".into()),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    assert!(fake.calls().is_empty());
+
+    // Deleting a role.
+    roles_client(&c)
+        .delete_role(DeleteRoleRequest { guild_id: c.guild.id, role_id: extra.id, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(sources_of(&c.mute_only), vec![expected(&c.mute_only)]);
+    // The unconfirmed member gets theirs when LiveKit confirms them.
+    assert_eq!(participant_event(&c.app, "participant_joined", c.lounge.id, c.plain.id, "PA_p").await, 200);
+    assert_eq!(sources_of(&c.plain), vec![expected(&c.plain)]);
+    c.app.cleanup().await;
+}
+
+fn roles_client(c: &Crew) -> RoleServiceClient<connectrpc::client::HttpClient> {
+    fixtures::roles(&c.app, &c.owner)
 }
 
 // ------------------------------------------------------------------ config

@@ -7,7 +7,7 @@
 //! which channel. Room name = `voice-<channel_id>`, participant identity = the
 //! user id (decimal), participant name = the username.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
@@ -224,7 +224,11 @@ pub struct VoiceEntry {
     pub joined_at: DateTime<Utc>,
     /// LiveKit confirmed (`participant_joined`) the connection.
     pub connected: bool,
-    /// When the user last (re)joined; the connect grace runs from here.
+    /// LiveKit participant SID of the connection `participant_joined` last
+    /// confirmed; a `participant_left` for another SID is a stale connection.
+    pub sid: Option<String>,
+    /// When the user joined this channel (not restarted by a same-channel
+    /// rejoin); the connect grace runs from here.
     pub since: Instant,
 }
 
@@ -247,9 +251,22 @@ impl VoiceEntry {
 
 /// Who is in which voice channel. In memory only: lost on restart, single node.
 /// At most one entry per user.
+///
+/// Server mutes are kept per (guild, user), apart from the entries: a mute
+/// outlives leaving and rejoining (also through another guild's voice), and
+/// ends only with an unmute or the member leaving the guild. Like the entries
+/// they are not persisted, so a restart clears them (the clients and LiveKit
+/// reconcile through `JoinVoice` anyway).
 #[derive(Default)]
 pub struct VoiceStates {
-    users: Mutex<HashMap<u64, VoiceEntry>>,
+    inner: Mutex<Inner>,
+}
+
+#[derive(Default)]
+struct Inner {
+    users: HashMap<u64, VoiceEntry>,
+    /// `(guild_id, user_id)` pairs that are server-muted.
+    mutes: HashSet<(u64, u64)>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -262,61 +279,105 @@ impl VoiceStates {
     }
 
     pub fn get(&self, user_id: u64) -> Option<VoiceEntry> {
-        lock(&self.users).get(&user_id).cloned()
+        lock(&self.inner).users.get(&user_id).cloned()
+    }
+
+    /// Whether the user is server-muted in the guild, in voice or not.
+    pub fn server_muted(&self, guild_id: u64, user_id: u64) -> bool {
+        lock(&self.inner).mutes.contains(&(guild_id, user_id))
     }
 
     /// Puts the user in `channel_id` and returns `(previous, current)`. The
-    /// same channel again keeps the state (a reconnect); another channel of the
-    /// same guild keeps the mute flags (the server mute must survive a move)
-    /// and resets video / stream; another guild starts fresh. Either way the
-    /// user must connect to LiveKit again.
+    /// same channel again is a reconnect: everything stays, including
+    /// `connected` and the grace timer (the live LiveKit participant is
+    /// replaced by the new connection, whose `participant_joined` confirms
+    /// again). Another channel of the same guild keeps the self mute / deaf
+    /// flags and resets video / stream; another guild starts fresh. Then the
+    /// user must connect to LiveKit again. The server mute always follows the
+    /// per-(guild, user) record.
     pub fn join(&self, user_id: u64, guild_id: u64, channel_id: u64) -> (Option<VoiceEntry>, VoiceEntry) {
-        let mut users = lock(&self.users);
-        let previous = users.get(&user_id).cloned();
+        let mut inner = lock(&self.inner);
+        let previous = inner.users.get(&user_id).cloned();
         let mut entry = VoiceEntry {
             guild_id,
             channel_id,
             user_id,
             self_mute: false,
             self_deaf: false,
-            server_mute: false,
+            server_mute: inner.mutes.contains(&(guild_id, user_id)),
             self_video: false,
             self_stream: false,
             joined_at: Utc::now(),
             connected: false,
+            sid: None,
             since: Instant::now(),
         };
         if let Some(prev) = previous.as_ref().filter(|p| p.guild_id == guild_id) {
             entry.self_mute = prev.self_mute;
             entry.self_deaf = prev.self_deaf;
-            entry.server_mute = prev.server_mute;
             if prev.channel_id == channel_id {
                 entry.self_video = prev.self_video;
                 entry.self_stream = prev.self_stream;
                 entry.joined_at = prev.joined_at;
+                entry.connected = prev.connected;
+                entry.sid = prev.sid.clone();
+                entry.since = prev.since;
             }
         }
-        users.insert(user_id, entry.clone());
+        inner.users.insert(user_id, entry.clone());
         (previous, entry)
     }
 
     /// Applies `change` to the user's entry and returns the result.
     pub fn update(&self, user_id: u64, change: impl FnOnce(&mut VoiceEntry)) -> Option<VoiceEntry> {
-        let mut users = lock(&self.users);
-        let entry = users.get_mut(&user_id)?;
+        let mut inner = lock(&self.inner);
+        let entry = inner.users.get_mut(&user_id)?;
         change(entry);
         Some(entry.clone())
     }
 
-    pub fn remove(&self, user_id: u64) -> Option<VoiceEntry> {
-        lock(&self.users).remove(&user_id)
+    /// Like [`update`](Self::update), but only if the user is in a channel of
+    /// `guild_id` (nothing changes otherwise).
+    pub fn update_in_guild(&self, user_id: u64, guild_id: u64, change: impl FnOnce(&mut VoiceEntry)) -> Option<VoiceEntry> {
+        let mut inner = lock(&self.inner);
+        let entry = inner.users.get_mut(&user_id).filter(|e| e.guild_id == guild_id)?;
+        change(entry);
+        Some(entry.clone())
     }
 
-    /// Removes the user only if they are in `channel_id`.
-    pub fn remove_if_in_channel(&self, user_id: u64, channel_id: u64) -> Option<VoiceEntry> {
-        let mut users = lock(&self.users);
-        if users.get(&user_id).is_some_and(|e| e.channel_id == channel_id) {
-            users.remove(&user_id)
+    /// Server-mutes or unmutes the user in the guild and returns their entry.
+    /// Only applied while they are still in `channel_id` of that guild (they
+    /// may have moved or left since the caller looked); otherwise nothing
+    /// changes and the result is `None`.
+    pub fn set_server_mute(&self, guild_id: u64, user_id: u64, channel_id: u64, muted: bool) -> Option<VoiceEntry> {
+        let mut inner = lock(&self.inner);
+        let Inner { users, mutes } = &mut *inner;
+        let entry = users.get_mut(&user_id).filter(|e| e.guild_id == guild_id && e.channel_id == channel_id)?;
+        if muted {
+            mutes.insert((guild_id, user_id));
+        } else {
+            mutes.remove(&(guild_id, user_id));
+        }
+        entry.server_mute = muted;
+        Some(entry.clone())
+    }
+
+    pub fn remove(&self, user_id: u64) -> Option<VoiceEntry> {
+        lock(&self.inner).users.remove(&user_id)
+    }
+
+    /// Removes the user only if they are in `channel_id` and, when LiveKit
+    /// confirmed a connection (a recorded SID), only if `sid` is that
+    /// connection: a late `participant_left` of an old connection does not
+    /// drop a fresh rejoin.
+    pub fn remove_if_in_channel(&self, user_id: u64, channel_id: u64, sid: &str) -> Option<VoiceEntry> {
+        let mut inner = lock(&self.inner);
+        let matches = inner
+            .users
+            .get(&user_id)
+            .is_some_and(|e| e.channel_id == channel_id && e.sid.as_deref().is_none_or(|recorded| recorded == sid));
+        if matches {
+            inner.users.remove(&user_id)
         } else {
             None
         }
@@ -325,7 +386,7 @@ impl VoiceStates {
     /// Removes everyone in `channel_id`.
     pub fn remove_channel(&self, channel_id: u64) -> Vec<VoiceEntry> {
         let mut removed = Vec::new();
-        lock(&self.users).retain(|_, e| {
+        lock(&self.inner).users.retain(|_, e| {
             let keep = e.channel_id != channel_id;
             if !keep {
                 removed.push(e.clone());
@@ -335,28 +396,34 @@ impl VoiceStates {
         removed
     }
 
-    /// Removes the user if they are in a channel of `guild_id`.
+    /// The user left the guild: forgets their server mute there and removes
+    /// them if they are in a channel of it.
     pub fn remove_guild_member(&self, guild_id: u64, user_id: u64) -> Option<VoiceEntry> {
-        let mut users = lock(&self.users);
-        if users.get(&user_id).is_some_and(|e| e.guild_id == guild_id) {
-            users.remove(&user_id)
+        let mut inner = lock(&self.inner);
+        inner.mutes.remove(&(guild_id, user_id));
+        if inner.users.get(&user_id).is_some_and(|e| e.guild_id == guild_id) {
+            inner.users.remove(&user_id)
         } else {
             None
         }
     }
 
-    /// Marks the user connected; false if they are not in `channel_id`.
-    pub fn confirm(&self, user_id: u64, channel_id: u64) -> Option<VoiceEntry> {
-        let mut users = lock(&self.users);
-        let entry = users.get_mut(&user_id).filter(|e| e.channel_id == channel_id)?;
+    /// Marks the user connected with LiveKit participant `sid` (recorded when
+    /// not empty); `None` if they are not in `channel_id`.
+    pub fn confirm(&self, user_id: u64, channel_id: u64, sid: &str) -> Option<VoiceEntry> {
+        let mut inner = lock(&self.inner);
+        let entry = inner.users.get_mut(&user_id).filter(|e| e.channel_id == channel_id)?;
         entry.connected = true;
+        if !sid.is_empty() {
+            entry.sid = Some(sid.to_owned());
+        }
         Some(entry.clone())
     }
 
     /// Removes users who joined more than `grace` ago and never connected.
     pub fn expire_unconnected(&self, grace: Duration) -> Vec<VoiceEntry> {
         let mut removed = Vec::new();
-        lock(&self.users).retain(|_, e| {
+        lock(&self.inner).users.retain(|_, e| {
             let expired = !e.connected && e.since.elapsed() >= grace;
             if expired {
                 removed.push(e.clone());
@@ -369,19 +436,19 @@ impl VoiceStates {
     /// Everyone in a channel of one of the guilds, ordered by guild, channel, join time.
     pub fn in_guilds(&self, guild_ids: &[u64]) -> Vec<VoiceEntry> {
         let mut found: Vec<VoiceEntry> =
-            lock(&self.users).values().filter(|e| guild_ids.contains(&e.guild_id)).cloned().collect();
+            lock(&self.inner).users.values().filter(|e| guild_ids.contains(&e.guild_id)).cloned().collect();
         found.sort_by_key(|e| (e.guild_id, e.channel_id, e.joined_at, e.user_id));
         found
     }
 
     pub fn in_channel(&self, channel_id: u64) -> Vec<VoiceEntry> {
-        let mut found: Vec<VoiceEntry> = lock(&self.users).values().filter(|e| e.channel_id == channel_id).cloned().collect();
+        let mut found: Vec<VoiceEntry> = lock(&self.inner).users.values().filter(|e| e.channel_id == channel_id).cloned().collect();
         found.sort_by_key(|e| (e.joined_at, e.user_id));
         found
     }
 
     pub fn len(&self) -> usize {
-        lock(&self.users).len()
+        lock(&self.inner).users.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -416,8 +483,14 @@ pub async fn kick(state: &AppState, channel_id: u64, user_id: u64) {
     if state.livekit.config.is_none() {
         return;
     }
+    kick_participant(state.livekit.admin.as_ref(), channel_id, user_id).await;
+}
+
+/// [`kick`] without the app state (the sweeper must not hold the voice states
+/// alive).
+async fn kick_participant(admin: &dyn LiveKitAdmin, channel_id: u64, user_id: u64) {
     let (room, identity) = (room_name(channel_id), user_id.to_string());
-    match tokio::time::timeout(LIVEKIT_CALL_TIMEOUT, state.livekit.admin.remove_participant(&room, &identity)).await {
+    match tokio::time::timeout(LIVEKIT_CALL_TIMEOUT, admin.remove_participant(&room, &identity)).await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => tracing::debug!(%room, %identity, error = %e, "removing the LiveKit participant failed"),
         Err(_) => tracing::warn!(%room, %identity, "removing the LiveKit participant timed out"),
@@ -425,7 +498,7 @@ pub async fn kick(state: &AppState, channel_id: u64, user_id: u64) {
 }
 
 /// Pushes the permissions a member should have in their room to LiveKit
-/// (after a server mute change, and on connect for a server-muted member).
+/// (after a server mute or permission change, and when they connect).
 pub async fn enforce_publish_sources(state: &AppState, entry: &VoiceEntry) {
     if state.livekit.config.is_none() {
         return;
@@ -437,6 +510,23 @@ pub async fn enforce_publish_sources(state: &AppState, entry: &VoiceEntry) {
         Ok(Ok(())) => {}
         Ok(Err(e)) => tracing::warn!(%room, %identity, error = %e, "updating LiveKit publish permissions failed"),
         Err(_) => tracing::warn!(%room, %identity, "updating LiveKit publish permissions timed out"),
+    }
+}
+
+/// A member's roles, or the permissions of roles, changed: re-pushes the
+/// publish permissions of the connected members of `guild_id` who are in voice
+/// (just `user_id` when given), so losing SPEAK or VIDEO takes effect during
+/// the call. Members who have not connected get theirs when they do.
+pub async fn reenforce_permissions(state: &AppState, guild_id: u64, user_id: Option<u64>) {
+    if state.livekit.config.is_none() {
+        return;
+    }
+    let entries: Vec<VoiceEntry> = match user_id {
+        Some(user_id) => state.voice.get(user_id).into_iter().collect(),
+        None => state.voice.in_guilds(&[guild_id]),
+    };
+    for entry in entries.iter().filter(|e| e.guild_id == guild_id && e.connected) {
+        enforce_publish_sources(state, entry).await;
     }
 }
 
@@ -469,24 +559,26 @@ pub async fn on_member_removed(state: &AppState, guild_id: u64, user_id: u64) {
 
 /// Applies a verified LiveKit webhook event to the voice state.
 ///
-/// - `participant_joined`: confirms the user's join; a user who is not (or no
-///   longer) in that channel by our books is disconnected (a stale token).
-///   A server-muted member gets the muted permissions pushed again, covering a
-///   mute that happened before they connected.
+/// - `participant_joined`: confirms the user's join and records the
+///   participant `sid`; a user who is not (or no longer) in that channel by our
+///   books is disconnected (a stale token). The member's current publish
+///   permissions are pushed, covering a mute or role change that happened
+///   before they connected.
 /// - `participant_left`: the user leaves voice if still booked in that room (a
-///   move or rejoin already changed the booking, which is then left alone).
+///   move or rejoin already changed the booking, which is then left alone), and
+///   if `sid` is the connection we recorded: a late event of a replaced
+///   connection (same identity) is ignored.
 /// - `room_finished`: everyone booked in that room leaves.
-pub async fn handle_webhook_event(state: &AppState, event: &str, room: &str, identity: &str) {
+pub async fn handle_webhook_event(state: &AppState, event: &str, room: &str, identity: &str, sid: &str) {
     let Some(channel_id) = channel_of_room(room) else { return };
     let user = identity.parse::<u64>().ok();
     match (event, user) {
-        ("participant_joined", Some(user_id)) => match state.voice.confirm(user_id, channel_id) {
-            Some(entry) if entry.server_mute => enforce_publish_sources(state, &entry).await,
-            Some(_) => {}
+        ("participant_joined", Some(user_id)) => match state.voice.confirm(user_id, channel_id, sid) {
+            Some(entry) => enforce_publish_sources(state, &entry).await,
             None => kick(state, channel_id, user_id).await,
         },
         ("participant_left", Some(user_id)) => {
-            if let Some(entry) = state.voice.remove_if_in_channel(user_id, channel_id) {
+            if let Some(entry) = state.voice.remove_if_in_channel(user_id, channel_id, sid) {
                 publish_left(&state.events, entry.guild_id, entry.user_id);
             }
         }
@@ -499,24 +591,54 @@ pub async fn handle_webhook_event(state: &AppState, event: &str, room: &str, ide
     }
 }
 
+/// Smallest gap between two "webhook may not be reaching the server" warnings.
+const UNCONFIRMED_WARN_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// Whether a warning may be logged now, given when the last one was; records
+/// `now` when it may.
+fn warn_due(last: &mut Option<Instant>, now: Instant, every: Duration) -> bool {
+    if last.is_some_and(|l| now.duration_since(l) < every) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
 /// Starts the task that drops users who joined but never connected to LiveKit
-/// within `state.livekit.connect_grace`. Ends when the voice states are gone.
+/// within `state.livekit.connect_grace`, and disconnects their LiveKit
+/// participant in case it is live after all (its `participant_joined` never
+/// reached us). Ends when the voice states are gone.
 pub fn spawn_sweeper(state: &AppState) {
     if tokio::runtime::Handle::try_current().is_err() {
         return;
     }
     let states: Weak<VoiceStates> = Arc::downgrade(&state.voice);
     let events = state.events.clone();
+    let admin = state.livekit.admin.clone();
+    let configured = state.livekit.config.is_some();
     let grace = state.livekit.connect_grace;
     let period = (grace / 3).clamp(Duration::from_millis(50), Duration::from_secs(5));
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);
+        let mut last_warning = None;
         loop {
             tick.tick().await;
             let Some(states) = states.upgrade() else { return };
-            for entry in states.expire_unconnected(grace) {
+            let dropped = states.expire_unconnected(grace);
+            drop(states);
+            for entry in dropped {
                 tracing::debug!(user = entry.user_id, channel = entry.channel_id, "voice join never connected; dropping");
+                if warn_due(&mut last_warning, Instant::now(), UNCONFIRMED_WARN_EVERY) {
+                    tracing::warn!(
+                        "a voice join never got a LiveKit participant_joined; LIVEKIT webhook URL may not reach this server \
+                         (LiveKit's webhook.urls must point at <server>/livekit/webhook, signed with the same key and secret), \
+                         or the client could not connect to LIVEKIT_URL"
+                    );
+                }
                 publish_left(&events, entry.guild_id, entry.user_id);
+                if configured {
+                    kick_participant(admin.as_ref(), entry.channel_id, entry.user_id).await;
+                }
             }
         }
     });
@@ -549,8 +671,8 @@ mod tests {
         let states = VoiceStates::new();
         let (prev, first) = states.join(1, 10, 100);
         assert!(prev.is_none() && !first.connected);
+        states.set_server_mute(10, 1, 100, true).unwrap();
         states.update(1, |e| {
-            e.server_mute = true;
             e.self_mute = true;
             e.self_video = true;
         });
@@ -559,10 +681,80 @@ mod tests {
         assert_eq!(prev.unwrap().channel_id, 100);
         assert!(moved.server_mute && moved.self_mute && !moved.self_video);
         assert_eq!(states.len(), 1);
-        // Other guild: fresh.
+        // Other guild: fresh self flags, and no server mute there.
         let (_, other) = states.join(1, 11, 200);
         assert!(!other.server_mute && !other.self_mute);
         assert!(states.in_channel(101).is_empty() && states.in_channel(200).len() == 1);
+        // Back in the first guild the server mute is still on.
+        assert!(states.join(1, 10, 100).1.server_mute);
+    }
+
+    #[test]
+    fn server_mute_is_kept_per_guild_and_user_apart_from_the_entry() {
+        let states = VoiceStates::new();
+        states.join(1, 10, 100);
+        let muted = states.set_server_mute(10, 1, 100, true).unwrap();
+        assert!(muted.server_mute && states.server_muted(10, 1) && !states.server_muted(11, 1));
+        // Leaving keeps it; rejoining brings it back.
+        states.remove(1);
+        assert!(states.server_muted(10, 1));
+        assert!(states.join(1, 10, 100).1.server_mute);
+        // A stale target (moved, other guild, gone) changes nothing.
+        assert!(states.set_server_mute(10, 1, 999, false).is_none());
+        assert!(states.set_server_mute(11, 1, 100, false).is_none());
+        assert!(states.server_muted(10, 1) && states.get(1).unwrap().server_mute);
+        states.join(1, 10, 101);
+        // Self flags change only for the guild the caller checked.
+        assert!(states.update_in_guild(1, 11, |e| e.self_video = true).is_none() && !states.get(1).unwrap().self_video);
+        assert!(states.update_in_guild(1, 10, |e| e.self_video = true).is_some_and(|e| e.self_video));
+        assert!(states.set_server_mute(10, 1, 100, false).is_none(), "moved to 101 meanwhile");
+        assert!(states.server_muted(10, 1));
+        // Unmute clears it; a member leaving the guild forgets it.
+        assert!(!states.set_server_mute(10, 1, 101, false).unwrap().server_mute);
+        assert!(!states.server_muted(10, 1) && !states.join(1, 10, 101).1.server_mute);
+        states.set_server_mute(10, 1, 101, true).unwrap();
+        assert!(states.remove_guild_member(10, 1).is_some());
+        assert!(!states.server_muted(10, 1));
+        assert!(!states.join(1, 10, 100).1.server_mute);
+    }
+
+    #[test]
+    fn same_channel_rejoin_keeps_connection_and_grace_timer() {
+        let states = VoiceStates::new();
+        let (_, first) = states.join(1, 10, 100);
+        let confirmed = states.confirm(1, 100, "PA_1").unwrap();
+        assert!(confirmed.connected);
+        let (_, again) = states.join(1, 10, 100);
+        assert!(again.connected && again.sid.as_deref() == Some("PA_1"));
+        assert_eq!((again.since, again.joined_at), (first.since, first.joined_at));
+        assert!(states.expire_unconnected(Duration::ZERO).is_empty());
+        // Another channel starts over.
+        let (_, moved) = states.join(1, 10, 101);
+        assert!(!moved.connected && moved.sid.is_none());
+        assert_eq!(states.expire_unconnected(Duration::ZERO).len(), 1);
+    }
+
+    #[test]
+    fn participant_left_with_an_old_sid_is_ignored() {
+        let states = VoiceStates::new();
+        states.join(1, 10, 100);
+        states.confirm(1, 100, "PA_new").unwrap();
+        assert!(states.remove_if_in_channel(1, 100, "PA_old").is_none());
+        assert!(states.remove_if_in_channel(1, 999, "PA_new").is_none());
+        assert!(states.remove_if_in_channel(1, 100, "PA_new").is_some());
+        // Without a recorded SID any participant_left of the room counts.
+        states.join(1, 10, 100);
+        assert!(states.remove_if_in_channel(1, 100, "PA_any").is_some());
+    }
+
+    #[test]
+    fn unconfirmed_warnings_are_rate_limited() {
+        let (mut last, start) = (None, Instant::now());
+        let every = Duration::from_secs(60);
+        assert!(warn_due(&mut last, start, every));
+        assert!(!warn_due(&mut last, start + Duration::from_secs(59), every));
+        assert!(warn_due(&mut last, start + Duration::from_secs(61), every));
+        assert!(!warn_due(&mut last, start + Duration::from_secs(100), every));
     }
 
     #[test]
@@ -570,11 +762,11 @@ mod tests {
         let states = VoiceStates::new();
         states.join(1, 10, 100);
         states.join(2, 10, 100);
-        states.confirm(2, 100).unwrap();
-        assert!(states.confirm(2, 999).is_none());
+        states.confirm(2, 100, "").unwrap();
+        assert!(states.confirm(2, 999, "").is_none());
         let expired = states.expire_unconnected(Duration::ZERO);
         assert_eq!(expired.iter().map(|e| e.user_id).collect::<Vec<_>>(), vec![1]);
-        assert!(states.remove_if_in_channel(2, 999).is_none());
+        assert!(states.remove_if_in_channel(2, 999, "").is_none());
         assert_eq!(states.remove_channel(100).len(), 1);
         assert!(states.is_empty());
     }

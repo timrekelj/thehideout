@@ -64,10 +64,20 @@ impl LiveKitAdmin for RecordingLiveKit {
 /// A LiveKit webhook request body and its `Authorization` header, signed the
 /// way LiveKit does (a JWT carrying the base64 SHA-256 of the body).
 pub fn signed_webhook(secret: &str, event: &str, room: &str, identity: &str) -> (String, String) {
+    signed_webhook_sid(secret, event, room, identity, "")
+}
+
+/// [`signed_webhook`] for the participant connection `sid` (empty = none sent).
+pub fn signed_webhook_sid(secret: &str, event: &str, room: &str, identity: &str, sid: &str) -> (String, String) {
+    let participant = if sid.is_empty() {
+        serde_json::json!({ "identity": identity })
+    } else {
+        serde_json::json!({ "identity": identity, "sid": sid })
+    };
     let body = serde_json::json!({
         "event": event,
         "room": { "name": room },
-        "participant": { "identity": identity },
+        "participant": participant,
         "id": "EV_test",
         "createdAt": 1,
     })

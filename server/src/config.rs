@@ -57,13 +57,32 @@ pub struct LiveKitConfig {
 }
 
 impl LiveKitConfig {
+    /// The public development API key of `docker-compose.yml` / `.env.example`.
+    pub const DEV_API_KEY: &str = "devkey";
+    /// The public development API secret of `docker-compose.yml` / `.env.example`.
+    pub const DEV_API_SECRET: &str = "secret";
+    /// Shortest API secret accepted for a non-local deployment (HS256 needs 32 bytes).
+    pub const MIN_SECRET_LEN: usize = 32;
+
+    /// Whether the credentials are the public development defaults or a
+    /// secret too short to be one.
+    fn uses_dev_credentials(&self) -> bool {
+        self.api_key == Self::DEV_API_KEY
+            || self.api_secret.0 == Self::DEV_API_SECRET
+            || self.api_secret.0.len() < Self::MIN_SECRET_LEN
+    }
+
     /// `LIVEKIT_URL`, `LIVEKIT_API_URL` (optional), `LIVEKIT_API_KEY` and
     /// `LIVEKIT_API_SECRET`. None of the first, third and fourth set = `None`;
     /// some but not all = an error.
     pub fn from_env() -> Result<Option<Self>> {
+        Self::from_lookup(|name| env::var(name).ok())
+    }
+
+    /// [`from_env`](Self::from_env) over any variable lookup (tests).
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Self>> {
         let get = |name: &str| {
-            env::var(name)
-                .ok()
+            lookup(name)
                 .map(|s| s.trim().to_owned())
                 .filter(|s| !s.is_empty())
         };
@@ -104,8 +123,11 @@ impl LiveKitConfig {
                 _ => url.clone(),
             },
         };
-        url::Url::parse(&api_url)
+        let parsed_api = url::Url::parse(&api_url)
             .with_context(|| format!("invalid LIVEKIT_API_URL {api_url:?}"))?;
+        if !matches!(parsed_api.scheme(), "http" | "https") || parsed_api.host_str().is_none() {
+            bail!("LIVEKIT_API_URL must be an http(s):// URL with a host");
+        }
         Ok(Self {
             url,
             api_url,
@@ -225,6 +247,8 @@ impl Config {
         };
         let s3 = S3Config::from_env()?;
         check_s3_credentials(&s3, &public_url)?;
+        let livekit = LiveKitConfig::from_env()?;
+        check_livekit_credentials(livekit.as_ref(), &public_url)?;
         Ok(Self {
             public_url,
             email_from: non_empty("THEHIDEOUT_EMAIL_FROM")
@@ -249,7 +273,7 @@ impl Config {
             embed_mirrors,
             embed_max_video_bytes,
             admins: crate::admin::parse_admins(&var("THEHIDEOUT_ADMINS", "")),
-            livekit: LiveKitConfig::from_env()?,
+            livekit,
         })
     }
 }
@@ -311,13 +335,186 @@ fn var(name: &str, default: &str) -> String {
 /// refuse to run a non-local deployment with them, so a changed endpoint does not
 /// silently leave every media object guarded by a known secret.
 fn check_s3_credentials(s3: &S3Config, public_url: &url::Url) -> Result<()> {
-    if s3.uses_dev_credentials() && public_url.host().is_some_and(|h| !crate::email::is_dev_host(&h)) {
+    if s3.uses_dev_credentials()
+        && public_url
+            .host()
+            .is_some_and(|h| !crate::email::is_dev_host(&h))
+    {
         bail!(
             "THEHIDEOUT_S3_ACCESS_KEY/THEHIDEOUT_S3_SECRET_KEY are the built-in development defaults, \
              which are public; set real credentials for a non-local deployment (THEHIDEOUT_PUBLIC_URL={public_url})"
         );
     }
     Ok(())
+}
+
+/// The LiveKit dev key / secret are public (docker-compose.yml, .env.example):
+/// refuse to start a non-local deployment with them (or with a secret under 32
+/// characters), as for the S3 credentials, since they sign every voice token.
+fn check_livekit_credentials(livekit: Option<&LiveKitConfig>, public_url: &url::Url) -> Result<()> {
+    let Some(livekit) = livekit else {
+        return Ok(());
+    };
+    if livekit.uses_dev_credentials()
+        && public_url
+            .host()
+            .is_some_and(|h| !crate::email::is_dev_host(&h))
+    {
+        bail!(
+            "LIVEKIT_API_KEY/LIVEKIT_API_SECRET are the built-in development defaults or a secret shorter than {} \
+             characters, which is not safe; set a real key and a secret of at least {} characters for a non-local \
+             deployment, or unset all LIVEKIT_* to disable voice (THEHIDEOUT_PUBLIC_URL={public_url})",
+            LiveKitConfig::MIN_SECRET_LEN,
+            LiveKitConfig::MIN_SECRET_LEN
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod livekit_config_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    const LONG_SECRET: &str = "a-real-secret-of-at-least-32-characters";
+
+    fn from(vars: &[(&str, &str)]) -> Result<Option<LiveKitConfig>> {
+        let vars: HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        LiveKitConfig::from_lookup(|name| vars.get(name).cloned())
+    }
+
+    fn full(url: &str, key: &str, secret: &str) -> Result<Option<LiveKitConfig>> {
+        from(&[
+            ("LIVEKIT_URL", url),
+            ("LIVEKIT_API_KEY", key),
+            ("LIVEKIT_API_SECRET", secret),
+        ])
+    }
+
+    fn page(url: &str) -> url::Url {
+        url::Url::parse(url).unwrap()
+    }
+
+    #[test]
+    fn nothing_set_disables_voice_and_partial_settings_are_an_error() {
+        assert!(from(&[]).unwrap().is_none());
+        // LIVEKIT_API_URL alone does not enable voice.
+        assert!(from(&[("LIVEKIT_API_URL", "http://127.0.0.1:7880")])
+            .unwrap()
+            .is_none());
+        assert!(from(&[("LIVEKIT_URL", "ws://127.0.0.1:7880")]).is_err());
+        assert!(from(&[("LIVEKIT_API_KEY", "k")]).is_err());
+        assert!(from(&[("LIVEKIT_URL", "ws://h:1"), ("LIVEKIT_API_KEY", "k")]).is_err());
+        assert!(from(&[
+            ("LIVEKIT_API_KEY", "k"),
+            ("LIVEKIT_API_SECRET", LONG_SECRET)
+        ])
+        .is_err());
+        // Blank values count as unset.
+        assert!(from(&[
+            ("LIVEKIT_URL", ""),
+            ("LIVEKIT_API_KEY", " "),
+            ("LIVEKIT_API_SECRET", "")
+        ])
+        .unwrap()
+        .is_none());
+    }
+
+    #[test]
+    fn ws_maps_to_http_for_the_api_url() {
+        let cfg = |url: &str| full(url, "k", LONG_SECRET).unwrap().unwrap();
+        assert_eq!(cfg("ws://127.0.0.1:7880").api_url, "http://127.0.0.1:7880");
+        assert_eq!(
+            cfg("wss://lk.example.test/").api_url,
+            "https://lk.example.test"
+        );
+        assert_eq!(
+            cfg("https://lk.example.test").api_url,
+            "https://lk.example.test"
+        );
+        let with_api = from(&[
+            ("LIVEKIT_URL", "wss://lk.example.test"),
+            ("LIVEKIT_API_URL", "http://livekit:7880/"),
+            ("LIVEKIT_API_KEY", "k"),
+            ("LIVEKIT_API_SECRET", LONG_SECRET),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (with_api.url.as_str(), with_api.api_url.as_str()),
+            ("wss://lk.example.test", "http://livekit:7880")
+        );
+    }
+
+    #[test]
+    fn urls_must_use_an_accepted_scheme() {
+        assert!(full("ftp://lk.example.test", "k", LONG_SECRET).is_err());
+        assert!(full("nonsense", "k", LONG_SECRET).is_err());
+        assert!(full("ws://", "k", LONG_SECRET).is_err());
+        let api = |api_url: &str| {
+            from(&[
+                ("LIVEKIT_URL", "ws://127.0.0.1:7880"),
+                ("LIVEKIT_API_URL", api_url),
+                ("LIVEKIT_API_KEY", "k"),
+                ("LIVEKIT_API_SECRET", LONG_SECRET),
+            ])
+        };
+        assert!(api("http://127.0.0.1:7880").is_ok() && api("https://lk.example.test").is_ok());
+        // The API URL is called over HTTP: websocket and other schemes are refused.
+        assert!(api("ws://127.0.0.1:7880").is_err());
+        assert!(api("wss://lk.example.test").is_err());
+        assert!(api("ftp://lk.example.test").is_err());
+        assert!(api("not a url").is_err());
+    }
+
+    #[test]
+    fn dev_credentials_are_allowed_on_dev_hosts_only() {
+        let dev = full("ws://127.0.0.1:7880", "devkey", "secret").unwrap();
+        for host in [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "https://hideout.test",
+            "https://x.example",
+        ] {
+            assert!(
+                check_livekit_credentials(dev.as_ref(), &page(host)).is_ok(),
+                "{host}"
+            );
+        }
+        let err = check_livekit_credentials(dev.as_ref(), &page("https://hideout.example.com"))
+            .unwrap_err();
+        assert!(err.to_string().contains("LIVEKIT_API_SECRET"));
+        // Each weak part alone is enough to refuse: the dev key, the dev secret, a short secret.
+        let prod = page("https://hideout.example.com");
+        for (key, secret) in [
+            ("devkey", LONG_SECRET),
+            ("realkey", "secret"),
+            ("realkey", "short-secret-under-32"),
+            ("realkey", ""),
+        ] {
+            let cfg = LiveKitConfig::new("wss://lk.example.com", None, key.into(), secret.into())
+                .unwrap();
+            assert!(
+                check_livekit_credentials(Some(&cfg), &prod).is_err(),
+                "{key}/{secret}"
+            );
+            assert!(check_livekit_credentials(Some(&cfg), &page("http://localhost:8080")).is_ok());
+        }
+    }
+
+    #[test]
+    fn real_credentials_and_disabled_voice_are_allowed_anywhere() {
+        let prod = page("https://hideout.example.com");
+        let real = full("wss://lk.example.com", "APIrealkey", LONG_SECRET).unwrap();
+        assert!(check_livekit_credentials(real.as_ref(), &prod).is_ok());
+        assert!(check_livekit_credentials(None, &prod).is_ok());
+        // Exactly 32 characters is long enough.
+        let edge = full("wss://lk.example.com", "k", &"x".repeat(32)).unwrap();
+        assert!(check_livekit_credentials(edge.as_ref(), &prod).is_ok());
+    }
 }
 
 #[cfg(test)]
@@ -339,14 +536,26 @@ mod s3_credentials_tests {
     #[test]
     fn dev_credentials_are_allowed_on_dev_hosts_only() {
         let dev = s3(S3Config::DEV_ACCESS_KEY, S3Config::DEV_SECRET_KEY);
-        assert!(check_s3_credentials(&dev, &url::Url::parse("http://localhost:8080").unwrap()).is_ok());
-        assert!(check_s3_credentials(&dev, &url::Url::parse("http://127.0.0.1:8080").unwrap()).is_ok());
-        assert!(check_s3_credentials(&dev, &url::Url::parse("https://hideout.example.com").unwrap()).is_err());
+        assert!(
+            check_s3_credentials(&dev, &url::Url::parse("http://localhost:8080").unwrap()).is_ok()
+        );
+        assert!(
+            check_s3_credentials(&dev, &url::Url::parse("http://127.0.0.1:8080").unwrap()).is_ok()
+        );
+        assert!(check_s3_credentials(
+            &dev,
+            &url::Url::parse("https://hideout.example.com").unwrap()
+        )
+        .is_err());
     }
 
     #[test]
     fn real_credentials_are_allowed_anywhere() {
         let real = s3("AKIAEXAMPLE", "not-the-dev-secret");
-        assert!(check_s3_credentials(&real, &url::Url::parse("https://hideout.example.com").unwrap()).is_ok());
+        assert!(check_s3_credentials(
+            &real,
+            &url::Url::parse("https://hideout.example.com").unwrap()
+        )
+        .is_ok());
     }
 }
