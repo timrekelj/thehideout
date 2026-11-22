@@ -70,6 +70,9 @@ sealed interface Action {
     data class Notice(val kind: NoticeKind, val text: String) : Action
     /** Marks a guild as being left or deleted by us, so its `guild_removed` is not announced. */
     data class Exiting(val guild: Long) : Action
+    /** The shell's tab that can show [AppState.currentChannel]'s transcript (Servers for a guild,
+     * DMs for home) became, or stopped being, the foreground destination. */
+    data class SetChannelForeground(val visible: Boolean) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -130,6 +133,13 @@ object Reducer {
         is Action.DismissNotice -> Reduction(s.copy(notices = s.notices.filter { it.id != a.id }))
         is Action.Notice -> Reduction(notice(s, a.kind, a.text))
         is Action.Exiting -> Reduction(s.copy(exiting = s.exiting + a.guild))
+        // Coming back into foreground is an arrival in its own right: whatever piled up in
+        // `currentChannel` while away (its `currentChannel` never changed, so `OpenChannel` would
+        // have no-opped) needs the same unread-clearing, marker-fixing treatment.
+        is Action.SetChannelForeground -> {
+            if (a.visible && !s.channelForeground) arrive(s.copy(channelForeground = true))
+            else Reduction(s.copy(channelForeground = a.visible))
+        }
     }
 
     // ---- data in ------------------------------------------------------------------------------
@@ -424,7 +434,7 @@ object Reducer {
         if (m.nonce.isNotEmpty()) next = next.copy(outgoing = next.outgoing.filter { it.nonce != m.nonce })
         val effects = mutableListOf<Effect>()
         wantAuthor(next, m).let { next = it.state; effects += it.effects }
-        val visible = next.phase == SessionPhase.SignedIn && next.currentChannel == channel
+        val visible = next.phase == SessionPhase.SignedIn && next.currentChannel == channel && next.channelForeground
         val mine = m.authorId == next.myId
         val mention = !mine && (next.dm(channel) != null || next.mentionsMe(m.content))
         val log = next.logs[channel]?.takeIf { it.loaded }
@@ -619,7 +629,10 @@ object Reducer {
     private fun selectChannel(s: AppState, channel: Long): Reduction {
         val place = s.place
         if (place is Place.InGuild && s.channel(place.id, channel)?.kind == ChannelKind.Voice) return Reduction(s)
-        if (s.currentChannel == channel) return Reduction(s)
+        // Still arrives (clears unread, fixes the marker) even when this channel was already
+        // selected: a tab switch away and a tap back on the same channel does not change
+        // `currentChannel`, but the reader is genuinely arriving at it again.
+        if (s.currentChannel == channel) return arrive(s)
         val next = when (place) {
             Place.Home -> s.copy(homeDm = channel)
             is Place.InGuild -> s.copy(guildChannel = s.guildChannel + (place.id to channel))
