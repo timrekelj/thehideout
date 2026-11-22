@@ -559,7 +559,7 @@ impl AppState {
 
     /// Whether we hold `bit` in `guild` and outrank `user` there (or are `user`): the server's
     /// moderation rule.
-    fn can_moderate(&self, guild: u64, user: u64, bit: Permissions) -> bool {
+    pub(crate) fn can_moderate(&self, guild: u64, user: u64, bit: Permissions) -> bool {
         let Some(g) = self.guild(guild) else {
             return false;
         };
@@ -928,6 +928,13 @@ impl AppState {
             self.dropped_from_voice(g);
         }
         self.sync_server_mute(was_muted);
+    }
+
+    /// The guild is gone from our lists (left, removed, deleted): its voice states go, and the
+    /// connection too when it was to one of its channels.
+    pub fn drop_guild_voice(&mut self, guild: u64) {
+        self.dropped_from_voice(guild);
+        self.data.voice.remove(&guild);
     }
 
     /// We are no longer in a voice channel of `guild` according to the server.

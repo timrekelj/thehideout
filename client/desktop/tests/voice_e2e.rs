@@ -37,6 +37,8 @@ mod layout;
 mod look;
 #[path = "../src/media.rs"]
 mod media;
+#[path = "../src/moderation.rs"]
+mod moderation;
 #[path = "../src/perms.rs"]
 mod perms;
 #[path = "../src/real.rs"]

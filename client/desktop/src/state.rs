@@ -170,6 +170,10 @@ pub struct Data {
     pub emojis_asked: HashSet<u64>,
     /// Who is in voice, per guild per user (the server keeps one state per user).
     pub voice: HashMap<u64, HashMap<u64, thehideout_api::VoiceState>>,
+    /// Each guild's bans, once loaded (needs BAN_MEMBERS).
+    pub bans: HashMap<u64, Vec<thehideout_api::Ban>>,
+    /// Guilds we are leaving or deleting ourselves, so their `guild_removed` isn't announced as news.
+    pub exiting: HashSet<u64>,
     /// Decoded avatars, server icons and emojis by media key.
     pub media: MediaCache,
 }

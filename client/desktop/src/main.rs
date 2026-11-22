@@ -32,6 +32,9 @@ mod forms;
 mod layout;
 mod look;
 mod media;
+mod moderation;
+#[cfg(test)]
+mod moderation_tests;
 mod perms;
 mod real;
 #[cfg(test)]

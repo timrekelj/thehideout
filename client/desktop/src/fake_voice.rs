@@ -414,6 +414,23 @@ impl World {
         Ok(Some(self.voice_join(target, channel).0))
     }
 
+    /// Takes everyone out of voice channel `channel`; an event for each.
+    pub(super) fn voice_clear_channel(&mut self, channel: u64) -> Vec<Reply> {
+        let (gone, kept): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.voice.states).into_iter().partition(|s| s.channel_id == channel);
+        self.voice.states = kept;
+        gone.into_iter().map(|s| Self::voice_event(s.guild_id, s.user_id, None)).collect()
+    }
+
+    /// Takes `user` out of voice when they are in a channel of `guild` (a member leaving or
+    /// being removed); the event for it when they were.
+    pub(super) fn voice_clear_member(&mut self, guild: u64, user: u64) -> Option<Reply> {
+        if self.voice_state_of(user).is_some_and(|s| s.guild_id == guild) {
+            return self.voice_remove(user);
+        }
+        None
+    }
+
     /// Takes `user` out of voice; the event for it when they were in.
     fn voice_remove(&mut self, user: u64) -> Option<Reply> {
         let at = self.voice.states.iter().position(|s| s.user_id == user)?;
