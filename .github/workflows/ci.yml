@@ -115,6 +115,50 @@ jobs:
         working-directory: mobile/ios/Packages/HideoutAPI
         run: swift build
 
+  ios:
+    name: ios (HideoutCore tests, app build, unit tests)
+    # macOS 26 images carry Xcode 26 (the iOS 26 SDK the Liquid Glass APIs need).
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile/ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest Xcode 26
+        working-directory: .
+        run: |
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+      - name: swift test (HideoutCore, on macOS)
+        working-directory: mobile/ios/Packages/HideoutCore
+        run: swift test
+      # project.yml is the source; the generated project is committed so xcodebuild needs no extra tools.
+      - name: project.yml and Hideout.xcodeproj agree
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.48.0/xcodegen.zip
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen"
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate
+          git diff --exit-code -- Hideout.xcodeproj || {
+            echo "::error::Hideout.xcodeproj is stale: cd mobile/ios && xcodegen generate"; exit 1; }
+      - name: xcodebuild build (iOS Simulator)
+        run: |
+          xcodebuild -project Hideout.xcodeproj -scheme Hideout -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      # The snapshot tests (GallerySnapshotTests, ShellSnapshotTests) are skipped here: their references are
+      # recorded on one simulator runtime (iPhone 18 Pro, iOS 27.2) and Liquid Glass renders slightly
+      # differently across runtimes, so GitHub's images would fail them for the wrong reason. They run locally
+      # (see mobile/ios/README.md) until a runner matches. The unit tests (look persistence, tokens) do run.
+      - name: xcodebuild test (unit tests; snapshot tests skipped)
+        run: |
+          device="$(xcrun simctl list devices available | grep -E '^ +iPhone [0-9]+ Pro \(' | head -1 | sed -E 's/^ +//; s/ \(.*//')"
+          echo "Testing on: $device"
+          xcodebuild -project Hideout.xcodeproj -scheme Hideout -destination "platform=iOS Simulator,name=$device" \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO test \
+            -only-testing:HideoutTests -skip-testing:HideoutTests/GallerySnapshotTests -skip-testing:HideoutTests/ShellSnapshotTests
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

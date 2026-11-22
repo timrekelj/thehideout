@@ -1,0 +1,118 @@
+# The Xcode project is generated: `cd mobile/ios && xcodegen generate` (brew install xcodegen). Both project.yml and
+# the generated Hideout.xcodeproj are committed so `xcodebuild` works without extra tools; CI checks they agree.
+name: Hideout
+options:
+  bundleIdPrefix: si.zabit
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+packages:
+  HideoutCore:
+    path: Packages/HideoutCore
+  HideoutDesign:
+    path: Packages/HideoutDesign
+  HideoutUI:
+    path: Packages/HideoutUI
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing
+    exactVersion: 1.19.7
+targets:
+  Hideout:
+    type: application
+    platform: iOS
+    supportedDestinations: [iOS]
+    sources:
+      - path: Hideout
+        excludes: ["Info.plist"]
+      # Instrument Sans (variable) and JetBrains Mono, registered at launch by DesignFonts.register().
+      - path: ../tokens/fonts/instrument-sans/InstrumentSans-VF.ttf
+        group: Fonts
+        buildPhase: resources
+      - path: ../tokens/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf
+        group: Fonts
+        buildPhase: resources
+      - path: ../tokens/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf
+        group: Fonts
+        buildPhase: resources
+    dependencies:
+      - package: HideoutCore
+      - package: HideoutDesign
+      - package: HideoutUI
+    info:
+      path: Hideout/Info.plist
+      properties:
+        CFBundleDisplayName: thehideout
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        ITSAppUsesNonExemptEncryption: false
+        # Cleartext only to localhost / local network (dev servers), never NSAllowsArbitraryLoads.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSMicrophoneUsageDescription: thehideout uses your microphone for voice channels.
+        NSCameraUsageDescription: thehideout uses your camera when you turn on video in a voice channel.
+        NSPhotoLibraryUsageDescription: thehideout lets you attach photos and videos from your library to messages.
+        CFBundleURLTypes:
+          - CFBundleURLName: si.zabit.thehideout
+            CFBundleURLSchemes: [thehideout]
+        UIAppFonts: []
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: si.zabit.thehideout
+        PRODUCT_NAME: Hideout
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Hideout/Info.plist
+        ENABLE_PREVIEWS: YES
+  HideoutTests:
+    type: bundle.unit-test
+    platform: iOS
+    supportedDestinations: [iOS]
+    sources:
+      - path: HideoutTests
+        excludes: ["__Snapshots__"]
+    dependencies:
+      - target: Hideout
+      - package: HideoutCore
+      - package: HideoutDesign
+      - package: HideoutUI
+      - package: SnapshotTesting
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: si.zabit.thehideout.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Hideout.app/Hideout
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  Hideout:
+    build:
+      targets:
+        Hideout: all
+        HideoutTests: [test]
+    run:
+      commandLineArguments:
+        "--fake": false
+        "--gallery": false
+    test:
+      targets: [HideoutTests]
