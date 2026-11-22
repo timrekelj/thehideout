@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the Info.plist cargo-packager generates (bundle id, name, version, icon, category and
+	     minimum system version come from [package.metadata.packager] in client/desktop/Cargo.toml). -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>thehideout uses your microphone for voice channels.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>thehideout uses your camera when you turn on video in a voice channel.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>

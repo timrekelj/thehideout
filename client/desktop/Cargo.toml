@@ -36,3 +36,18 @@ scylla = { version = "1", features = ["chrono-04"] }
 thehideout-server = { path = "../../server" }
 webauthn-authenticator-rs = { version = "0.6.2", features = ["softpasskey"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+
+# macOS bundle, built by `packaging/macos/build.sh` with cargo-packager (`cargo install cargo-packager`).
+[package.metadata.packager]
+product-name = "thehideout"
+identifier = "si.zabit.thehideout"
+category = "SocialNetworking"
+description = "thehideout desktop client"
+formats = ["app"]
+icons = ["../packaging/macos/AppIcon.icns"]
+binaries = [{ path = "thehideout-desktop", main = true }]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+info-plist-path = "../packaging/macos/Info.plist"
+entitlements = "../packaging/macos/Entitlements.plist"

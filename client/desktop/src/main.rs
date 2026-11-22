@@ -63,11 +63,11 @@ use thehideout_design::{FAMILIES, FONTS};
 
 fn main() {
     // Headless review runs (scenes, snapshots) write no crash files and never look at the prefs.
-    if !app::headless() {
-        if let Some(dir) = crash::crash_dir() {
-            crash::report_unseen(&dir);
-            crash::install(dir);
-        }
+    if !app::headless()
+        && let Some(dir) = crash::crash_dir()
+    {
+        crash::report_unseen(&dir);
+        crash::install(dir);
     }
     rune::prewarm_gpu();
     // The titlebar is drawn by the view (a drag band at the top, see `ui::shell`); macOS keeps its
