@@ -21,6 +21,7 @@ pub struct Dialog {
     description: Option<String>,
     body: Vec<El>,
     footer: Vec<El>,
+    footer_start: Vec<El>,
     open: bool,
     width: f32,
     body_max_h: Option<f32>,
@@ -36,6 +37,7 @@ impl Dialog {
             description: None,
             body: Vec::new(),
             footer: Vec::new(),
+            footer_start: Vec::new(),
             open: false,
             width: 440.0,
             body_max_h: None,
@@ -63,6 +65,12 @@ impl Dialog {
     }
     pub fn child(mut self, e: El) -> Self {
         self.body.push(e);
+        self
+    }
+    /// A footer button at the left edge, away from the rest (a quiet destructive action that is
+    /// not the dialog's answer, such as "Delete channel" on a settings dialog).
+    pub fn footer_start(mut self, button: El) -> Self {
+        self.footer_start.push(button);
         self
     }
     /// A footer button (built `Button`), in order; the primary goes last.
@@ -145,16 +153,15 @@ impl Dialog {
             });
         }
         let footer = std::mem::take(&mut self.footer);
-        if !footer.is_empty() {
-            panel = panel.child(
-                row()
-                    .key("footer")
-                    .w_full()
-                    .mt(8.0)
-                    .gap(8.0)
-                    .justify_end()
-                    .children(footer),
-            );
+        let start = std::mem::take(&mut self.footer_start);
+        if !footer.is_empty() || !start.is_empty() {
+            let spaced = !start.is_empty();
+            let mut line = row().key("footer").w_full().mt(8.0).gap(8.0).justify_end().children(start);
+            if spaced {
+                line = line.child(el().key("footer-gap").grow(1.0));
+            }
+            line = line.children(footer);
+            panel = panel.child(line);
         }
         panel
     }
