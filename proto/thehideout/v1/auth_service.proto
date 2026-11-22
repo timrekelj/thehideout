@@ -87,6 +87,27 @@ service AuthService {
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   // Signs out every session of the caller except the current one.
   rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+  // Emails the caller a 6-digit code (10 minutes) that DeleteAccount accepts
+  // instead of a password. For accounts without a password; rate limited.
+  rpc RequestAccountDeletionCode(RequestAccountDeletionCodeRequest) returns (RequestAccountDeletionCodeResponse);
+  // Deletes the caller's account (anonymized, see below). Re-authenticates with
+  // the password, or the emailed code for accounts without one, plus a TOTP or
+  // recovery code when two-factor authentication is on. Fails with
+  // FAILED_PRECONDITION and a `thehideout.v1.OwnedGuilds` detail while the
+  // caller owns guilds (transfer or delete them first). The account is unusable
+  // at once (sessions revoked, sign-in refused); the cleanup runs in the
+  // background and resumes after a restart. Wrong credentials: PERMISSION_DENIED
+  // (password) or the CodeError detail (codes). Rate limited.
+  rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
+  // Queues an export of the caller's own data (JSON) and returns at once; the
+  // download link is emailed when it is ready and works for 7 days.
+  // RESOURCE_EXHAUSTED when one was requested in the last 24 hours;
+  // FAILED_PRECONDITION without an email address; UNAVAILABLE without object
+  // storage.
+  rpc ExportData(ExportDataRequest) returns (ExportDataResponse);
+  // Accepts the current terms and privacy notice. `version` must equal the
+  // server's current version (`GetMe.terms_version`), else FAILED_PRECONDITION.
+  rpc AcceptTerms(AcceptTermsRequest) returns (AcceptTermsResponse);
 }
 
 // Request to create an account (no longer supported).
@@ -183,7 +204,75 @@ message GetMeRequest {}
 message GetMeResponse {
   // The authenticated user (with `email`).
   User user = 1;
+  // Set when the caller has not accepted the current terms (never, or an older
+  // version): the version to accept with AcceptTerms. Clients show a prompt.
+  optional string terms_update_required = 2;
+  // The server's current terms version (also the date of /terms and /privacy).
+  string terms_version = 3;
 }
+
+// Request to email a deletion code.
+message RequestAccountDeletionCodeRequest {}
+
+// The code was sent (to the account's address).
+message RequestAccountDeletionCodeResponse {}
+
+// Request to delete the caller's account.
+message DeleteAccountRequest {
+  // The account password; required if the account has one.
+  optional string password = 1;
+  // The emailed code of RequestAccountDeletionCode; required without a password.
+  optional string email_code = 2;
+  // TOTP or recovery code; required when two-factor authentication is on.
+  optional string totp_code = 3;
+}
+
+// The deletion was accepted; the account is already unusable.
+message DeleteAccountResponse {}
+
+// Error detail (type `thehideout.v1.OwnedGuilds`) of DeleteAccount and
+// AdminDeleteUser when the user still owns guilds.
+message OwnedGuilds {
+  // The guilds the user owns.
+  repeated OwnedGuild guilds = 1;
+}
+
+// A guild listed in `OwnedGuilds`.
+message OwnedGuild {
+  // Guild ID.
+  uint64 id = 1;
+  // Guild name.
+  string name = 2;
+  // How many members it has (1 = only the owner).
+  uint32 member_count = 3;
+}
+
+// Error detail (type `thehideout.v1.AccountSuspended`) of a refused sign-in
+// (PERMISSION_DENIED, message "Your account is suspended").
+message AccountSuspended {
+  // The admin's reason; may be empty.
+  string reason = 1;
+  // When the suspension ends; unset = until an admin lifts it.
+  optional google.protobuf.Timestamp until = 2;
+}
+
+// Request for a data export.
+message ExportDataRequest {}
+
+// The export was queued.
+message ExportDataResponse {
+  // The address the link will be emailed to, masked.
+  string masked_email = 1;
+}
+
+// Request to accept the terms.
+message AcceptTermsRequest {
+  // The version being accepted.
+  string version = 1;
+}
+
+// Accepted.
+message AcceptTermsResponse {}
 
 // Request for the caller's security overview.
 message GetSecurityRequest {}

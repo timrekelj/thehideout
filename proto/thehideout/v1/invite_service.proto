@@ -151,6 +151,11 @@ message LookupInviteResponse {
   google.protobuf.Timestamp expires_at = 4;
   // Current status; only PENDING invites can be accepted.
   InviteStatus status = 5;
+  // The terms version AcceptInvite requires in `accepted_terms_version`;
+  // the documents are at `{base}/terms` and `{base}/privacy`.
+  string terms_version = 6;
+  // The minimum age (16) the invitee confirms with `age_confirmed`.
+  uint32 minimum_age = 7;
 }
 
 // Request to accept an invite.
@@ -163,6 +168,11 @@ message AcceptInviteRequest {
   optional string password = 3;
   // Human-readable name of the device (≤ 64 chars).
   string device_name = 4;
+  // Must equal the current terms version (`LookupInviteResponse.terms_version`);
+  // else INVALID_ARGUMENT.
+  string accepted_terms_version = 5;
+  // The invitee confirms they are at least 16; must be true, else INVALID_ARGUMENT.
+  bool age_confirmed = 6;
 }
 
 // The new account's first session.
