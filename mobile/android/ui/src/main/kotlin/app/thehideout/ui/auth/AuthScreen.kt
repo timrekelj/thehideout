@@ -547,7 +547,13 @@ private fun ServerLine(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Server: $serverUrl", style = MaterialTheme.typography.bodySmall, color = c.textMuted)
             Text("·", color = c.textFaint)
-            FaintLink(if (state.serverOpen) "Done" else "Change", { auth.setServerOpen(!state.serverOpen) })
+            FaintLink(
+                if (state.serverOpen) "Done" else "Change",
+                {
+                    if (!state.serverOpen) auth.updateServerDraft(serverUrl)
+                    auth.setServerOpen(!state.serverOpen)
+                },
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             FaintLink("Terms", { onOpenUrl("$serverUrl/terms") })

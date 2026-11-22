@@ -114,6 +114,13 @@ class AuthUiTest {
         compose.onNodeWithText("That code didn't work. Check it and try again.").assertIsDisplayed()
     }
 
+    @Test fun `the server sheet opens prefilled with the current server url`() {
+        harness()
+        compose.onNodeWithText("Change").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("http://10.0.2.2:8080").assertIsDisplayed()
+    }
+
     @Test fun `a pasted invite link is rejected with the code-only hint`() {
         harness()
         compose.onNodeWithText("Join with a code").performClick()
