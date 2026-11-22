@@ -115,6 +115,8 @@ data class AppState(
     val memberRoles: Map<Long, Map<Long, List<Long>>> = emptyMap(),
     val accessAsked: Set<Long> = emptySet(),
     val emojis: Map<Long, List<Emoji>> = emptyMap(),
+    /** The account's notification settings, once known (a change on another session arrives as an event). */
+    val notificationSettings: NotificationSettings? = null,
     val logs: Map<Long, ChannelLog> = emptyMap(),
     val outgoing: List<Outgoing> = emptyList(),
     val unread: Map<Long, Unread> = emptyMap(),

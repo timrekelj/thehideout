@@ -306,6 +306,7 @@ object Reducer {
         }
         is GatewayEvent.VoiceStateUpdate -> Reduction(voiceUpdate(s, e.guildId, e.userId, e.state))
         is GatewayEvent.VoiceSnapshot -> Reduction(voiceSnapshot(s, e.guildIds, e.states))
+        is GatewayEvent.NotificationSettingsUpdated -> Reduction(s.copy(notificationSettings = e.settings))
         // Rejoining needs a live voice session (phase 6); this device is never in voice yet.
         is GatewayEvent.VoiceMoved -> Reduction(s)
         is GatewayEvent.MessageDeleted -> Reduction(messageRemoved(s, e.channelId, e.messageId))

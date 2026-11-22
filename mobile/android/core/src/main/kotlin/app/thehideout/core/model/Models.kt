@@ -223,3 +223,17 @@ data class Emoji(
     val creatorId: Long,
     val createdAt: Instant,
 )
+
+enum class NotificationLevel { Unspecified, Inherit, All, Mentions, Nothing }
+
+/** A guild's or channel's own level (or `Inherit`), optionally silenced until [mutedUntil]. */
+data class NotificationOverride(val id: Long, val level: NotificationLevel, val mutedUntil: Instant? = null)
+
+/** What the account wants to be notified about; changes made on another session arrive as an event. */
+data class NotificationSettings(
+    val dmsEnabled: Boolean,
+    val guildDefault: NotificationLevel,
+    val showPreviews: Boolean,
+    val guilds: List<NotificationOverride> = emptyList(),
+    val channels: List<NotificationOverride> = emptyList(),
+)

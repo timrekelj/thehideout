@@ -276,6 +276,40 @@ class ReducerTest {
         assertEquals(newbie, s.users[55])
     }
 
+    @Test fun `notification_settings_updated from another session is kept, the latest wins`() {
+        assertNull(s0.notificationSettings)
+        val first = NotificationSettings(
+            dmsEnabled = true, guildDefault = NotificationLevel.Mentions, showPreviews = false,
+            guilds = listOf(NotificationOverride(HIDEOUT, NotificationLevel.All)),
+            channels = listOf(NotificationOverride(DEV, NotificationLevel.Nothing, T0.plusSeconds(3600))),
+        )
+        val s = s0.event(GatewayEvent.NotificationSettingsUpdated(first))
+        assertEquals(first, s.notificationSettings)
+        val second = first.copy(dmsEnabled = false, channels = emptyList())
+        assertEquals(second, s.event(GatewayEvent.NotificationSettingsUpdated(second)).notificationSettings)
+        assertEquals(s0.guilds, s.guilds, "nothing else changes")
+    }
+
+    @Test fun `notification settings map from the wire, including the Event payload`() {
+        val pb = com.thehideout.v1.NotificationSettings.newBuilder()
+            .setDmsEnabled(true).setGuildDefault(com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_MENTIONS).setShowPreviews(true)
+            .addGuilds(com.thehideout.v1.NotificationOverride.newBuilder().setId(7).setLevel(com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_NOTHING)
+                .setMutedUntil(com.google.protobuf.Timestamp.newBuilder().setSeconds(1_800_000_000)))
+            .addChannels(com.thehideout.v1.NotificationOverride.newBuilder().setId(8).setLevel(com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_INHERIT))
+            .build()
+        val event = com.thehideout.v1.Event.newBuilder().setSequence(9).setNotificationSettingsUpdated(pb).build().toModel()
+        assertEquals(
+            GatewayEvent.NotificationSettingsUpdated(
+                NotificationSettings(
+                    true, NotificationLevel.Mentions, true,
+                    guilds = listOf(NotificationOverride(7, NotificationLevel.Nothing, java.time.Instant.ofEpochSecond(1_800_000_000))),
+                    channels = listOf(NotificationOverride(8, NotificationLevel.Inherit)),
+                ),
+            ),
+            event,
+        )
+    }
+
     // ---- voice ----
 
     @Test fun `voice_state_update joins, moves between guilds and leaves`() {

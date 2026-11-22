@@ -26,4 +26,6 @@ sealed interface GatewayEvent {
     data class VoiceStateUpdate(val guildId: Long, val userId: Long, val state: VoiceState?) : GatewayEvent
     data class VoiceSnapshot(val guildIds: List<Long>, val states: List<VoiceState>) : GatewayEvent
     data class VoiceMoved(val guildId: Long, val channelId: Long) : GatewayEvent
+    /** The caller changed their notification settings on another session; the full new settings. */
+    data class NotificationSettingsUpdated(val settings: NotificationSettings) : GatewayEvent
 }

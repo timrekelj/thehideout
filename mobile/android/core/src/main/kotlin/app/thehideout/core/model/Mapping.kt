@@ -175,6 +175,25 @@ fun PbInvite.toModel() = Invite(
     link = if (hasLink()) link else null,
 )
 
+fun com.thehideout.v1.NotificationLevel.toModel(): NotificationLevel = when (this) {
+    com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_INHERIT -> NotificationLevel.Inherit
+    com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_ALL -> NotificationLevel.All
+    com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_MENTIONS -> NotificationLevel.Mentions
+    com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_NOTHING -> NotificationLevel.Nothing
+    else -> NotificationLevel.Unspecified
+}
+
+fun com.thehideout.v1.NotificationOverride.toModel() =
+    NotificationOverride(id, level.toModel(), if (hasMutedUntil()) mutedUntil.toInstant() else null)
+
+fun com.thehideout.v1.NotificationSettings.toModel() = NotificationSettings(
+    dmsEnabled = dmsEnabled,
+    guildDefault = guildDefault.toModel(),
+    showPreviews = showPreviews,
+    guilds = guildsList.map { it.toModel() },
+    channels = channelsList.map { it.toModel() },
+)
+
 /** Maps a stream item to a domain event; `null` for a payload this client does not know yet. */
 fun com.thehideout.v1.Event.toModel(): GatewayEvent? {
     val e = this
@@ -220,6 +239,7 @@ fun com.thehideout.v1.Event.toModel(): GatewayEvent? {
             }
         com.thehideout.v1.Event.PayloadCase.GUILD_REMOVED -> GatewayEvent.GuildRemoved(e.guildRemoved.guildId)
         com.thehideout.v1.Event.PayloadCase.CHANNEL_DELETED -> GatewayEvent.ChannelDeleted(e.channelDeleted.guildId, e.channelDeleted.channelId)
+        com.thehideout.v1.Event.PayloadCase.NOTIFICATION_SETTINGS_UPDATED -> GatewayEvent.NotificationSettingsUpdated(e.notificationSettingsUpdated.toModel())
         com.thehideout.v1.Event.PayloadCase.PAYLOAD_NOT_SET, null -> null
     }
 }
