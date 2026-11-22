@@ -47,6 +47,9 @@ const CHALLENGE_TTL: Duration = Duration::from_secs(5 * 60);
 const USER_CHECK_MAX: usize = 10;
 const USER_CHECK_WINDOW: Duration = Duration::from_secs(60 * 60);
 
+/// Account deletion attempts per user within an hour (per IP: three times that).
+const DELETE_ATTEMPTS_MAX: usize = 10;
+
 /// Passkey ceremonies started per peer IP within [`LOGIN_WINDOW`].
 pub const PASSKEY_IP_MAX: usize = 30;
 /// Passkey login attempts per login name within [`LOGIN_WINDOW`], so a distributed
@@ -270,6 +273,7 @@ async fn start_session(state: &AppState, account: &Account, device_name: &str, m
 impl AuthSvc {
     /// After a first factor: a session, or a second-factor challenge for TOTP accounts.
     async fn first_factor_done(&self, account: Account, device_name: &str, method: &'static str) -> Result<SignIn, ConnectError> {
+        account.ensure_not_suspended()?;
         if account.has_totp() {
             let id = generate_token();
             self.state.auth.challenges.insert(
@@ -490,8 +494,13 @@ impl AuthService for AuthSvc {
         let user = crate::admin::load_user(&self.state, id)
             .await?
             .ok_or_else(|| ConnectError::unauthenticated("user no longer exists"))?;
+        let account = accounts::load(&self.state, id)
+            .await?
+            .ok_or_else(|| ConnectError::unauthenticated("user no longer exists"))?;
         Response::ok(GetMeResponse {
             user: user.into(),
+            terms_update_required: account.terms_update_required(),
+            terms_version: crate::policy::LEGAL_VERSION.to_owned(),
             ..Default::default()
         })
     }
@@ -1109,6 +1118,97 @@ impl AuthService for AuthSvc {
             .ok_or_else(|| ConnectError::not_found("session not found"))?;
         crate::auth::revoke_session(&self.state, user_id, session.id, &session.token_hash).await?;
         Response::ok(RevokeSessionResponse::default())
+    }
+
+    async fn request_account_deletion_code(
+        &self,
+        ctx: RequestContext,
+        _req: ServiceRequest<'_, RequestAccountDeletionCodeRequest>,
+    ) -> ServiceResult<RequestAccountDeletionCodeResponse> {
+        let (account, _) = self.caller(&ctx).await?;
+        let email = account
+            .email
+            .clone()
+            .ok_or_else(|| ConnectError::failed_precondition("your account has no email address"))?;
+        self.state
+            .limiter
+            .check(&format!("delete-code:user:{}", account.id), CODE_REQUEST_EMAIL_MAX, CODE_WINDOW)?;
+        let code = email_codes::issue(&self.state, "delete", &account.id.to_string(), None).await?;
+        self.state.mailer.send(templates::deletion_code(&email, format!("delete-{}", generate_token()), &code));
+        Response::ok(RequestAccountDeletionCodeResponse::default())
+    }
+
+    async fn delete_account(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, DeleteAccountRequest>,
+    ) -> ServiceResult<DeleteAccountResponse> {
+        let (account, _) = self.caller(&ctx).await?;
+        self.state
+            .limiter
+            .check(&format!("account-delete:user:{}", account.id), DELETE_ATTEMPTS_MAX, USER_CHECK_WINDOW)?;
+        self.state.limiter.check(&format!("account-delete:ip:{}", peer_key(&ctx)), DELETE_ATTEMPTS_MAX * 3, USER_CHECK_WINDOW)?;
+        let owned = crate::lifecycle::owned_guilds(&self.state, account.id).await?;
+        if !owned.is_empty() {
+            return Err(crate::lifecycle::owned_guilds_error(owned));
+        }
+        // First proof: the password, or the emailed code without one.
+        if account.password_hash.is_some() {
+            let password = req.password.ok_or_else(|| ConnectError::invalid_argument("password required"))?;
+            self.check_current_password(&account, password).await?;
+        } else {
+            let code = req.email_code.ok_or_else(|| ConnectError::invalid_argument("email_code required"))?;
+            match email_codes::check(&self.state, "delete", &account.id.to_string(), code).await? {
+                Ok(_) => {}
+                Err(email_codes::Rejected::Missing) => return Err(expired()),
+                Err(email_codes::Rejected::Wrong { remaining }) => return Err(wrong_code(remaining)),
+                Err(email_codes::Rejected::Exhausted) => return Err(too_many_attempts()),
+            }
+        }
+        // Second proof when two-factor authentication is on.
+        if account.has_totp() {
+            let code = req.totp_code.ok_or_else(|| ConnectError::invalid_argument("totp_code required"))?;
+            let remaining = self.user_check(&account)?;
+            if !(self.use_totp(&account, code).await? || self.use_recovery_code(&account, code).await?) {
+                return Err(wrong_code(remaining));
+            }
+        }
+        crate::lifecycle::delete_account(&self.state, &account, account.id, "").await?;
+        Response::ok(DeleteAccountResponse::default())
+    }
+
+    async fn export_data(
+        &self,
+        ctx: RequestContext,
+        _req: ServiceRequest<'_, ExportDataRequest>,
+    ) -> ServiceResult<ExportDataResponse> {
+        let (account, _) = self.caller(&ctx).await?;
+        let email = account
+            .email
+            .clone()
+            .ok_or_else(|| ConnectError::failed_precondition("your account has no email address to send the export to"))?;
+        if self.state.storage.is_none() {
+            return Err(ConnectError::unavailable("exports need object storage, which is not configured"));
+        }
+        crate::lifecycle::claim_export_slot(&self.state, account.id).await?;
+        crate::lifecycle::queue_export(&self.state, account);
+        Response::ok(ExportDataResponse { masked_email: accounts::mask_email(&email), ..Default::default() })
+    }
+
+    async fn accept_terms(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, AcceptTermsRequest>,
+    ) -> ServiceResult<AcceptTermsResponse> {
+        let (account, _) = self.caller(&ctx).await?;
+        if req.version != crate::policy::LEGAL_VERSION {
+            return Err(ConnectError::failed_precondition(format!(
+                "the current terms version is {}",
+                crate::policy::LEGAL_VERSION
+            )));
+        }
+        crate::lifecycle::record_terms(&self.state, account.id).await?;
+        Response::ok(AcceptTermsResponse::default())
     }
 
     async fn revoke_other_sessions(

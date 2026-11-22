@@ -51,6 +51,7 @@ impl DmService for DmSvc {
         // by the per-user open rate limit above.
         let target = find_user(&self.state, id_to_db(req.user_id))
             .await?
+            .filter(|u| !u.deleted)
             .ok_or_else(|| ConnectError::not_found("user not found"))?;
         let caller = find_user(&self.state, id_to_db(user_id))
             .await?

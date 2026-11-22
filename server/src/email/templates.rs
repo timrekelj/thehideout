@@ -203,6 +203,59 @@ pub fn security_change(to: &str, key: String, what: &str) -> Email {
     )
 }
 
+/// Code that confirms an account deletion (for accounts without a password).
+pub fn deletion_code(to: &str, key: String, code: &str) -> Email {
+    let text = format!(
+        "Enter {code} in thehideout to delete your account.\n\nIt expires in 10 minutes. If you didn't ask for this, ignore this email and change your password."
+    );
+    let html = html(
+        "Delete your account",
+        &[
+            format!("Enter {} in thehideout to delete your account.", code_html(code)),
+            "It expires in 10 minutes. If you didn't ask for this, ignore this email and change your password.".into(),
+        ],
+    );
+    email("deletion_code", to, key, "Confirm deleting your thehideout account", text, html)
+}
+
+/// Final confirmation, sent when an account deletion starts.
+pub fn account_deleted(to: &str, key: String) -> Email {
+    let text = "Your thehideout account was deleted.\n\n\
+                Your username, email, avatar, password, security settings, sessions and uploads are being removed. \
+                Your messages stay in the conversations you had, shown as \"Deleted user\". Backups are rotated out within 30 days.\n\n\
+                If you did not do this, contact the person who runs your server right away."
+        .to_owned();
+    let html = html(
+        "Your account was deleted",
+        &[
+            "Your thehideout account was deleted.".into(),
+            "Your username, email, avatar, password, security settings, sessions and uploads are being removed. \
+             Your messages stay in the conversations you had, shown as &ldquo;Deleted user&rdquo;. Backups are rotated out within 30 days."
+                .into(),
+            "If you did not do this, contact the person who runs your server right away.".into(),
+        ],
+    );
+    email("account_deleted", to, key, "Your thehideout account was deleted", text, html)
+}
+
+/// The link to a finished data export.
+pub fn export_ready(to: &str, key: String, link: &str, days: u32) -> Email {
+    let text = format!(
+        "Your thehideout data export is ready: {link}\n\nThe link works for {days} days and anyone with it can download your data, so keep it private. \
+         If you didn't ask for an export, change your password."
+    );
+    let html = html(
+        "Your data export is ready",
+        &[
+            format!("<a href=\"{0}\">Download your data</a> &middot; {0}", encode_text(link)),
+            format!(
+                "The link works for {days} days and anyone with it can download your data, so keep it private. If you didn't ask for an export, change your password."
+            ),
+        ],
+    );
+    email("export_ready", to, key, "Your thehideout data export", text, html)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

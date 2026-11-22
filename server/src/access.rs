@@ -100,14 +100,21 @@ pub(crate) async fn is_member(
 pub async fn find_user(state: &AppState, db_id: i64) -> Result<Option<User>, ConnectError> {
     Ok(state
         .session
-        .execute_unpaged("SELECT username, created_at, avatar FROM users WHERE id = ?", (db_id,))
+        .execute_unpaged("SELECT username, created_at, avatar, deletion_state FROM users WHERE id = ?", (db_id,))
         .await
         .map_err(internal)?
         .into_rows_result()
         .map_err(internal)?
-        .maybe_first_row::<(String, DateTime<Utc>, Option<String>)>()
+        .maybe_first_row::<(String, DateTime<Utc>, Option<String>, Option<String>)>()
         .map_err(internal)?
-        .map(|(username, created_at, avatar)| user_to_proto(id_from_db(db_id), &username, created_at, avatar)))
+        .map(|(username, created_at, avatar, deletion_state)| {
+            // A deleted account stays resolvable as the anonymized "Deleted user".
+            if deletion_state.is_some_and(|s| !s.is_empty()) {
+                crate::lifecycle::deleted_user(id_from_db(db_id), created_at)
+            } else {
+                user_to_proto(id_from_db(db_id), &username, created_at, avatar)
+            }
+        }))
 }
 
 /// Kind of a guild channel (text for channels stored before voice existed).

@@ -82,6 +82,14 @@ pub async fn remove_member(
         .batch(&batch, ((guild, user), (user, guild), (guild, user)))
         .await
         .map_err(internal)?;
+    // Remembered so the user's messages here can still be exported or deleted.
+    if let Err(e) = state
+        .session
+        .execute_unpaged("INSERT INTO user_left_guilds (user_id, guild_id) VALUES (?, ?)", (user, guild))
+        .await
+    {
+        tracing::warn!(guild_id, user_id, error = %e, "recording the departure failed");
+    }
     crate::stats::member_removed(state, guild_id).await;
     crate::voice::on_member_removed(state, guild_id, user_id).await;
     state.events.publish_to_guild(

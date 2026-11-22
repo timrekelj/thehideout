@@ -237,6 +237,8 @@ pub struct Mailer {
     pending: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// Delays before each retry of a transient failure.
     retry: Arc<[Duration]>,
+    /// Public base URL whose `/privacy` and `/terms` every mail footer links to.
+    legal_base: Option<Arc<str>>,
 }
 
 impl Mailer {
@@ -248,11 +250,35 @@ impl Mailer {
             outbox: Some(outbox),
             pending: Arc::default(),
             retry: Arc::new(RETRY_BACKOFF),
+            legal_base: None,
         }
     }
 
     pub fn new(sender: Arc<dyn EmailSender>, from: String) -> Self {
-        Self { sender, from, outbox: None, pending: Arc::default(), retry: Arc::new(RETRY_BACKOFF) }
+        Self { sender, from, outbox: None, pending: Arc::default(), retry: Arc::new(RETRY_BACKOFF), legal_base: None }
+    }
+
+    /// Adds privacy and terms links (under `base`, no trailing slash) to the footer of every mail.
+    pub fn with_legal_links(mut self, base: &str) -> Self {
+        self.legal_base = Some(base.trim_end_matches('/').into());
+        self
+    }
+
+    /// The mail with the legal footer, if links are configured.
+    fn with_footer(&self, email: &Email) -> Email {
+        let Some(base) = &self.legal_base else {
+            return email.clone();
+        };
+        let mut out = email.clone();
+        out.text = format!("{}\n\n--\nPrivacy: {base}/privacy\nTerms: {base}/terms\n", out.text.trim_end());
+        let links = format!(
+            "<p style=\"color:#6b6b76;font-size:12px\"><a href=\"{base}/privacy\">Privacy</a> &middot; <a href=\"{base}/terms\">Terms</a></p>"
+        );
+        out.html = match out.html.rfind("</body>") {
+            Some(at) => format!("{}{links}{}", &out.html[..at], &out.html[at..]),
+            None => format!("{}{links}", out.html),
+        };
+        out
     }
 
     /// Replaces the retry delays (tests).
@@ -304,7 +330,7 @@ impl Mailer {
 
     /// Sends once and waits (CLI and bootstrap).
     pub async fn send_now(&self, email: &Email) -> Result<()> {
-        self.sender.send(&self.from, email).await?;
+        self.sender.send(&self.from, &self.with_footer(email)).await?;
         tracing::info!(kind = email.kind, domain = recipient_domain(&email.to), "sent email");
         Ok(())
     }

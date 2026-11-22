@@ -523,7 +523,7 @@ fn applied(result: scylla::response::query_result::QueryResult) -> Result<bool, 
 }
 
 /// `"u:<unicode>"` / `"c:<id>"` back to the proto emoji.
-fn key_to_emoji(key: &str) -> Option<ReactionEmoji> {
+pub(crate) fn key_to_emoji(key: &str) -> Option<ReactionEmoji> {
     let kind = match key.split_at_checked(2)? {
         ("u:", unicode) => reaction_emoji::Kind::Unicode(unicode.to_owned()),
         ("c:", id) => reaction_emoji::Kind::CustomEmojiId(id.parse().ok()?),

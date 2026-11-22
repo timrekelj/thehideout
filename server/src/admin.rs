@@ -25,14 +25,17 @@ pub fn parse_admins(raw: &str) -> Vec<String> {
 pub async fn load_user(state: &AppState, id: u64) -> Result<Option<User>, ConnectError> {
     Ok(state
         .session
-        .execute_unpaged("SELECT username, created_at, avatar, is_admin, email FROM users WHERE id = ?", (id_to_db(id),))
+        .execute_unpaged("SELECT username, created_at, avatar, is_admin, email, deletion_state FROM users WHERE id = ?", (id_to_db(id),))
         .await
         .map_err(internal)?
         .into_rows_result()
         .map_err(internal)?
-        .maybe_first_row::<(String, DateTime<Utc>, Option<String>, Option<bool>, Option<String>)>()
+        .maybe_first_row::<(String, DateTime<Utc>, Option<String>, Option<bool>, Option<String>, Option<String>)>()
         .map_err(internal)?
-        .map(|(username, created_at, avatar, is_admin, email)| {
+        .map(|(username, created_at, avatar, is_admin, email, deletion_state)| {
+            if deletion_state.is_some_and(|s| !s.is_empty()) {
+                return crate::lifecycle::deleted_user(id, created_at);
+            }
             let mut user = user_to_proto(id, &username, created_at, avatar);
             user.is_admin = is_admin.unwrap_or(false);
             user.email = email.filter(|e| !e.is_empty());
