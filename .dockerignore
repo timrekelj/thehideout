@@ -1,0 +1,14 @@
+**/target/
+.git/
+.github/
+client/
+**/snapshots/
+.env
+.env.*
+!.env.example
+**/.env
+.DS_Store
+node_modules/
+deploy/
+docker-compose.yml
+*.md
