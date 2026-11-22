@@ -16,11 +16,11 @@ final class GallerySnapshotTests: SnapshotCase {
     func testEverySectionOnIPhone() async {
         let (store, _) = await makeFakeStore()
         for section in GallerySection.allCases {
-            // The insets `GalleryView.page` puts on the scroll view, so the references show the real layout.
-            let content = GalleryContent(sections: [section], showHero: false).padding(.horizontal, Space.s4)
+            // `GalleryContent` already puts its own horizontal insets on the column, matching `GalleryView.page`.
+            let content = GalleryContent(sections: [section], showHero: false)
             if [.glass, .buttons, .motion].contains(section) {
                 // Glass is composited by the render server: it needs the key window, so it is laid out as a screen.
-                assertScreen(ScrollView { content }.padding(.horizontal, Space.s4), store: store, testName: "testSection-\(section.rawValue)")
+                assertScreen(ScrollView { content }, store: store, testName: "testSection-\(section.rawValue)")
             } else {
                 assertColumn(content, store: store, testName: "testSection-\(section.rawValue)")
             }
@@ -29,13 +29,13 @@ final class GallerySnapshotTests: SnapshotCase {
 
     func testHero() async {
         let (store, _) = await makeFakeStore()
-        assertColumn(GalleryContent(sections: [], showHero: true).padding(.horizontal, Space.s4), store: store)
+        assertColumn(GalleryContent(sections: [], showHero: true), store: store)
     }
 
     func testLookVariants() async {
         let (store, _) = await makeFakeStore()
-        assertColumn(GalleryContent(sections: [.badges, .messages, .channels], showHero: true).padding(.horizontal, Space.s4), store: store, looks: Looks.all, styles: [("dark", .dark)])
-        assertColumn(GalleryContent(sections: [.messages, .channels, .badges], showHero: false).padding(.horizontal, Space.s4), store: store, looks: [Looks.coralPaper, Looks.highContrast, Looks.text125], styles: [("light", .light)], testName: "testLookVariantsLight")
+        assertColumn(GalleryContent(sections: [.badges, .messages, .channels], showHero: true), store: store, looks: Looks.all, styles: [("dark", .dark)])
+        assertColumn(GalleryContent(sections: [.messages, .channels, .badges], showHero: false), store: store, looks: [Looks.coralPaper, Looks.highContrast, Looks.text125], styles: [("light", .light)], testName: "testLookVariantsLight")
     }
 
     func testLookSheet() async {

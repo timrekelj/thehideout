@@ -18,9 +18,7 @@ private struct CardModifier: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: Radius.xl, style: .continuous)
         content
             .padding(padding)
-            // A finite cap, not `.infinity`: an infinite ideal width makes a scroll view's content grow past
-            // the viewport, which pushes the surrounding horizontal insets off-screen (the gallery's cards).
-            .frame(maxWidth: 1000, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(raised ? theme.colors.surfaceRaised : theme.colors.surface, in: shape)
             .overlay(shape.strokeBorder(theme.colors.borderSubtle, lineWidth: 1))
     }
