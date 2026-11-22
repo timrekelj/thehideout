@@ -12,7 +12,8 @@ enum Device: String, CaseIterable {
     case iPhone = "iphone"  // iPhone 17 Pro / 18 Pro: 402 x 874
     case iPad = "ipad"      // iPad Pro 11-inch: 834 x 1210
 
-    var config: ViewImageConfig {
+    // UITraitCollection's mutation closure is main-actor isolated in the iOS 26 SDK.
+    @MainActor var config: ViewImageConfig {
         switch self {
         case .iPhone:
             ViewImageConfig(
@@ -27,7 +28,7 @@ enum Device: String, CaseIterable {
         }
     }
 
-    var width: CGFloat { config.size?.width ?? 402 }
+    @MainActor var width: CGFloat { config.size?.width ?? 402 }
 }
 
 /// The date every snapshot believes it is.
