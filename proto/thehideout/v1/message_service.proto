@@ -6,7 +6,9 @@ import "thehideout/v1/types.proto";
 
 // Sending and reading chat messages.
 service MessageService {
-  // Posts a message to a channel as the caller.
+  // Posts a message to a channel as the caller. Rate limited per user (a burst
+  // of 10, then one message per second, shared with EditMessage):
+  // RESOURCE_EXHAUSTED with a `retry-after` header (seconds) when exceeded.
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   // Lists messages of a channel, newest first, with cursor pagination.
   rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
@@ -16,7 +18,49 @@ service MessageService {
   rpc AddReaction(AddReactionRequest) returns (AddReactionResponse);
   // Removes the caller's reaction (idempotent). Publishes reaction_removed.
   rpc RemoveReaction(RemoveReactionRequest) returns (RemoveReactionResponse);
+  // Replaces the content of the caller's own message (same validation as
+  // SendMessage; attachments stay as they are, so the new content may only be
+  // empty when the message has attachments). Sets `edited_at`, re-resolves the
+  // link embeds and publishes `message_updated`. NOT_FOUND for unknown
+  // messages and channels the caller cannot access, PERMISSION_DENIED for
+  // other people's messages, FAILED_PRECONDITION for voice channels. Counts
+  // against the same per-user rate limit as SendMessage.
+  rpc EditMessage(EditMessageRequest) returns (EditMessageResponse);
+  // Deletes a message: the author may always, others need MANAGE_MESSAGES in a
+  // guild channel (and cannot delete in DMs). The message row, its reactions,
+  // embeds and attachments (including their stored files) go. Publishes
+  // `message_deleted`. Deleting someone else's message is written to the
+  // audit log (`message.delete`). NOT_FOUND for unknown messages, and for
+  // channels the caller cannot access.
+  rpc DeleteMessage(DeleteMessageRequest) returns (DeleteMessageResponse);
 }
+
+// Request to edit a message.
+message EditMessageRequest {
+  // Channel of the message.
+  uint64 channel_id = 1;
+  // The message to edit; the caller must be its author.
+  uint64 message_id = 2;
+  // New text content, at most 4000 characters.
+  string content = 3;
+}
+
+// Result of editing a message.
+message EditMessageResponse {
+  // The message as stored, with `edited_at` set.
+  Message message = 1;
+}
+
+// Request to delete a message.
+message DeleteMessageRequest {
+  // Channel of the message.
+  uint64 channel_id = 1;
+  // The message to delete.
+  uint64 message_id = 2;
+}
+
+// Result of deleting a message.
+message DeleteMessageResponse {}
 
 // Request to add a reaction.
 message AddReactionRequest {
@@ -52,7 +96,9 @@ message SendMessageRequest {
   // non-empty. Opaque text; custom emoji tokens are described in README.
   string content = 2;
   // Optional client-generated nonce used for deduplication and for matching
-  // the echoed message to a pending local one.
+  // the echoed message to a pending local one. A retried send with the same
+  // nonce (same user and channel) within 60 seconds returns the message that
+  // was already stored instead of posting a second one.
   optional string nonce = 3;
   // IDs of pending uploads (`PendingAttachment.id`) to attach; at most 10.
   // Each must be a pending upload of the caller for THIS channel and not

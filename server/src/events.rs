@@ -10,8 +10,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::broadcast;
 
 use crate::proto::thehideout::v1::{
-    Channel, DmChannel, EmojisUpdated, Guild, GuildMemberJoined, LayoutUpdated, MemberUpdated, Message,
-    ReactionChange, RolesUpdated, User, VoiceMoved, VoiceStateUpdate,
+    Channel, ChannelDeleted, DmChannel, EmojisUpdated, Guild, GuildMemberJoined, GuildMemberRemoved, GuildRemoved,
+    LayoutUpdated, MemberUpdated, Message, MessageDeleted, ReactionChange, RolesUpdated, User, VoiceMoved,
+    VoiceStateUpdate,
 };
 
 /// Messages buffered per guild channel before slow receivers start lagging.
@@ -39,6 +40,9 @@ pub enum EventPayload {
     ReactionRemoved(ReactionChange),
     /// A user's voice state changed (state unset = left voice).
     VoiceStateUpdate(VoiceStateUpdate),
+    MessageDeleted(MessageDeleted),
+    GuildMemberRemoved(GuildMemberRemoved),
+    ChannelDeleted(ChannelDeleted),
 }
 
 /// Control notification delivered to a user's open streams.
@@ -56,6 +60,9 @@ pub enum UserControl {
     /// A moderator moved the user to another voice channel; becomes a
     /// `voice_moved` event.
     VoiceMoved(VoiceMoved),
+    /// The user is no longer in this guild; streams stop listening to it and
+    /// emit `guild_removed`.
+    RemovedFromGuild(GuildRemoved),
 }
 
 #[derive(Default)]
@@ -134,6 +141,11 @@ impl EventBus {
     /// Tells the user's open streams a moderator moved them to another voice channel.
     pub fn notify_user_voice_moved(&self, user_id: u64, moved: VoiceMoved) {
         self.notify_user(user_id, UserControl::VoiceMoved(moved));
+    }
+
+    /// Tells the user's open streams they are no longer a member of the guild.
+    pub fn notify_user_removed_from_guild(&self, user_id: u64, guild_id: u64) {
+        self.notify_user(user_id, UserControl::RemovedFromGuild(GuildRemoved { guild_id, ..Default::default() }));
     }
 
     fn notify_user(&self, user_id: u64, control: UserControl) {

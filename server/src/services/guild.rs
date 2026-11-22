@@ -13,7 +13,8 @@ use crate::auth::{authenticate, internal, peer_key};
 use crate::convert::{datetime_to_proto, id_from_db, id_to_db, snowflake_datetime};
 use crate::events::EventPayload;
 use crate::layout::{self, IconRef, MAX_SECTIONS_PER_GUILD};
-use crate::permissions::{MANAGE_CHANNELS, MANAGE_SERVER, require_permission};
+use crate::moderation;
+use crate::permissions::{BAN_MEMBERS, KICK_MEMBERS, MANAGE_CHANNELS, MANAGE_SERVER, require_permission, standing};
 use crate::proto::thehideout::v1::*;
 use crate::services::emoji::emoji_exists;
 use crate::validation::{display_name, validate_color, validate_icon, validate_topic, validate_unicode_emoji};
@@ -633,6 +634,369 @@ impl GuildService for GuildSvc {
             ..Default::default()
         })
     }
+    async fn kick_member(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, KickMemberRequest>,
+    ) -> ServiceResult<KickMemberResponse> {
+        let actor = authenticate(&self.state, &ctx).await?;
+        self.authorize_moderation(actor, req.guild_id, req.user_id, KICK_MEMBERS, true).await?;
+        moderation::remove_member(&self.state, req.guild_id, req.user_id, MemberRemovalReason::MEMBER_REMOVAL_REASON_KICKED).await?;
+        moderation::audit(&self.state, actor, "guild.kick", &member_target(req.guild_id, req.user_id), "").await;
+        Response::ok(KickMemberResponse::default())
+    }
+
+    async fn ban_member(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, BanMemberRequest>,
+    ) -> ServiceResult<BanMemberResponse> {
+        let actor = authenticate(&self.state, &ctx).await?;
+        let (guild_id, target) = (req.guild_id, req.user_id);
+        let reason = req.reason.trim();
+        if reason.chars().count() > moderation::MAX_REASON_CHARS {
+            return Err(ConnectError::invalid_argument("reason must be at most 512 characters"));
+        }
+        let purge_seconds = req.delete_message_seconds.unwrap_or(0);
+        if purge_seconds > moderation::MAX_DELETE_MESSAGE_SECONDS {
+            return Err(ConnectError::invalid_argument("delete_message_seconds must be at most 604800 (7 days)"));
+        }
+        self.authorize_moderation(actor, guild_id, target, BAN_MEMBERS, false).await?;
+        if find_user(&self.state, id_to_db(target)).await?.is_none() {
+            return Err(ConnectError::not_found("user not found"));
+        }
+        // The ban first, so a rejoin racing the removal is refused.
+        self.state
+            .session
+            .execute_unpaged(
+                "INSERT INTO guild_bans (guild_id, user_id, banned_by, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+                (id_to_db(guild_id), id_to_db(target), id_to_db(actor), reason, Utc::now()),
+            )
+            .await
+            .map_err(internal)?;
+        moderation::remove_member(&self.state, guild_id, target, MemberRemovalReason::MEMBER_REMOVAL_REASON_BANNED).await?;
+        moderation::audit(&self.state, actor, "guild.ban", &member_target(guild_id, target), reason).await;
+        if purge_seconds > 0 {
+            let state = self.state.clone();
+            let channel_ids: Vec<u64> = layout::load(&state, guild_id).await?.channels.iter().map(|c| c.id).collect();
+            tokio::spawn(async move {
+                moderation::purge_author_messages(&state, guild_id, &channel_ids, target, purge_seconds).await;
+            });
+        }
+        Response::ok(BanMemberResponse::default())
+    }
+
+    async fn unban_member(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, UnbanMemberRequest>,
+    ) -> ServiceResult<UnbanMemberResponse> {
+        let actor = authenticate(&self.state, &ctx).await?;
+        require_permission(&self.state, actor, req.guild_id, BAN_MEMBERS).await?;
+        if !moderation::is_banned(&self.state, req.guild_id, req.user_id).await? {
+            return Err(ConnectError::not_found("user is not banned"));
+        }
+        self.state
+            .session
+            .execute_unpaged(
+                "DELETE FROM guild_bans WHERE guild_id = ? AND user_id = ?",
+                (id_to_db(req.guild_id), id_to_db(req.user_id)),
+            )
+            .await
+            .map_err(internal)?;
+        moderation::audit(&self.state, actor, "guild.unban", &member_target(req.guild_id, req.user_id), "").await;
+        Response::ok(UnbanMemberResponse::default())
+    }
+
+    async fn list_bans(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, ListBansRequest>,
+    ) -> ServiceResult<ListBansResponse> {
+        let actor = authenticate(&self.state, &ctx).await?;
+        require_permission(&self.state, actor, req.guild_id, BAN_MEMBERS).await?;
+        let rows = self
+            .state
+            .session
+            .execute_unpaged(
+                "SELECT user_id, banned_by, reason, created_at FROM guild_bans WHERE guild_id = ?",
+                (id_to_db(req.guild_id),),
+            )
+            .await
+            .map_err(internal)?
+            .into_rows_result()
+            .map_err(internal)?
+            .rows::<(i64, Option<i64>, Option<String>, Option<DateTime<Utc>>)>()
+            .map_err(internal)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)?;
+        let mut bans = Vec::with_capacity(rows.len());
+        for (user_id, banned_by, reason, created_at) in rows {
+            let created_at = created_at.unwrap_or_default();
+            let user = match find_user(&self.state, user_id).await? {
+                Some(user) => user,
+                // The account is gone; keep the ban visible by id.
+                None => User { id: id_from_db(user_id), ..Default::default() },
+            };
+            bans.push((created_at, Ban {
+                user: user.into(),
+                banned_by: banned_by.map_or(0, id_from_db),
+                reason: reason.unwrap_or_default(),
+                created_at: datetime_to_proto(created_at).into(),
+                ..Default::default()
+            }));
+        }
+        bans.sort_by_key(|b| std::cmp::Reverse(b.0));
+        Response::ok(ListBansResponse { bans: bans.into_iter().map(|(_, b)| b).collect(), ..Default::default() })
+    }
+
+    async fn leave_guild(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, LeaveGuildRequest>,
+    ) -> ServiceResult<LeaveGuildResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        if standing(&self.state, user_id, req.guild_id).await?.is_owner {
+            return Err(ConnectError::failed_precondition(
+                "the owner cannot leave: transfer ownership or delete the guild first",
+            ));
+        }
+        moderation::remove_member(&self.state, req.guild_id, user_id, MemberRemovalReason::MEMBER_REMOVAL_REASON_LEFT).await?;
+        Response::ok(LeaveGuildResponse::default())
+    }
+
+    async fn delete_channel(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, DeleteChannelRequest>,
+    ) -> ServiceResult<DeleteChannelResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let (guild_id, channel_id) = (req.guild_id, req.channel_id);
+        require_permission(&self.state, user_id, guild_id, MANAGE_CHANNELS).await?;
+        self.throttle_layout(user_id)?;
+        let data = layout::load(&self.state, guild_id).await?;
+        let channel = data
+            .channels
+            .iter()
+            .find(|c| c.id == channel_id)
+            .ok_or_else(|| ConnectError::not_found("channel not found"))?;
+        let name = channel.name.clone();
+        // Unreachable from here on: reads and sends resolve channels through these rows.
+        let mut batch = Batch::new(BatchType::Logged);
+        batch.append_statement("DELETE FROM channels_by_id WHERE id = ?");
+        batch.append_statement("DELETE FROM channels WHERE guild_id = ? AND id = ?");
+        self.state
+            .session
+            .batch(&batch, ((id_to_db(channel_id),), (id_to_db(guild_id), id_to_db(channel_id))))
+            .await
+            .map_err(internal)?;
+        let _ = self
+            .state
+            .session
+            .execute_unpaged(
+                "UPDATE guild_channel_quota SET created = created - 1 WHERE guild_id = ?",
+                (id_to_db(guild_id),),
+            )
+            .await;
+        crate::stats::channel_deleted(&self.state, guild_id).await;
+        versions::bump(&self.state, guild_id, versions::LAYOUT, None).await?;
+        crate::voice::on_channel_deleted(&self.state, channel_id).await;
+        moderation::publish_channel_deleted(&self.state, guild_id, channel_id);
+        let layout = self.publish_layout(guild_id).await?;
+        moderation::audit(&self.state, user_id, "channel.delete", &format!("guild:{guild_id}/channel:{channel_id}"), &name).await;
+        let state = self.state.clone();
+        tokio::spawn(async move { moderation::purge_channel(&state, channel_id).await });
+        Response::ok(DeleteChannelResponse { layout: layout.into(), ..Default::default() })
+    }
+
+    async fn delete_guild(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, DeleteGuildRequest>,
+    ) -> ServiceResult<DeleteGuildResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let guild_id = req.guild_id;
+        let guild = self.owned_guild(user_id, guild_id, req.confirm_name).await?;
+        let channel_ids: Vec<u64> = layout::load(&self.state, guild_id).await?.channels.iter().map(|c| c.id).collect();
+        let members: Vec<i64> = self
+            .state
+            .session
+            .execute_unpaged("SELECT user_id FROM guild_members WHERE guild_id = ?", (id_to_db(guild_id),))
+            .await
+            .map_err(internal)?
+            .into_rows_result()
+            .map_err(internal)?
+            .rows::<(i64,)>()
+            .map_err(internal)?
+            .map(|r| r.map(|(u,)| u))
+            .collect::<Result<_, _>>()
+            .map_err(internal)?;
+
+        // Unreachable first: the guild, its invite code, memberships and channel lookups.
+        let db_guild = id_to_db(guild_id);
+        self.state.session.execute_unpaged("DELETE FROM guilds WHERE id = ?", (db_guild,)).await.map_err(internal)?;
+        self.state
+            .session
+            .execute_unpaged("DELETE FROM guilds_by_invite WHERE invite_code = ?", (&guild.invite_code,))
+            .await
+            .map_err(internal)?;
+        for chunk in members.chunks(50) {
+            let mut batch = Batch::new(BatchType::Unlogged);
+            let mut values = Vec::with_capacity(chunk.len() * 2);
+            for user in chunk {
+                batch.append_statement("DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?");
+                values.push((db_guild, *user));
+                batch.append_statement("DELETE FROM guilds_by_user WHERE user_id = ? AND guild_id = ?");
+                values.push((*user, db_guild));
+            }
+            self.state.session.batch(&batch, values).await.map_err(internal)?;
+        }
+        for chunk in channel_ids.chunks(50) {
+            let mut batch = Batch::new(BatchType::Unlogged);
+            let mut values = Vec::with_capacity(chunk.len());
+            for id in chunk {
+                batch.append_statement("DELETE FROM channels_by_id WHERE id = ?");
+                values.push((id_to_db(*id),));
+            }
+            self.state.session.batch(&batch, values).await.map_err(internal)?;
+        }
+        for channel_id in &channel_ids {
+            crate::voice::on_channel_deleted(&self.state, *channel_id).await;
+        }
+        for user in &members {
+            self.state.events.notify_user_removed_from_guild(id_from_db(*user), guild_id);
+        }
+        crate::stats::guild_deleted(&self.state, channel_ids.len()).await;
+        moderation::audit(&self.state, user_id, "guild.delete", &format!("guild:{guild_id}"), &guild.name).await;
+        let state = self.state.clone();
+        tokio::spawn(async move { moderation::purge_deleted_guild(&state, guild_id, channel_ids).await });
+        tracing::info!(guild_id, user_id, "guild deleted");
+        Response::ok(DeleteGuildResponse::default())
+    }
+
+    async fn rotate_invite_code(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, RotateInviteCodeRequest>,
+    ) -> ServiceResult<RotateInviteCodeResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let guild_id = req.guild_id;
+        require_permission(&self.state, user_id, guild_id, MANAGE_SERVER).await?;
+        self.throttle_layout(user_id)?;
+        let old = self
+            .find_guild(id_to_db(guild_id))
+            .await?
+            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
+        let code = self.claim_invite_code(id_to_db(guild_id)).await?;
+        self.state
+            .session
+            .execute_unpaged("UPDATE guilds SET invite_code = ? WHERE id = ?", (&code, id_to_db(guild_id)))
+            .await
+            .map_err(internal)?;
+        self.state
+            .session
+            .execute_unpaged("DELETE FROM guilds_by_invite WHERE invite_code = ?", (&old.invite_code,))
+            .await
+            .map_err(internal)?;
+        if let Some(guild) = self.find_guild(id_to_db(guild_id)).await? {
+            self.state.events.publish_to_guild(guild_id, EventPayload::GuildUpdated(guild));
+        }
+        moderation::audit(&self.state, user_id, "guild.rotate_invite", &format!("guild:{guild_id}"), "").await;
+        Response::ok(RotateInviteCodeResponse { invite_code: code, ..Default::default() })
+    }
+
+    async fn transfer_ownership(
+        &self,
+        ctx: RequestContext,
+        req: ServiceRequest<'_, TransferOwnershipRequest>,
+    ) -> ServiceResult<TransferOwnershipResponse> {
+        let user_id = authenticate(&self.state, &ctx).await?;
+        let guild_id = req.guild_id;
+        self.owned_guild(user_id, guild_id, req.confirm_name).await?;
+        if req.user_id == user_id {
+            return Err(ConnectError::invalid_argument("you already own this guild"));
+        }
+        if !is_member(&self.state, req.user_id, guild_id).await? {
+            return Err(ConnectError::not_found("the new owner must be a member of the guild"));
+        }
+        // Only the current owner's transfer wins if two race.
+        let (applied, _) = self
+            .state
+            .session
+            .execute_unpaged(
+                "UPDATE guilds SET owner_id = ? WHERE id = ? IF owner_id = ?",
+                (id_to_db(req.user_id), id_to_db(guild_id), id_to_db(user_id)),
+            )
+            .await
+            .map_err(internal)?
+            .into_rows_result()
+            .map_err(internal)?
+            .first_row::<(bool, Option<i64>)>()
+            .map_err(internal)?;
+        if !applied {
+            return Err(ConnectError::aborted("ownership changed: refetch and retry"));
+        }
+        let guild = self
+            .find_guild(id_to_db(guild_id))
+            .await?
+            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
+        self.state.events.publish_to_guild(guild_id, EventPayload::GuildUpdated(guild.clone()));
+        moderation::audit(&self.state, user_id, "guild.transfer", &member_target(guild_id, req.user_id), "").await;
+        Response::ok(TransferOwnershipResponse { guild: guild.into(), ..Default::default() })
+    }
+}
+
+/// Audit target of an action on a member.
+fn member_target(guild_id: u64, user_id: u64) -> String {
+    format!("guild:{guild_id}/user:{user_id}")
+}
+
+impl GuildSvc {
+    /// The guild if `user_id` owns it and `confirm_name` matches its name:
+    /// `NotFound` for non-members, `PermissionDenied` for other members,
+    /// `InvalidArgument` for a wrong name.
+    async fn owned_guild(&self, user_id: u64, guild_id: u64, confirm_name: &str) -> Result<Guild, ConnectError> {
+        if !standing(&self.state, user_id, guild_id).await?.is_owner {
+            return Err(ConnectError::permission_denied("only the owner can do this"));
+        }
+        let guild = self
+            .find_guild(id_to_db(guild_id))
+            .await?
+            .ok_or_else(|| ConnectError::not_found("guild not found"))?;
+        if confirm_name.trim() != guild.name {
+            return Err(ConnectError::invalid_argument("confirm_name does not match the guild's name"));
+        }
+        Ok(guild)
+    }
+
+    /// Checks `actor` may kick / ban `target`: they hold `permission` and
+    /// strictly outrank the target (nobody but the owner can act on the owner;
+    /// nobody acts on themself). Banning does not need the target to be a
+    /// member (`must_be_member` false), but still protects the owner.
+    async fn authorize_moderation(
+        &self,
+        actor: u64,
+        guild_id: u64,
+        target: u64,
+        permission: u64,
+        must_be_member: bool,
+    ) -> Result<(), ConnectError> {
+        let actor_standing = require_permission(&self.state, actor, guild_id, permission).await?;
+        if actor == target {
+            return Err(ConnectError::invalid_argument("you cannot do this to yourself"));
+        }
+        if !is_member(&self.state, target, guild_id).await? {
+            if must_be_member {
+                return Err(ConnectError::not_found("member not found"));
+            }
+            return Ok(());
+        }
+        let target_standing = standing(&self.state, target, guild_id).await?;
+        if !actor_standing.outranks_member(&target_standing) {
+            return Err(ConnectError::permission_denied("that member's top role is not below yours"));
+        }
+        Ok(())
+    }
 }
 
 impl GuildSvc {
@@ -712,8 +1076,11 @@ impl GuildSvc {
 
     /// Writes both membership tables in one logged batch so they stay consistent.
     /// Makes `user_id` a member of `guild` (no-op for members) and tells everyone.
-    pub(crate) async fn admit(&self, guild: &Guild, user_id: u64) -> Result<(), ConnectError> {
+    pub async fn admit(&self, guild: &Guild, user_id: u64) -> Result<(), ConnectError> {
         if !is_member(&self.state, user_id, guild.id).await? {
+            if moderation::is_banned(&self.state, guild.id, user_id).await? {
+                return Err(ConnectError::permission_denied("you are banned from this guild"));
+            }
             self.add_member(guild.id, user_id).await?;
             if let Some(user) = find_user(&self.state, id_to_db(user_id)).await? {
                 self.state.events.publish_to_guild(

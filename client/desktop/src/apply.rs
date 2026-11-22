@@ -200,6 +200,17 @@ fn apply_reply(s: &mut AppState, reply: Reply, tx: &mut Tx) {
                 s.data.members_asked.remove(&guild);
             }
         },
+        Reply::MessageEdited { result, .. } => s.message_edited(result),
+        Reply::MessageDeleted { channel, message, result } => s.message_deleted_reply(channel, message, result),
+        Reply::Kicked { guild, user, result } => s.kicked(guild, user, result),
+        Reply::Banned { guild, user, result } => s.banned(guild, user, result),
+        Reply::Unbanned { guild, user, result } => s.unbanned(guild, user, result),
+        Reply::Bans { guild, result } => s.bans_loaded(guild, result),
+        Reply::GuildLeft { guild, result } => s.guild_left(guild, result),
+        Reply::ChannelDeleted { guild, channel, result } => s.channel_deleted_reply(guild, channel, result),
+        Reply::GuildDeleted { guild, result } => s.guild_deleted_reply(guild, result),
+        Reply::InviteRotated { guild, result } => s.invite_rotated(guild, result),
+        Reply::OwnershipTransferred { user, result, .. } => s.ownership_transferred(user, result),
         Reply::DmOpened(r) => match r {
             Ok(dm) => {
                 let id = dm.id;
@@ -855,6 +866,10 @@ fn event(s: &mut AppState, e: Event, tx: &mut Tx) {
         } => s.voice_update(guild_id, user_id, state),
         Event::VoiceSnapshot { guild_ids, states } => s.voice_snapshot(&guild_ids, states),
         Event::VoiceMoved { channel_id, .. } => s.voice_moved(channel_id),
+        Event::MessageDeleted { channel_id, message_id } => s.message_removed(channel_id, message_id),
+        Event::GuildMemberRemoved { guild_id, user_id, reason } => s.member_removed(guild_id, user_id, reason),
+        Event::GuildRemoved { guild_id } => s.guild_removed_event(guild_id, None),
+        Event::ChannelDeleted { guild_id, channel_id } => s.channel_removed(guild_id, channel_id),
         Event::ChannelCreated(c) => add_channel(s, c),
         Event::DmOpened(dm) => add_dm(s, dm),
         Event::GuildMemberJoined { guild_id, user } => {

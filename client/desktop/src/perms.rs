@@ -12,6 +12,12 @@ pub const ALL: Permissions = Permissions(u64::MAX);
 /// Mirrors the server's `permissions::BASELINE`.
 pub const BASELINE: Permissions = Permissions::BASELINE;
 
+/// The moderation bits, which no member has by default: delete others' messages, kick, ban.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const MODERATION: Permissions = Permissions(
+    Permissions::MANAGE_MESSAGES.0 | Permissions::KICK_MEMBERS.0 | Permissions::BAN_MEMBERS.0,
+);
+
 /// `me`'s effective permissions in `guild`, given the guild's roles and the role ids they hold.
 /// Unknown role ids (a role deleted since) contribute nothing; the baseline always counts.
 pub fn effective(guild: &Guild, me: u64, my_roles: &[u64], roles: &[Role]) -> Permissions {
@@ -111,6 +117,19 @@ mod tests {
         let p = effective(&guild(9), 7, &[], &[]);
         assert!(p.contains(Permissions::CONNECT | Permissions::SPEAK | Permissions::VIDEO));
         assert!(!p.contains(Permissions::MUTE_MEMBERS) && !p.contains(Permissions::MOVE_MEMBERS));
+    }
+
+    #[test]
+    fn the_moderation_bits_are_not_in_the_baseline_but_owners_and_admins_hold_them() {
+        assert_eq!((Permissions::MANAGE_MESSAGES.bits(), Permissions::KICK_MEMBERS.bits(), Permissions::BAN_MEMBERS.bits()), (2048, 4096, 8192));
+        let plain = effective(&guild(9), 7, &[], &[]);
+        assert!(!plain.contains(Permissions::MANAGE_MESSAGES) && !plain.contains(Permissions::KICK_MEMBERS));
+        assert_eq!(plain.bits() & MODERATION.bits(), 0);
+        assert!(effective(&guild(7), 7, &[], &[]).contains(MODERATION));
+        let roles = [role(1, Permissions::ADMINISTRATOR), role(2, Permissions::KICK_MEMBERS)];
+        assert!(effective(&guild(9), 7, &[1], &roles).contains(MODERATION));
+        let kicker = effective(&guild(9), 7, &[2], &roles);
+        assert!(kicker.contains(Permissions::KICK_MEMBERS) && !kicker.contains(Permissions::BAN_MEMBERS));
     }
 
     #[test]

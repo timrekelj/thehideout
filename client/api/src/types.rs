@@ -149,6 +149,28 @@ pub struct Page<T> {
     pub has_more: bool,
 }
 
+/// Why a member is no longer in a guild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemberRemovalReason {
+    /// They left on their own.
+    Left,
+    /// A moderator kicked them.
+    Kicked,
+    /// A moderator banned them.
+    Banned,
+}
+
+impl MemberRemovalReason {
+    fn from_proto(reason: &buffa::EnumValue<pb::MemberRemovalReason>) -> Option<Self> {
+        match reason.as_known()? {
+            pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_LEFT => Some(Self::Left),
+            pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_KICKED => Some(Self::Kicked),
+            pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_BANNED => Some(Self::Banned),
+            pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_UNSPECIFIED => None,
+        }
+    }
+}
+
 /// A real-time event from the gateway.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -191,6 +213,15 @@ pub enum Event {
     VoiceSnapshot { guild_ids: Vec<u64>, states: Vec<VoiceState> },
     /// A moderator moved the caller: rejoin with [`Client::join_voice`](crate::Client::join_voice).
     VoiceMoved { guild_id: u64, channel_id: u64 },
+    /// A message was deleted (by its author, a moderator or a ban's purge): remove it.
+    MessageDeleted { channel_id: u64, message_id: u64 },
+    /// A member left or was removed. If it is you, `GuildRemoved` follows (or came just before).
+    GuildMemberRemoved { guild_id: u64, user_id: u64, reason: MemberRemovalReason },
+    /// You are no longer in this guild (left, kicked, banned, or it was deleted): drop it. The
+    /// stream stops delivering its events.
+    GuildRemoved { guild_id: u64 },
+    /// A channel was deleted; a `LayoutUpdated` follows.
+    ChannelDeleted { guild_id: u64, channel_id: u64 },
 }
 
 pub(crate) fn time(ts: Option<&Timestamp>) -> SystemTime {
@@ -348,6 +379,15 @@ impl Event {
                 states: v.states.into_iter().map(VoiceState::from).collect(),
             },
             Payload::VoiceMoved(v) => Self::VoiceMoved { guild_id: v.guild_id, channel_id: v.channel_id },
+            Payload::MessageDeleted(d) => Self::MessageDeleted { channel_id: d.channel_id, message_id: d.message_id },
+            Payload::GuildMemberRemoved(r) => Self::GuildMemberRemoved {
+                guild_id: r.guild_id,
+                user_id: r.user_id,
+                // An unspecified reason (a newer server) reads as the mildest.
+                reason: MemberRemovalReason::from_proto(&r.reason).unwrap_or(MemberRemovalReason::Left),
+            },
+            Payload::GuildRemoved(r) => Self::GuildRemoved { guild_id: r.guild_id },
+            Payload::ChannelDeleted(c) => Self::ChannelDeleted { guild_id: c.guild_id, channel_id: c.channel_id },
         })
     }
 }
@@ -551,5 +591,42 @@ mod tests {
         ));
         let moved = pb::VoiceMoved { guild_id: 1, channel_id: 9, ..Default::default() };
         assert_eq!(event(Payload::VoiceMoved(Box::new(moved))), Some(Event::VoiceMoved { guild_id: 1, channel_id: 9 }));
+    }
+
+    #[test]
+    fn moderation_events_convert() {
+        use pb::event::Payload;
+        assert_eq!(
+            event(Payload::MessageDeleted(Box::new(pb::MessageDeleted { channel_id: 4, message_id: 5, ..Default::default() }))),
+            Some(Event::MessageDeleted { channel_id: 4, message_id: 5 })
+        );
+        let removed = |reason: pb::MemberRemovalReason| {
+            event(Payload::GuildMemberRemoved(Box::new(pb::GuildMemberRemoved {
+                guild_id: 1,
+                user_id: 2,
+                reason: reason.into(),
+                ..Default::default()
+            })))
+        };
+        assert_eq!(
+            removed(pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_BANNED),
+            Some(Event::GuildMemberRemoved { guild_id: 1, user_id: 2, reason: MemberRemovalReason::Banned })
+        );
+        assert!(matches!(
+            removed(pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_KICKED),
+            Some(Event::GuildMemberRemoved { reason: MemberRemovalReason::Kicked, .. })
+        ));
+        assert!(matches!(
+            removed(pb::MemberRemovalReason::MEMBER_REMOVAL_REASON_UNSPECIFIED),
+            Some(Event::GuildMemberRemoved { reason: MemberRemovalReason::Left, .. })
+        ));
+        assert_eq!(
+            event(Payload::GuildRemoved(Box::new(pb::GuildRemoved { guild_id: 7, ..Default::default() }))),
+            Some(Event::GuildRemoved { guild_id: 7 })
+        );
+        assert_eq!(
+            event(Payload::ChannelDeleted(Box::new(pb::ChannelDeleted { guild_id: 7, channel_id: 8, ..Default::default() }))),
+            Some(Event::ChannelDeleted { guild_id: 7, channel_id: 8 })
+        );
     }
 }

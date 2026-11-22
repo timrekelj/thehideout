@@ -28,6 +28,9 @@ pub mod account;
 
 #[path = "fake_voice.rs"]
 mod voice;
+
+#[path = "fake_moderation.rs"]
+mod moderation;
 pub use voice::{FAKE_MIC_LEVEL, FakeAudio, fake_devices_event};
 
 /// The bytes of a generated file (tests compare downloads with them).
@@ -154,6 +157,8 @@ struct World {
     account: account::Accounts,
     /// Voice channels' occupants.
     voice: voice::Voice,
+    /// Bans and the other moderation state.
+    moderation: moderation::Moderation,
 }
 
 impl Default for World {
@@ -318,6 +323,7 @@ impl World {
             admin: AdminWorld::empty(),
             account: account::Accounts::new(),
             voice: voice::Voice::default(),
+            moderation: moderation::Moderation::default(),
         };
         f.admin = AdminWorld::new(&f.users, &f.guilds);
         f.seed_structure();
@@ -1125,6 +1131,10 @@ impl World {
             Ok(replies) => return replies,
             Err(cmd) => cmd,
         };
+        let cmd = match self.moderation_command(cmd) {
+            Ok(replies) => return replies,
+            Err(cmd) => cmd,
+        };
         let me = self.me.id;
         match cmd {
             Command::Resume => vec![Reply::Resume(Ok(None))],
@@ -1449,6 +1459,7 @@ impl World {
                     Some(g) if self.members.get(&g.id).is_some_and(|m| m.contains(&me)) => {
                         Err(ApiError::AlreadyExists)
                     }
+                    Some(g) if self.is_banned(g.id, me) => Err(ApiError::PermissionDenied),
                     Some(g) => {
                         self.members.entry(g.id).or_default().push(me);
                         Ok(g)
@@ -2403,6 +2414,55 @@ impl FakeBackend {
             .iter()
             .find(|m| m.id == id)
             .cloned()
+    }
+
+    /// A moderator removes `user` from `guild` (`reason` as the server reports it); when it is us
+    /// the gateway also says we are out (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn remove_member_as_moderator(&self, guild: u64, user: u64, reason: thehideout_api::MemberRemovalReason) {
+        self.0.borrow_mut().remove_member_as_moderator(guild, user, reason);
+    }
+
+    /// A moderator deletes a message, announced on the gateway (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn delete_message_as_moderator(&self, channel: u64, message: u64) {
+        self.0.borrow_mut().delete_message_as_moderator(channel, message);
+    }
+
+    /// Someone else deletes `channel` of `guild`, announced on the gateway (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn delete_channel_as_moderator(&self, guild: u64, channel: u64) {
+        self.0.borrow_mut().delete_channel_as_moderator(guild, channel);
+    }
+
+    /// The owner deletes `guild`, announced on the gateway (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn delete_guild_as_owner(&self, guild: u64) {
+        self.0.borrow_mut().delete_guild_as_owner(guild);
+    }
+
+    /// The members of `guild` (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn member_ids(&self, guild: u64) -> Vec<u64> {
+        self.0.borrow().members.get(&guild).cloned().unwrap_or_default()
+    }
+
+    /// `user` becomes a member of `guild` without any announcement (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn add_member(&self, guild: u64, user: u64) {
+        self.0.borrow_mut().members.entry(guild).or_default().push(user);
+    }
+
+    /// Whether `user` is banned from `guild` (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_banned(&self, guild: u64, user: u64) -> bool {
+        self.0.borrow().is_banned(guild, user)
+    }
+
+    /// The bans of `guild`, newest first (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn bans(&self, guild: u64) -> Vec<thehideout_api::Ban> {
+        self.0.borrow().moderation.bans_of(guild)
     }
 
     /// `author` posts `content` in `channel`, as the gateway would deliver it.

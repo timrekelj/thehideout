@@ -951,6 +951,66 @@ impl Backend for RealBackend {
                     },
                 );
             }
+            Command::EditMessage { channel, message, content } => {
+                self.call(
+                    async move { client.edit_message(channel, message, &content).await },
+                    move |result| Reply::MessageEdited { channel, message, result },
+                );
+            }
+            Command::DeleteMessage { channel, message } => {
+                self.call(
+                    async move { client.delete_message(channel, message).await },
+                    move |result| Reply::MessageDeleted { channel, message, result },
+                );
+            }
+            Command::KickMember { guild, user } => {
+                self.call(
+                    async move { client.kick_member(guild, user).await },
+                    move |result| Reply::Kicked { guild, user, result },
+                );
+            }
+            Command::BanMember { guild, user, reason, delete_seconds } => {
+                self.call(
+                    async move { client.ban_member(guild, user, &reason, delete_seconds).await },
+                    move |result| Reply::Banned { guild, user, result },
+                );
+            }
+            Command::UnbanMember { guild, user } => {
+                self.call(
+                    async move { client.unban_member(guild, user).await },
+                    move |result| Reply::Unbanned { guild, user, result },
+                );
+            }
+            Command::LoadBans { guild } => {
+                self.call(async move { client.list_bans(guild).await }, move |result| Reply::Bans { guild, result });
+            }
+            Command::LeaveGuild { guild } => {
+                self.call(async move { client.leave_guild(guild).await }, move |result| Reply::GuildLeft { guild, result });
+            }
+            Command::DeleteChannel { guild, channel } => {
+                self.call(
+                    async move { client.delete_channel(guild, channel).await },
+                    move |result| Reply::ChannelDeleted { guild, channel, result },
+                );
+            }
+            Command::DeleteGuild { guild, confirm_name } => {
+                self.call(
+                    async move { client.delete_guild(guild, &confirm_name).await },
+                    move |result| Reply::GuildDeleted { guild, result },
+                );
+            }
+            Command::RotateInviteCode { guild } => {
+                self.call(
+                    async move { client.rotate_invite_code(guild).await },
+                    move |result| Reply::InviteRotated { guild, result },
+                );
+            }
+            Command::TransferOwnership { guild, user, confirm_name } => {
+                self.call(
+                    async move { client.transfer_ownership(guild, user, &confirm_name).await },
+                    move |result| Reply::OwnershipTransferred { guild, user, result },
+                );
+            }
             Command::LoadAccess { guild } => {
                 self.call(
                     async move {

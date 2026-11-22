@@ -29,23 +29,77 @@ struct KeyHits {
 
 pub struct RateLimiter {
     hits: Mutex<HashMap<String, KeyHits>>,
+    /// Token buckets: `(tokens, last refill)` per key.
+    buckets: Mutex<HashMap<String, (f64, Instant)>>,
     max_keys: usize,
+    /// Messages one user may send (or edit) in a burst, and per second after that.
+    message_burst: u32,
+    message_refill: f64,
 }
+
+/// Production message rate: a burst of 10, then one per second.
+pub const MESSAGE_BURST: u32 = 10;
+pub const MESSAGE_REFILL_PER_SEC: f64 = 1.0;
 
 impl RateLimiter {
     pub fn new() -> Self {
         Self {
             hits: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(HashMap::new()),
             max_keys: MAX_KEYS,
+            message_burst: MESSAGE_BURST,
+            message_refill: MESSAGE_REFILL_PER_SEC,
         }
+    }
+
+    /// Overrides the message rate (a burst, then `refill_per_sec`); tests that
+    /// send many messages quickly raise it.
+    pub fn with_message_rate(mut self, burst: u32, refill_per_sec: f64) -> Self {
+        self.message_burst = burst;
+        self.message_refill = refill_per_sec;
+        self
+    }
+
+    /// Counts one message send or edit of `user_id`; `ResourceExhausted` with
+    /// a `retry-after` header when over the rate.
+    pub fn check_message(&self, user_id: u64) -> Result<(), ConnectError> {
+        self.bucket(&format!("message:{user_id}"), self.message_burst, self.message_refill)
     }
 
     #[cfg(test)]
     fn with_max_keys(max_keys: usize) -> Self {
         Self {
             hits: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(HashMap::new()),
             max_keys,
+            message_burst: MESSAGE_BURST,
+            message_refill: MESSAGE_REFILL_PER_SEC,
         }
+    }
+
+    /// Token bucket: `key` may burst `capacity` hits, then `refill_per_sec` per
+    /// second. A rejected hit costs nothing and the error carries a
+    /// `retry-after` header (whole seconds, at least 1) and says how long to wait.
+    pub fn bucket(&self, key: &str, capacity: u32, refill_per_sec: f64) -> Result<(), ConnectError> {
+        let key: String = key.chars().take(MAX_KEY_LEN).collect();
+        let capacity = f64::from(capacity);
+        let now = Instant::now();
+        let mut buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+        if buckets.len() > self.max_keys {
+            // Full buckets carry no information.
+            buckets.retain(|_, (tokens, at)| *tokens + now.duration_since(*at).as_secs_f64() * refill_per_sec < capacity);
+        }
+        let entry = buckets.entry(key).or_insert((capacity, now));
+        entry.0 = (entry.0 + now.duration_since(entry.1).as_secs_f64() * refill_per_sec).min(capacity);
+        entry.1 = now;
+        if entry.0 >= 1.0 {
+            entry.0 -= 1.0;
+            return Ok(());
+        }
+        let wait = ((1.0 - entry.0) / refill_per_sec).ceil().max(1.0) as u64;
+        let mut headers = http::HeaderMap::new();
+        headers.insert("retry-after", http::HeaderValue::from(wait));
+        Err(ConnectError::resource_exhausted(format!("slow down: try again in {wait}s")).with_headers(headers))
     }
 
     /// Records a hit for `key` and returns how many hits the key has within
@@ -159,6 +213,20 @@ mod tests {
         assert!(rl.check("b", 1, Duration::from_millis(50)).is_ok());
         std::thread::sleep(Duration::from_millis(60));
         assert!(rl.check("a", 1, Duration::from_millis(50)).is_ok());
+    }
+
+    #[test]
+    fn bucket_allows_a_burst_then_refills() {
+        let rl = RateLimiter::new();
+        for _ in 0..3 {
+            assert!(rl.bucket("u", 3, 20.0).is_ok());
+        }
+        let err = rl.bucket("u", 3, 20.0).unwrap_err();
+        assert_eq!(err.code, connectrpc::ErrorCode::ResourceExhausted);
+        assert_eq!(err.response_headers().get("retry-after").unwrap(), "1");
+        assert!(rl.bucket("other", 3, 20.0).is_ok());
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(rl.bucket("u", 3, 20.0).is_ok());
     }
 
     #[test]

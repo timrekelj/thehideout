@@ -82,6 +82,20 @@ message Event {
     // A moderator moved the caller to another voice channel. Audience: the
     // caller's open streams. Rejoin with VoiceService.JoinVoice(channel_id).
     VoiceMoved voice_moved = 20;
+    // A message was deleted (by its author or a moderator, or by a ban's
+    // message purge). Audience: channel audience. Remove it locally.
+    MessageDeleted message_deleted = 21;
+    // A member left, was kicked or was banned. Audience: the remaining guild
+    // members (the removed user's streams get `guild_removed` instead and
+    // may also see this event just before it).
+    GuildMemberRemoved guild_member_removed = 22;
+    // The caller is no longer in this guild (left, kicked, banned, or the
+    // guild was deleted). Audience: every open stream of that user; the
+    // stream stops delivering the guild's events immediately.
+    GuildRemoved guild_removed = 23;
+    // A channel was deleted. Audience: guild members. Always followed by a
+    // `layout_updated`.
+    ChannelDeleted channel_deleted = 24;
   }
 }
 
@@ -177,5 +191,48 @@ message VoiceMoved {
   uint64 guild_id = 1;
   // The channel to join with VoiceService.JoinVoice. The caller's voice state
   // already names it; the old LiveKit connection is closed by the server.
+  uint64 channel_id = 2;
+}
+
+// Why a member is no longer in a guild.
+enum MemberRemovalReason {
+  MEMBER_REMOVAL_REASON_UNSPECIFIED = 0;
+  // The member left on their own (LeaveGuild).
+  MEMBER_REMOVAL_REASON_LEFT = 1;
+  // A moderator kicked the member.
+  MEMBER_REMOVAL_REASON_KICKED = 2;
+  // A moderator banned the member.
+  MEMBER_REMOVAL_REASON_BANNED = 3;
+}
+
+// Payload of a message deletion.
+message MessageDeleted {
+  // Channel of the message.
+  uint64 channel_id = 1;
+  // The deleted message.
+  uint64 message_id = 2;
+}
+
+// Payload of a member leaving or being removed.
+message GuildMemberRemoved {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // The user who is no longer a member.
+  uint64 user_id = 2;
+  // Why.
+  MemberRemovalReason reason = 3;
+}
+
+// The caller is no longer a member of a guild (or it no longer exists).
+message GuildRemoved {
+  // ID of the guild.
+  uint64 guild_id = 1;
+}
+
+// Payload of a channel deletion.
+message ChannelDeleted {
+  // ID of the guild.
+  uint64 guild_id = 1;
+  // The deleted channel.
   uint64 channel_id = 2;
 }

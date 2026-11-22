@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use thehideout_api::{
-    ActivityPoint, AdminFileKind, AdminFileRow, AdminGuildRow, AdminUserRow, ApiError, AuditEntry,
+    ActivityPoint, Ban, AdminFileKind, AdminFileRow, AdminGuildRow, AdminUserRow, ApiError, AuditEntry,
     Channel, ChannelIconRef, ChannelKind, DeviceSession, DmChannel, Emoji, GatewayUpdate, Guild, GuildLayout,
     Invite, InvitePreview, Member, Message, NewInvite, Overview, Page, Paged, PaletteColor, Passkey,
     PendingAttachment, Permissions, ReactionEmoji, Role, RoleList, SecondFactorMethod, Section, SecuritySummary,
@@ -242,6 +242,65 @@ pub enum Command {
     DisconnectMember {
         guild: u64,
         user: u64,
+    },
+    // ---- moderation and structure -------------------------------------------------------------
+    /// Replaces the content of our own message: `Reply::MessageEdited`.
+    EditMessage {
+        channel: u64,
+        message: u64,
+        content: String,
+    },
+    /// Our own message, or anyone's with MANAGE_MESSAGES: `Reply::MessageDeleted`.
+    DeleteMessage {
+        channel: u64,
+        message: u64,
+    },
+    /// Needs KICK_MEMBERS and a higher top role: `Reply::Kicked`.
+    KickMember {
+        guild: u64,
+        user: u64,
+    },
+    /// Needs BAN_MEMBERS and a higher top role; `delete_seconds` (at most 7 days) also deletes
+    /// their recent messages: `Reply::Banned`.
+    BanMember {
+        guild: u64,
+        user: u64,
+        reason: String,
+        delete_seconds: Option<u32>,
+    },
+    /// Needs BAN_MEMBERS: `Reply::Unbanned`.
+    UnbanMember {
+        guild: u64,
+        user: u64,
+    },
+    /// The guild's bans (needs BAN_MEMBERS): `Reply::Bans`.
+    LoadBans {
+        guild: u64,
+    },
+    /// Not for the owner: `Reply::GuildLeft`.
+    LeaveGuild {
+        guild: u64,
+    },
+    /// Needs MANAGE_CHANNELS: `Reply::ChannelDeleted`.
+    DeleteChannel {
+        guild: u64,
+        channel: u64,
+    },
+    /// Owner only; `confirm_name` must be the guild's name: `Reply::GuildDeleted`.
+    DeleteGuild {
+        guild: u64,
+        confirm_name: String,
+    },
+    /// Needs MANAGE_SERVER: `Reply::InviteRotated` with the new code.
+    RotateInviteCode {
+        guild: u64,
+    },
+    /// Owner only, to another member; `confirm_name` must be the guild's name:
+    /// `Reply::OwnershipTransferred`.
+    TransferOwnership {
+        guild: u64,
+        user: u64,
+        confirm_name: String,
     },
     /// The guild's roles and who holds which: what decides the controls shown.
     LoadAccess {
@@ -632,6 +691,59 @@ pub enum Reply {
     Members {
         guild: u64,
         result: R<Vec<User>>,
+    },
+    /// Answer to `EditMessage`: the message as stored.
+    MessageEdited {
+        channel: u64,
+        message: u64,
+        result: R<Message>,
+    },
+    MessageDeleted {
+        channel: u64,
+        message: u64,
+        result: R<()>,
+    },
+    Kicked {
+        guild: u64,
+        user: u64,
+        result: R<()>,
+    },
+    Banned {
+        guild: u64,
+        user: u64,
+        result: R<()>,
+    },
+    Unbanned {
+        guild: u64,
+        user: u64,
+        result: R<()>,
+    },
+    Bans {
+        guild: u64,
+        result: R<Vec<Ban>>,
+    },
+    GuildLeft {
+        guild: u64,
+        result: R<()>,
+    },
+    /// Answer to `DeleteChannel`: the new layout.
+    ChannelDeleted {
+        guild: u64,
+        channel: u64,
+        result: R<GuildLayout>,
+    },
+    GuildDeleted {
+        guild: u64,
+        result: R<()>,
+    },
+    InviteRotated {
+        guild: u64,
+        result: R<String>,
+    },
+    OwnershipTransferred {
+        guild: u64,
+        user: u64,
+        result: R<Guild>,
     },
     DmOpened(R<DmChannel>),
     /// Answer to `FetchMedia`.

@@ -29,6 +29,8 @@ mod layout;
 mod look;
 #[path = "../src/media.rs"]
 mod media;
+#[path = "../src/moderation.rs"]
+mod moderation;
 #[path = "../src/perms.rs"]
 mod perms;
 #[path = "../src/real.rs"]
@@ -2424,4 +2426,135 @@ fn a_id(alice: &mut Peer) -> u64 {
         .expect("initial load")
         .me
         .id
+}
+
+#[test]
+fn moderation_and_structure_commands_reach_the_real_server_and_a_second_client() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(Server::start());
+    let (mut alice, mut bob) = (Peer::new(&server.url), Peer::new(&server.url));
+    alice.sign_up(&server, "alice");
+    let b = bob.sign_up(&server, "bob");
+    alice.initial();
+    alice.connected();
+    bob.initial();
+    bob.connected();
+    let guild = alice
+        .ask(Command::CreateGuild { name: "friends".into() }, |r| match r {
+            Reply::GuildCreated(g) => Some(g.clone()),
+            _ => None,
+        })
+        .expect("create guild");
+    bob.ask(Command::JoinGuild { code: guild.invite_code.clone() }, |r| match r {
+        Reply::GuildJoined(g) => Some(g.clone()),
+        _ => None,
+    })
+    .expect("join");
+    let general = alice
+        .ask(Command::LoadChannels { guild: guild.id }, |r| match r {
+            Reply::Channels { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("channels")
+        .0[0]
+        .id;
+
+    // Edit your own message, and a moderator deletes it; the author's client hears.
+    let sent = bob
+        .ask(Command::Send { channel: general, content: "first".into(), nonce: "n1".into() }, |r| match r {
+            Reply::Sent { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("send");
+    let edited = bob
+        .ask(Command::EditMessage { channel: general, message: sent.id, content: "second".into() }, |r| match r {
+            Reply::MessageEdited { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("edit");
+    assert_eq!((edited.content.as_str(), edited.edited_at.is_some()), ("second", true));
+    alice
+        .ask(Command::DeleteMessage { channel: general, message: sent.id }, |r| match r {
+            Reply::MessageDeleted { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("delete");
+    bob.wait("message_deleted", |r| match r {
+        Reply::Gateway(GatewayUpdate::Event(Event::MessageDeleted { message_id, .. })) if *message_id == sent.id => Some(()),
+        _ => None,
+    });
+
+    // Kick: bob's stream says the guild is gone; he can rejoin. Ban: he cannot, until unbanned.
+    alice
+        .ask(Command::KickMember { guild: guild.id, user: b.me.id }, |r| match r {
+            Reply::Kicked { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("kick");
+    bob.wait("guild_removed", |r| match r {
+        Reply::Gateway(GatewayUpdate::Event(Event::GuildRemoved { guild_id })) if *guild_id == guild.id => Some(()),
+        _ => None,
+    });
+    let join = |bob: &mut Peer, code: &str| {
+        bob.ask(Command::JoinGuild { code: code.into() }, |r| match r {
+            Reply::GuildJoined(g) => Some(g.clone()),
+            _ => None,
+        })
+    };
+    join(&mut bob, &guild.invite_code).expect("kicked members may rejoin");
+    alice
+        .ask(
+            Command::BanMember { guild: guild.id, user: b.me.id, reason: "spam".into(), delete_seconds: None },
+            |r| match r {
+                Reply::Banned { result, .. } => Some(result.clone()),
+                _ => None,
+            },
+        )
+        .expect("ban");
+    assert_eq!(join(&mut bob, &guild.invite_code).unwrap_err(), ApiError::PermissionDenied);
+    let bans = alice
+        .ask(Command::LoadBans { guild: guild.id }, |r| match r {
+            Reply::Bans { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("bans");
+    assert_eq!((bans[0].user.id, bans[0].reason.as_str()), (b.me.id, "spam"));
+    alice
+        .ask(Command::UnbanMember { guild: guild.id, user: b.me.id }, |r| match r {
+            Reply::Unbanned { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("unban");
+
+    // The new code works, the old one does not; then hand the guild over and delete it.
+    let code = alice
+        .ask(Command::RotateInviteCode { guild: guild.id }, |r| match r {
+            Reply::InviteRotated { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("rotate");
+    assert_eq!(join(&mut bob, &guild.invite_code).unwrap_err(), ApiError::NotFound);
+    join(&mut bob, &code).expect("the new code works");
+    let handed = alice
+        .ask(
+            Command::TransferOwnership { guild: guild.id, user: b.me.id, confirm_name: "friends".into() },
+            |r| match r {
+                Reply::OwnershipTransferred { result, .. } => Some(result.clone()),
+                _ => None,
+            },
+        )
+        .expect("transfer");
+    assert_eq!(handed.owner_id, b.me.id);
+    alice
+        .ask(Command::LeaveGuild { guild: guild.id }, |r| match r {
+            Reply::GuildLeft { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("leave");
+    bob.ask(Command::DeleteGuild { guild: guild.id, confirm_name: "friends".into() }, |r| match r {
+        Reply::GuildDeleted { result, .. } => Some(result.clone()),
+        _ => None,
+    })
+    .expect("delete the guild");
+    rt.block_on(server.cleanup());
 }

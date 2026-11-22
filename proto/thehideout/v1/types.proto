@@ -398,6 +398,15 @@ enum Permission {
   // Move other members between voice channels and disconnect them. Subject to
   // the role hierarchy.
   PERMISSION_MOVE_MEMBERS = 1024;
+  // Delete other members' messages in the guild's channels. Not part of the
+  // baseline; the owner and ADMINISTRATOR imply it.
+  PERMISSION_MANAGE_MESSAGES = 2048;
+  // Remove members from the guild (they can rejoin with an invite code).
+  // Subject to the role hierarchy.
+  PERMISSION_KICK_MEMBERS = 4096;
+  // Ban members (remove them and block rejoining), unban and list bans.
+  // Subject to the role hierarchy.
+  PERMISSION_BAN_MEMBERS = 8192;
 }
 
 // A role within a guild.
