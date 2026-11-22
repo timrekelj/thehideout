@@ -91,6 +91,17 @@ struct AppStoreTests {
         #expect(s.state.participants(of: Ids.lounge, in: Ids.hideout).map(\.userID) == [Ids.ana, Ids.bruno])
     }
 
+    @Test func notificationSettingsArriveOverTheGateway() async {
+        let (s, fake, _) = store()
+        await s.bootstrap()
+        s.setActive(true)
+        await until { s.state.connection == .connected }
+        let settings = NotificationSettings(dmsEnabled: false, guildDefault: .nothing)
+        fake.emit(.notificationSettingsUpdated(settings))
+        await until { s.state.notificationSettings != nil }
+        #expect(s.state.notificationSettings == settings)
+    }
+
     @Test func aDroppedStreamReconnectsAndRefetchesWhatItMissed() async {
         var config = GatewayConfig(); config.initialBackoff = 0.01; config.jitter = 0
         let (s, fake, _) = store(config: config)

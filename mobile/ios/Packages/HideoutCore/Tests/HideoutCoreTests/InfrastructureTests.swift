@@ -107,6 +107,17 @@ struct MappingTests {
         #expect(event { $0.payload = .guildMemberRemoved({ var r = Thehideout_V1_GuildMemberRemoved(); r.guildID = 1; r.userID = 2; r.reason = .banned; return r }()) } == .guildMemberRemoved(guild: 1, user: 2, reason: .banned))
         #expect(event { $0.payload = .voiceMoved({ var r = Thehideout_V1_VoiceMoved(); r.guildID = 1; r.channelID = 2; return r }()) } == .voiceMoved(guild: 1, channel: 2))
         #expect(event { $0.payload = .voiceStateUpdate({ var r = Thehideout_V1_VoiceStateUpdate(); r.guildID = 1; r.userID = 2; return r }()) } == .voiceStateUpdate(guild: 1, user: 2, state: nil))
+        var settings = Thehideout_V1_NotificationSettings()
+        settings.dmsEnabled = true; settings.guildDefault = .mentions; settings.showPreviews = true
+        var guildOverride = Thehideout_V1_NotificationOverride(); guildOverride.id = 7; guildOverride.level = .nothing
+        var channelOverride = Thehideout_V1_NotificationOverride(); channelOverride.id = 9; channelOverride.level = .all
+        channelOverride.mutedUntil = .init(date: Date(timeIntervalSince1970: 1_900_000_000))
+        settings.guilds = [guildOverride]; settings.channels = [channelOverride]
+        let expected = NotificationSettings(dmsEnabled: true, guildDefault: .mentions, showPreviews: true,
+                                            guilds: [NotificationOverride(id: 7, level: .nothing)],
+                                            channels: [NotificationOverride(id: 9, level: .all, mutedUntil: Date(timeIntervalSince1970: 1_900_000_000))])
+        #expect(event { $0.payload = .notificationSettingsUpdated(settings) } == .notificationSettingsUpdated(expected))
+        #expect(NotificationSettings(expected.proto) == expected, "round trip")
         #expect(event { _ in } == nil, "an empty payload is a newer server's event")
     }
 }

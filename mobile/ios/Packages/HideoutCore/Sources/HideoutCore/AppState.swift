@@ -171,6 +171,8 @@ public struct AppState: Sendable {
     public var voice: [ID: [ID: VoiceState]] = [:]
     /// Guilds we are leaving or deleting ourselves, so their `guildRemoved` isn't announced as news.
     public var exiting: Set<ID> = []
+    /// The push settings, once the server has sent them (`notification_settings_updated`; fetching them and editing come with push, phase 8).
+    public var notificationSettings: NotificationSettings?
 
     // ui
     public var place: Place = .home

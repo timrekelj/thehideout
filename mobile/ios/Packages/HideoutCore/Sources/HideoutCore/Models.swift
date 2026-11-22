@@ -309,3 +309,41 @@ public struct Snapshot: Sendable, Hashable {
         self.me = me; self.guilds = guilds; self.channels = channels; self.layouts = layouts; self.dms = dms
     }
 }
+
+// MARK: - Notification settings (NotificationService; the registration UI and APNs come in a later phase)
+
+public enum NotificationLevel: Sendable, Hashable {
+    /// Overrides only: use the next less specific setting (channel -> guild -> global default).
+    case inherit
+    case all
+    case mentions
+    case nothing
+}
+
+public struct NotificationOverride: Sendable, Hashable, Identifiable {
+    /// A guild or channel id.
+    public var id: ID
+    public var level: NotificationLevel
+    /// Muted until this time; nil or past = not muted.
+    public var mutedUntil: Date?
+    public init(id: ID, level: NotificationLevel = .inherit, mutedUntil: Date? = nil) {
+        self.id = id; self.level = level; self.mutedUntil = mutedUntil
+    }
+}
+
+/// The caller's push settings, owned by the server and kept current by `notification_settings_updated`.
+public struct NotificationSettings: Sendable, Hashable {
+    /// Push every message of DM channels.
+    public var dmsEnabled: Bool
+    /// Level for guild channels without an override: all, mentions or nothing.
+    public var guildDefault: NotificationLevel
+    /// Include message text in pushes (off sends "New message").
+    public var showPreviews: Bool
+    public var guilds: [NotificationOverride]
+    public var channels: [NotificationOverride]
+    public init(dmsEnabled: Bool = true, guildDefault: NotificationLevel = .mentions, showPreviews: Bool = true,
+                guilds: [NotificationOverride] = [], channels: [NotificationOverride] = []) {
+        self.dmsEnabled = dmsEnabled; self.guildDefault = guildDefault; self.showPreviews = showPreviews
+        self.guilds = guilds; self.channels = channels
+    }
+}

@@ -26,6 +26,8 @@ public enum GatewayEvent: Sendable, Equatable {
     case guildMemberRemoved(guild: ID, user: ID, reason: MemberRemovalReason)
     case guildRemoved(guild: ID)
     case channelDeleted(guild: ID, channel: ID)
+    /// The caller changed their notification settings on another session: the full new settings.
+    case notificationSettingsUpdated(NotificationSettings)
 }
 
 public enum MemberRemovalReason: Sendable, Equatable { case left, kicked, banned, unspecified }

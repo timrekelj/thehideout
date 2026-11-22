@@ -219,6 +219,7 @@ extension GatewayEvent {
             self = .guildMemberRemoved(guild: r.guildID, user: r.userID, reason: reason)
         case .guildRemoved(let r): self = .guildRemoved(guild: r.guildID)
         case .channelDeleted(let d): self = .channelDeleted(guild: d.guildID, channel: d.channelID)
+        case .notificationSettingsUpdated(let s): self = .notificationSettingsUpdated(NotificationSettings(s))
         case nil: return nil
         }
     }

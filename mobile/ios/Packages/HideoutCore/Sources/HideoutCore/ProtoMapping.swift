@@ -293,3 +293,47 @@ extension Me {
                   termsVersion: p.termsVersion)
     }
 }
+
+extension NotificationLevel {
+    init(_ p: Thehideout_V1_NotificationLevel) {
+        switch p {
+        case .all: self = .all
+        case .mentions: self = .mentions
+        case .nothing: self = .nothing
+        default: self = .inherit
+        }
+    }
+    var proto: Thehideout_V1_NotificationLevel {
+        switch self {
+        case .inherit: .inherit
+        case .all: .all
+        case .mentions: .mentions
+        case .nothing: .nothing
+        }
+    }
+}
+
+extension NotificationOverride {
+    init(_ p: Thehideout_V1_NotificationOverride) {
+        self.init(id: p.id, level: NotificationLevel(p.level), mutedUntil: p.hasMutedUntil ? p.mutedUntil.date : nil)
+    }
+    var proto: Thehideout_V1_NotificationOverride {
+        var p = Thehideout_V1_NotificationOverride()
+        p.id = id; p.level = level.proto
+        if let mutedUntil { p.mutedUntil = .of(mutedUntil) }
+        return p
+    }
+}
+
+extension NotificationSettings {
+    public init(_ p: Thehideout_V1_NotificationSettings) {
+        self.init(dmsEnabled: p.dmsEnabled, guildDefault: NotificationLevel(p.guildDefault), showPreviews: p.showPreviews,
+                  guilds: p.guilds.map(NotificationOverride.init), channels: p.channels.map(NotificationOverride.init))
+    }
+    public var proto: Thehideout_V1_NotificationSettings {
+        var p = Thehideout_V1_NotificationSettings()
+        p.dmsEnabled = dmsEnabled; p.guildDefault = guildDefault.proto; p.showPreviews = showPreviews
+        p.guilds = guilds.map(\.proto); p.channels = channels.map(\.proto)
+        return p
+    }
+}

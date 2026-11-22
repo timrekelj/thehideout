@@ -289,6 +289,21 @@ struct ReducerTests {
         #expect(s.voice[1]?[Ids.ana] == nil)
     }
 
+    @Test func notificationSettingsUpdatedStoresTheFullSettings() async throws {
+        var s = try await makeState()
+        #expect(s.notificationSettings == nil)
+        let first = NotificationSettings(dmsEnabled: false, guildDefault: .all, showPreviews: false,
+                                         guilds: [NotificationOverride(id: Ids.hideout, level: .nothing)],
+                                         channels: [NotificationOverride(id: Ids.dev, level: .mentions, mutedUntil: Date(timeIntervalSince1970: 4_000_000_000))])
+        s.applyEvent(.notificationSettingsUpdated(first))
+        #expect(s.notificationSettings == first)
+        // The event carries the whole settings, so a second one replaces, it does not merge.
+        let second = NotificationSettings(guilds: [NotificationOverride(id: Ids.garageBand, level: .all)])
+        s.applyEvent(.notificationSettingsUpdated(second))
+        #expect(s.notificationSettings == second && s.notificationSettings?.channels.isEmpty == true)
+        #expect(s.outbox.isEmpty, "no refetch: the event is the new state")
+    }
+
     // MARK: connection and the Interrupted refetch
 
     @Test func disconnectedMarksTheStreamInterruptedAndConnectedRefetches() async throws {

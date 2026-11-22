@@ -412,6 +412,7 @@ extension AppState {
         case .guildMemberRemoved(let g, let u, let reason): memberRemoved(guild: g, user: u, reason: reason)
         case .guildRemoved(let g): guildRemoved(g, reason: nil)
         case .channelDeleted(let g, let c): channelRemoved(guild: g, channel: c)
+        case .notificationSettingsUpdated(let settings): notificationSettings = settings
         case .dmOpened(let dm):
             for u in dm.participants { users[u.id] = u }
             if !dms.contains(where: { $0.id == dm.id }) { dms.append(dm) }
