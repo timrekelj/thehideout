@@ -35,7 +35,24 @@ public final class FakeAccounts: @unchecked Sendable {
     public var log: [String] { lock.withLock { _log } }
     private var _log: [String] = []
 
+    /// "Now" for expiry dates (the fake world's clock).
+    public var now = Date()
+
     public init() {}
+
+    /// `me()` answers "suspended" (a signed-in session whose account was suspended meanwhile).
+    public var suspendMe: Bool {
+        get { lock.withLock { _suspendMe } }
+        set { lock.withLock { _suspendMe = newValue } }
+    }
+    private var _suspendMe = false
+
+    /// `me()` answers "client too old" (the update-required gate).
+    public var tooOld: Bool {
+        get { lock.withLock { _tooOld } }
+        set { lock.withLock { _tooOld = newValue } }
+    }
+    private var _tooOld = false
 
     public var pendingPolls: Int {
         get { lock.withLock { _pendingPolls } }
@@ -88,10 +105,10 @@ extension FakeBackend: AuthApi {
         try await delay(); try accounts.gate()
         accounts.record("login:\(username)")
         guard let u = user(named: username.trimmingCharacters(in: .whitespaces)), password == accounts.currentPassword() else { throw AppError.unauthenticated }
-        if u.id == Ids.cvetka { throw AppError.suspended(reason: "Repeated spam in public channels.", until: Date().addingTimeInterval(7 * 86_400)) }
+        if u.id == Ids.cvetka { throw AppError.suspended(reason: "Repeated spam in public channels.", until: accounts.now.addingTimeInterval(7 * 86_400)) }
         if u.id == Ids.ana {
             accounts.resetWrong()
-            return .secondFactor(SecondFactorChallenge(id: FakeAccounts.challenge, methods: [.totp, .recoveryCode, .passkey], expiresAt: Date().addingTimeInterval(300)))
+            return .secondFactor(SecondFactorChallenge(id: FakeAccounts.challenge, methods: [.totp, .recoveryCode, .passkey], expiresAt: accounts.now.addingTimeInterval(300)))
         }
         return .session(session(u))
     }
@@ -161,7 +178,7 @@ extension FakeBackend: AuthApi {
         try await delay(); try accounts.gate()
         accounts.record("lookupInvite:\(code)")
         let normalized = code.uppercased()
-        let expires = Date().addingTimeInterval(5 * 86_400)
+        let expires = accounts.now.addingTimeInterval(5 * 86_400)
         switch normalized {
         case FakeAccounts.inviteCode:
             return InvitePreview(maskedEmail: "j***@example.com", inviter: "ana", guildNames: ["The Hideout"], expiresAt: expires, termsVersion: "2026-01-01", minimumAge: 16)

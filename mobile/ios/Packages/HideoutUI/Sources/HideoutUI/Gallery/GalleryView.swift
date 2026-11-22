@@ -32,20 +32,35 @@ public struct GalleryView: View {
     public init(embedded: Bool = false) { self.embedded = embedded }
 
     public var body: some View {
-        if embedded { page } else { NavigationStack { page } }
+        page
     }
 
+    /// The page is a scroll view at the top level (like the auth card), not inside a navigation stack: a scroll
+    /// view there gets an unbounded width proposal and the `maxWidth: .infinity` cards grow past the screen,
+    /// which centers the padded column and pushes the horizontal insets off-screen.
     private var page: some View {
-        ScrollView {
-            GalleryContent(sections: GallerySection.allCases)
-        }
-        .background(theme.colors.bg)
-        .navigationTitle("Gallery")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Look", systemImage: "paintpalette") { showLook = true }
+        GeometryReader { geo in
+            ScrollView {
+                VStack(spacing: 0) {
+                    HStack(spacing: Space.s3) {
+                        Text("Gallery").typeStyle(\.heading)
+                        Spacer()
+                        Button("Look", systemImage: "paintpalette") { showLook = true }
+                            .buttonStyle(.glass)
+                            .accessibilityLabel("Change the look")
+                    }
+                    .padding(.horizontal, Space.s4)
+                    .padding(.vertical, Space.s3)
+                    VStack(alignment: .leading) {
+                        Text("HELLO").font(.system(size: 30))
+                        Color.red.frame(height: 100)
+                    }
+                    .padding(.horizontal, Space.s4)
+                }
+                .frame(maxWidth: 1000, minHeight: geo.size.height)
             }
+            .scrollContentBackground(.hidden)
+            .background(theme.colors.bg)
         }
         .sheet(isPresented: $showLook) { LookSheet() }
     }
@@ -62,6 +77,8 @@ public struct GalleryContent: View {
     }
 
     public var body: some View {
+        // A finite width cap keeps the scroll view's content within the viewport: the `maxWidth: .infinity`
+        // cards otherwise give the column an infinite ideal width and the horizontal padding lands off-screen.
         VStack(alignment: .leading, spacing: Space.s8) {
             if showHero { LookHero() }
             ForEach(sections) { section in
@@ -85,6 +102,8 @@ public struct GalleryContent: View {
         .padding(.horizontal, Space.s4)
         .padding(.top, Space.s2)
         .padding(.bottom, Space.s16)
+        // The frame outside the padding caps the column at the scroll view's width, so the insets stay on screen.
+        .frame(maxWidth: 1000)
     }
 }
 

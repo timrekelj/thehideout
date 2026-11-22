@@ -13,7 +13,7 @@ struct HideoutApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HideoutRoot(store: container.store, themeStore: container.theme, options: container.options)
+            HideoutRoot(store: container.store, themeStore: container.theme, auth: container.auth, server: container.server, options: container.options)
         }
     }
 }

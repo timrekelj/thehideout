@@ -64,6 +64,8 @@ public final class AuthFlow {
     public private(set) var suspension: AuthSuspension?
     public private(set) var resendAt: Date?
     public private(set) var welcome: WelcomeState = .hidden
+    /// Counts finished sign-ins (a trigger for the success haptic).
+    public private(set) var signInCount = 0
 
     // fields
     public var login = ""
@@ -111,6 +113,9 @@ public final class AuthFlow {
     public var topLevel: Bool {
         suspension == nil && (step == .password || step == .inviteCode)
     }
+
+    /// Whether passkeys use the system sheet (a real domain with associated domains) rather than the browser page.
+    public var passkeysAreNative: Bool { passkeys?.canUseNative(host: server.host) ?? false }
 
     public func issue(for field: AuthField) -> String? { issue?.field == field ? issue?.message : nil }
 
@@ -473,6 +478,7 @@ public final class AuthFlow {
     /// A session was made: hand the token over and forget what was typed.
     private func finish(_ session: AuthSession) async {
         await onSession(session.token)
+        signInCount += 1
         busy = false
         step = .password
         login = ""; password = ""; email = ""; code = ""; recovery = ""; invite = ""; username = ""

@@ -52,6 +52,15 @@ targets:
       - package: HideoutCore
       - package: HideoutDesign
       - package: HideoutUI
+    # webcredentials: native passkeys and password AutoFill; applinks: universal links for invites. The server must serve
+    # /.well-known/apple-app-site-association for both to work (see README, "Associated domains"). TODO(production):
+    # a second entry for a self-hosted server's domain is needed per deployment; Apple only reads the entitlement's list.
+    entitlements:
+      path: Hideout/Hideout.entitlements
+      properties:
+        com.apple.developer.associated-domains:
+          - webcredentials:thehideout.zabit.si
+          - applinks:thehideout.zabit.si
     info:
       path: Hideout/Info.plist
       properties:
@@ -104,15 +113,29 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Hideout.app/Hideout
         BUNDLE_LOADER: $(TEST_HOST)
+  HideoutUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    supportedDestinations: [iOS]
+    sources:
+      - path: HideoutUITests
+    dependencies:
+      - target: Hideout
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: si.zabit.thehideout.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Hideout
 schemes:
   Hideout:
     build:
       targets:
         Hideout: all
         HideoutTests: [test]
+        HideoutUITests: [test]
     run:
       commandLineArguments:
         "--fake": false
         "--gallery": false
     test:
-      targets: [HideoutTests]
+      targets: [HideoutTests, HideoutUITests]

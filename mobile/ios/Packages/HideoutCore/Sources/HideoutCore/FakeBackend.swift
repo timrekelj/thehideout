@@ -18,7 +18,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
 
     private let lock = NSLock()
     /// The sign-in side of the fake world (see `FakeAuth.swift`).
-    let accounts = FakeAccounts()
+    public let accounts = FakeAccounts()
     private var world: World
     private var subscribers: [UUID: AsyncThrowingStream<GatewayEvent, Error>.Continuation] = [:]
 
@@ -40,6 +40,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
     /// Signed in as this user (default tim). cvetka is the site admin.
     public init(me: ID = Ids.tim, now: Date = Date()) {
         world = World(me: me, now: now)
+        accounts.now = now
     }
 
     // MARK: world access for tests and scenes
@@ -80,6 +81,8 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
 
     public func me() async throws -> Me {
         try await delay()
+        if accounts.suspendMe { throw AppError.suspended(reason: "Repeated spam in public channels.", until: accounts.now.addingTimeInterval(7 * 86_400)) }
+        if accounts.tooOld { throw AppError.clientTooOld }
         let terms = accounts.termsRequired
         return lock.withLock { Me(user: world.user(world.meID), termsUpdateRequired: terms, termsVersion: terms ?? "2026-01-01") }
     }

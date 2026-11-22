@@ -36,6 +36,20 @@
                ReferencedContainer = "container:Hideout.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3BAEFB3F9AB1E903A0F81645"
+               BuildableName = "HideoutUITests.xctest"
+               BlueprintName = "HideoutUITests"
+               ReferencedContainer = "container:Hideout.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -62,6 +76,17 @@
                BlueprintIdentifier = "A566975EDB6C48932EAA0F54"
                BuildableName = "HideoutTests.xctest"
                BlueprintName = "HideoutTests"
+               ReferencedContainer = "container:Hideout.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3BAEFB3F9AB1E903A0F81645"
+               BuildableName = "HideoutUITests.xctest"
+               BlueprintName = "HideoutUITests"
                ReferencedContainer = "container:Hideout.xcodeproj">
             </BuildableReference>
          </TestableReference>
