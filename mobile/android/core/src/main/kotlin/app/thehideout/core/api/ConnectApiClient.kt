@@ -53,10 +53,20 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.async
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
+import okio.BufferedSink
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /** What the real client needs to know about where it runs. */
 class ApiConfig(
@@ -80,8 +90,19 @@ fun buildHttpClients(config: ApiConfig, base: OkHttpClient = OkHttpClient()): Pa
     return unary to stream
 }
 
+/** Percent-encodes everything except RFC 3986 unreserved characters (desktop's `upload.rs::encode_component`). */
+private fun encodeUploadComponent(s: String): String = buildString {
+    for (b in s.toByteArray(Charsets.UTF_8)) {
+        val c = b.toInt() and 0xFF
+        if (c.toChar().isLetterOrDigit() && c < 128 || c.toChar() in "-._~") append(c.toChar())
+        else append("%%%02X".format(c))
+    }
+}
+
 /** The real [ApiClient]: connect-kotlin over OkHttp, with every failure mapped to [AppError]. */
 class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
+    private val baseUrl = config.baseUrl.trimEnd('/')
+    private val uploadHttp = http.first
     private val client = ProtocolClient(
         ConnectOkHttpClient(http.first, http.second),
         ProtocolClientConfig(
@@ -154,6 +175,46 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     override suspend fun sendMessage(channel: Long, content: String, nonce: String, attachmentIds: List<Long>): Message {
         val req = SendMessageRequest.newBuilder().setChannelId(channel).setContent(content).setNonce(nonce).addAllAttachmentIds(attachmentIds)
         return call { messages.sendMessage(req.build()) }.message.toModel()
+    }
+
+    override suspend fun uploadAttachment(channel: Long, filename: String, contentType: String, size: Long, source: UploadSource, progress: (Long) -> Unit): PendingAttachment {
+        val url = "$baseUrl/attachments?channel_id=$channel&filename=${encodeUploadComponent(filename)}"
+        val body = object : RequestBody() {
+            override fun contentType() = contentType.toMediaTypeOrNull()
+            override fun contentLength() = size
+            override fun writeTo(sink: BufferedSink) {
+                source.open().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var sent = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        sink.write(buffer, 0, read)
+                        sent += read
+                        progress(sent)
+                    }
+                }
+            }
+        }
+        val request = Request.Builder().url(url).post(body).build()
+        return suspendCancellableCoroutine { cont ->
+            val call = uploadHttp.newCall(request)
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(AppError.Unavailable(e.message.orEmpty()))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    val result = response.use { r ->
+                        val bytes = r.body.bytes()
+                        if (!r.isSuccessful) Result.failure(httpAttachmentError(r.code, bytes)) else runCatching { parsePendingAttachment(bytes) }
+                    }
+                    if (!cont.isActive) return
+                    result.fold(cont::resume, cont::resumeWithException)
+                }
+            })
+        }
     }
 
     override suspend fun openDm(userId: Long): DmChannel {

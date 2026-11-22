@@ -1,6 +1,7 @@
 package app.thehideout.core.store
 
 import app.thehideout.core.api.AppError
+import app.thehideout.core.attachment.DEFAULT_MAX_UPLOAD_BYTES
 import app.thehideout.core.model.*
 import java.time.Instant
 
@@ -89,6 +90,8 @@ data class Outgoing(
     val at: Instant,
     val state: Delivery = Delivery.Pending,
     val attachmentIds: List<Long> = emptyList(),
+    /** Local previews of [attachmentIds], shown until the server's message replaces this pending one. */
+    val attachments: List<PendingPreview> = emptyList(),
 )
 
 enum class NoticeKind { Info, Success, Danger }
@@ -132,8 +135,13 @@ data class AppState(
     val notices: List<Notice> = emptyList(),
     /** The composer's unsent text per channel, kept while switching channels. */
     val drafts: Map<Long, String> = emptyMap(),
+    /** The composer's attached-but-unsent files per channel (ATT-09). */
+    val attachDrafts: Map<Long, AttachDraft> = emptyMap(),
+    /** The server's per-upload byte cap, assumed until the server says otherwise (none of our RPCs report it yet). */
+    val maxUploadBytes: Long = DEFAULT_MAX_UPLOAD_BYTES,
     val noticeSeq: Long = 0,
     val nonceSeq: Long = 0,
+    val uploadSeq: Long = 0,
     /** Guilds we are leaving or deleting ourselves, so their `guild_removed` is not announced as news. */
     val exiting: Set<Long> = emptySet(),
 ) {
@@ -201,6 +209,8 @@ data class AppState(
     fun knownUsers(): List<User> = users.values.filter { it.id != myId }.sortedBy { it.username.lowercase() }
 
     fun draft(channel: Long): String = drafts[channel].orEmpty()
+
+    fun attachDraft(channel: Long): AttachDraft = attachDrafts[channel] ?: AttachDraft()
 
     /** Loaded messages that mention the signed-in user, newest first, across every channel whose history is in memory. */
     fun mentionFeed(): List<MentionEntry> {

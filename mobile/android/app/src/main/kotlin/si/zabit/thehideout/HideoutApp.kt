@@ -2,6 +2,7 @@ package si.zabit.thehideout
 
 import android.app.Application
 import app.thehideout.ui.components.pruneAttachmentCache
+import app.thehideout.ui.components.pruneUploadCache
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -23,7 +24,10 @@ class HideoutApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        CoroutineScope(Dispatchers.IO).launch { pruneAttachmentCache(this@HideoutApp) }
+        CoroutineScope(Dispatchers.IO).launch {
+            pruneAttachmentCache(this@HideoutApp)
+            pruneUploadCache(this@HideoutApp)
+        }
     }
 
     /** One `ImageLoader` for the whole app, over [AppContainer]'s separate media OkHttp client (not the one used for signed-in API calls). */
