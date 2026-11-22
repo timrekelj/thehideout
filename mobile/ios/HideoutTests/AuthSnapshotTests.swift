@@ -231,7 +231,9 @@ final class AuthSnapshotTests: SnapshotCase {
         r.flow.username = "zoe"; r.flow.password = "long enough pw"
         r.flow.addPasskey = true; r.flow.acceptTerms = true; r.flow.confirmAge = true
         r.flow.submit(); await r.flow.settle()
-        assertScreen(RootView(), store: r.store, auth: r.flow, server: r.server, wait: 1.5)
+        // `RootView` only presents this as a `.sheet`, which an offscreen `UIHostingController` cannot reliably
+        // capture; snapshot the sheet's own content view, the same way `testServerSheet` does.
+        assertScreen(WelcomeSheet(), store: r.store, auth: r.flow, server: r.server)
     }
 
     func testServerSheet() async {

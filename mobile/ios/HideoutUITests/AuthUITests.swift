@@ -31,13 +31,39 @@ final class AuthUITests: XCTestCase {
         let field = secure ? app.secureTextFields[label] : app.textFields[label]
         XCTAssertTrue(field.waitForExistence(timeout: 10), "missing field \(label)")
         field.tap()
+        if secure {
+            // The system's "Use Strong Password?" callout appears as soon as a `.newPassword` field is focused;
+            // dismiss it and refocus before typing, or it can swallow part of the typed text.
+            let closeCallout = app.buttons["Close"]
+            if closeCallout.waitForExistence(timeout: 1) {
+                closeCallout.tap()
+                field.tap()
+            }
+        }
         app.typeText(text)
     }
 
+    /// `CheckRow`'s checkbox carries `.isToggle`, so XCUITest exposes it as a switch, not a button; everything
+    /// else (`PrimaryButton`, `QuietLink`, `BackLink`, ...) is a real button.
     private func tap(_ app: XCUIApplication, _ label: String) {
+        if app.switches[label].exists {
+            let s = app.switches[label]
+            if !s.isHittable { app.swipeUp() }
+            // The Terms/Privacy row's accessible frame spans the whole label (its text has markdown links),
+            // wider than the 44pt checkbox at its leading edge: tap there, not the element's center.
+            s.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+            return
+        }
         let b = app.buttons[label]
         XCTAssertTrue(b.waitForExistence(timeout: 10), "missing button \(label)")
+        if !b.isHittable { app.swipeUp() }
         b.tap()
+    }
+
+    /// Dismisses the keyboard (a drag on the auth card's scroll view, which is `.scrollDismissesKeyboard(.interactively)`),
+    /// so fields and checkboxes further down the invite accept form are hittable instead of sitting below the fold.
+    private func dismissKeyboard(_ app: XCUIApplication) {
+        if app.keyboards.element.exists { app.swipeUp() }
     }
 
     private func waitForText(_ app: XCUIApplication, containing needle: String, timeout: TimeInterval = 10) -> Bool {
@@ -69,6 +95,7 @@ final class AuthUITests: XCTestCase {
         XCTAssertTrue(waitForText(app, containing: "invited you to join"), "the invite preview did not appear")
         type(app, into: "Choose a username", "zoe")
         type(app, into: "Choose a password", secure: true, "long-enough-pw")
+        dismissKeyboard(app)
         tap(app, "I agree to the Terms and Privacy Policy")
         tap(app, "I'm 16 or older")
         tap(app, "Create account")
@@ -113,6 +140,7 @@ final class AuthUITests: XCTestCase {
         do {
             let app = launch(["--signed-out"])
             tap(app, "Use a passkey")
+            XCTAssertTrue(app.textFields["Username"].waitForExistence(timeout: 10))
             shot(app, "06-passkey")
             type(app, into: "Username", "tim")
             tap(app, "Continue with a passkey")
@@ -127,6 +155,7 @@ final class AuthUITests: XCTestCase {
         do {
             let app = launch(["--signed-out"])
             tap(app, "Forgot password?")
+            XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 10))
             shot(app, "09-reset-request")
             type(app, into: "Email", "tim@example.com")
             tap(app, "Send code")
@@ -158,6 +187,7 @@ final class AuthUITests: XCTestCase {
             shot(app, "13-invite-accept")
             type(app, into: "Choose a username", "zoe")
             type(app, into: "Choose a password", secure: true, "long-enough-pw")
+            dismissKeyboard(app)
             tap(app, "Add a passkey after signing up")
             tap(app, "I agree to the Terms and Privacy Policy")
             tap(app, "I'm 16 or older")
@@ -183,6 +213,7 @@ final class AuthUITests: XCTestCase {
             XCTAssertTrue(waitForText(app, containing: "tries left"))
             shot(app, "18-second-factor-wrong")
             tap(app, "Use a recovery code")
+            XCTAssertTrue(app.textFields["Recovery code"].waitForExistence(timeout: 10))
             shot(app, "19-recovery")
             tap(app, "Use a passkey")
             Thread.sleep(forTimeInterval: 1.2)

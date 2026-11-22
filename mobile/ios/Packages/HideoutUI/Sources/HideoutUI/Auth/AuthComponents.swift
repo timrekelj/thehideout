@@ -28,6 +28,7 @@ struct FieldBox: ViewModifier {
 /// A label, its control and the error under it. `trailing` sits at the right of the label ("Forgot password?").
 struct LabelledField<Control: View, Trailing: View>: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let error: String?
     let hint: String?
@@ -41,14 +42,23 @@ struct LabelledField<Control: View, Trailing: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s2) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title).typeStyle(\.controlStrong)
-                    .accessibilityHidden(true)
-                Spacer(minLength: Space.s2)
-                // The link keeps its 44 pt target but does not make the label row taller than the label.
-                trailing.frame(height: rowHeight)
+            // At accessibility text sizes "Password" and "Forgot password?" no longer fit on one line: stack them
+            // instead of letting the trailing link truncate.
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: Space.s1) {
+                    Text(title).typeStyle(\.controlStrong).accessibilityHidden(true)
+                    trailing
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title).typeStyle(\.controlStrong)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: Space.s2)
+                    // The link keeps its 44 pt target but does not make the label row taller than the label.
+                    trailing.frame(height: rowHeight)
+                }
+                .frame(minHeight: rowHeight)
             }
-            .frame(minHeight: rowHeight)
             control
             if let error {
                 ErrorText(error)

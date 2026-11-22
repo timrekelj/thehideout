@@ -15,7 +15,7 @@ public struct AuthScreen: View {
     public init() {}
 
     public var body: some View {
-        AuthChrome(tagline: tagline, footer: { serverLine }) {
+        AuthChrome(tagline: tagline, footer: { footerLines }) {
             if let s = flow.suspension {
                 SuspendedCard(reason: s.reason, until: s.until, action: "Back to sign in") { flow.dismissSuspension() }
             } else {
@@ -85,6 +85,13 @@ public struct AuthScreen: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var footerLines: some View {
+        VStack(spacing: Space.s2) {
+            serverLine
+            legalLine
+        }
+    }
+
     private var serverLine: some View {
         HStack(spacing: Space.s1) {
             Text("Server: \(ServerURL.display(server.url).replacingOccurrences(of: "https://", with: ""))")
@@ -96,6 +103,23 @@ public struct AuthScreen: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Change server")
             .accessibilityHint("Currently \(ServerURL.display(server.url))")
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// "Terms · Privacy", faint, under the server line (desktop's `account::legal_links`).
+    private var legalLine: some View {
+        HStack(spacing: Space.s1) {
+            Button { legal = LegalPage(url: server.url.appendingPathComponent("terms")) } label: {
+                Text("Terms").typeStyle(\.caption, color: \.textFaint).frame(minHeight: 44)
+            }
+            .buttonStyle(.plain)
+            Text("·").typeStyle(\.caption, color: \.textFaint)
+            Button { legal = LegalPage(url: server.url.appendingPathComponent("privacy")) } label: {
+                Text("Privacy").typeStyle(\.caption, color: \.textFaint).frame(minHeight: 44)
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)

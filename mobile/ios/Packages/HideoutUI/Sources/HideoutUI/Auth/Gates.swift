@@ -133,11 +133,13 @@ struct UpdateGate: View {
 }
 
 /// The sheet after an account was made with "Add a passkey after signing up" ticked.
-struct WelcomeSheet: View {
+public struct WelcomeSheet: View {
     @Environment(AuthFlow.self) private var flow
     @Environment(\.theme) private var theme
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         VStack(spacing: Space.s5) {
             Image(systemName: "person.badge.key.fill")
                 .font(.system(size: 34, weight: .semibold))
