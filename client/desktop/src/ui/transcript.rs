@@ -13,18 +13,18 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rune::{Color, El, Pixels, ScrollSpec, SpringPair, Transition, col, el, row, text};
+use rune::{Color, El, Pixels, ScrollSpec, SpringPair, Transition, Tx, col, el, row, text};
 use rune_kit::Kit;
 use thehideout_api::{Message, ReactionEmoji};
 use thehideout_design::components::chat::emoji::glyph_label;
 use thehideout_design::components::{Button, ChatMessage, DateDivider, DeliveryState, EmptyState, MessageGroup, NewMessagesDivider, ReactionChip, ReactionGlyph, Size, Variant};
 use thehideout_design::icons::{self, CHEVRON_DOWN, CHAT, PLUS};
-use thehideout_design::{motion, palette_text, palette_wash, radius, theme_of, type_};
+use thehideout_design::{metrics_of, motion, palette_text, palette_wash, radius, theme_of, type_};
 
 use crate::app::App;
 use crate::format::{clock_label, day_label, unix};
 use crate::emoji::PickerTarget;
-use crate::state::{AppState, Delivery, DialogKind, Fetch, Marker, Place, chat_id_of};
+use crate::state::{AppState, Delivery, DialogKind, Fetch, Marker, Menu as MenuState, Place, chat_id_of};
 
 /// A row of the transcript: the view model plus the server id (outgoing messages have none).
 struct Item {
@@ -50,6 +50,9 @@ fn items(s: &AppState, channel: u64) -> Vec<Item> {
                     delivery: DeliveryState::Sent,
                     mentions_me: m.author_id != me && s.mentions_me(&m.content),
                     reactions: chips(s, m),
+                    edited: m.edited_at.map(|t| s.edited_tip(t)),
+                    can_edit: s.can_edit_message(m),
+                    can_delete: s.can_delete_message(m),
                 },
             });
         }
@@ -68,6 +71,9 @@ fn items(s: &AppState, channel: u64) -> Vec<Item> {
                 delivery: if o.state == Delivery::Failed { DeliveryState::Failed } else { DeliveryState::Pending },
                 mentions_me: false,
                 reactions: Vec::new(),
+                edited: None,
+                can_edit: false,
+                can_delete: false,
             },
         });
     }
@@ -175,11 +181,11 @@ fn marker_index(items: &[Item], marker: Marker, channel: u64) -> Option<usize> {
     items.iter().position(|i| matches!(i.id, Some(x) if id.is_none_or(|m| x > m)))
 }
 
-pub fn build(a: &App, k: &Kit) -> El {
+pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     let t = theme_of(k);
     let s = &a.state;
     let stage = match s.current_channel() {
-        Some(c) => channel_stage(a, k, c),
+        Some(c) => channel_stage(a, k, layer, c),
         None => placeholder_stage(a, k),
     };
     let mut area = col().key("transcript-area").grow(1.0).min_h(0.0).w_full().fill(t.surface.color()).child(stage);
@@ -231,7 +237,7 @@ fn placeholder_stage(a: &App, k: &Kit) -> El {
     el().key("stage-none").absolute(0.0, 0.0).w_full().h_full().transition(fade()).child(centered(body))
 }
 
-fn channel_stage(a: &App, k: &Kit, channel: u64) -> El {
+fn channel_stage(a: &App, k: &Kit, layer: &mut Vec<El>, channel: u64) -> El {
     let s = &a.state;
     let stage = el().key(format!("stage-{channel}")).absolute(0.0, 0.0).w_full().h_full().transition(fade());
     let Some(log) = s.log(channel) else { return stage };
@@ -255,10 +261,10 @@ fn channel_stage(a: &App, k: &Kit, channel: u64) -> El {
         };
         return stage.child(centered(EmptyState::new(&CHAT, title, body).build(k)));
     }
-    stage.child(viewport(a, k, channel, &list))
+    stage.child(viewport(a, k, layer, channel, &list))
 }
 
-fn viewport(a: &App, k: &Kit, channel: u64, list: &[Item]) -> El {
+fn viewport(a: &App, k: &Kit, layer: &mut Vec<El>, channel: u64, list: &[Item]) -> El {
     let t = theme_of(k);
     let s = &a.state;
     let log = s.log(channel);
@@ -289,6 +295,8 @@ fn viewport(a: &App, k: &Kit, channel: u64, list: &[Item]) -> El {
     }
 
     let looks = Looks::of(a, k, list);
+    let menus = MessageMenus::of(a, k, channel);
+    let editing = editing_chat(a, channel);
     let under = Rc::new(RefCell::new(extras(a, k, channel)));
     let emojis = s.emoji_set();
     let marker_at = marker_index(list, s.ui.marker, channel);
@@ -345,6 +353,24 @@ fn viewport(a: &App, k: &Kit, channel: u64, list: &[Item]) -> El {
                     })
                     .on_copy(|a: &mut App, id: &str| a.act(|s| s.copy_message(id)))
                     .on_reply(|a: &mut App, id: &str| a.act(|s| s.reply_to(id)))
+                    .on_edit(|a: &mut App, id: &str| a.act(|s| {
+                        s.begin_edit_chat(id);
+                    }))
+                    .on_delete(|a: &mut App, id: &str, shift: bool| a.act(|s| s.delete_pressed_chat(id, shift)))
+                    .on_context(|a: &mut App, id: &str, p| {
+                        if let Some((channel, message)) = a.state.message_ref(id) {
+                            a.state.ui.menu = MenuState::Message { channel, message, at: Some((p.x as i32, p.y as i32)) };
+                        }
+                    })
+                    .on_more(|a: &mut App, id: &str| {
+                        if let Some((channel, message)) = a.state.message_ref(id) {
+                            let open = matches!(a.state.ui.menu, MenuState::Message { message: m, at: None, .. } if m == message);
+                            a.state.ui.menu = if open { MenuState::None } else { MenuState::Message { channel, message, at: None } };
+                        }
+                    })
+                    .wrap_more(menus.wrap())
+                    .force_hover(menus.open_chat.clone().unwrap_or_default())
+                    .editor(editor(a, k, editing.clone()))
                     .build(k),
             );
         }
@@ -367,6 +393,7 @@ fn viewport(a: &App, k: &Kit, channel: u64, list: &[Item]) -> El {
             true
         })
         .child(c);
+    menus.finish(a, k, layer);
     // Hairlines under the header and over the composer, only while messages are cut off there.
     col().w_full().h_full().child(s.ui.edges.transcript.wrap(k, scroller))
 }
@@ -394,4 +421,180 @@ fn pill(k: &Kit, channel: u64) -> El {
     let enter = Transition::offset(0.0, 6.0).combined(Transition::opacity()).springs(SpringPair::new(motion::CONTROL, motion::CONTROL));
     let button = Button::new("New messages").icon(&CHEVRON_DOWN).size(Size::Sm).build(k).on_press_tx(move |_: &mut App, tx| tx.scroll_to_bottom(format!("tx-{channel}")));
     row().key("new-pill").pin(Some(0.0), None, Some(0.0), Some(12.0)).justify_center().transition(enter).child(k.elevate(button, &k.elevation.floating))
+}
+
+// ---- editing and the message menu ----------------------------------------------------------------
+
+/// The transcript id of the message being edited in `channel`.
+fn editing_chat(a: &App, channel: u64) -> Option<String> {
+    let s = &a.state;
+    let e = s.editing_here().filter(|e| e.channel == channel)?;
+    let me = s.my_id();
+    s.log(channel)?.messages.iter().find(|m| m.id == e.message).map(|m| chat_id_of(m, me))
+}
+
+fn edit_input(a: &mut App) -> &mut rune::TextEdit {
+    match a.state.ui.editing.as_mut() {
+        Some(e) => &mut e.input,
+        None => &mut a.state.ui.idle_composer,
+    }
+}
+
+/// The editor that replaces the body of the message being edited: the text in a field, and what
+/// the keys do. It shows only for that message's transcript id.
+fn editor(a: &App, k: &Kit, chat_id: Option<String>) -> impl Fn(&str) -> Option<El> + 'static {
+    let t = theme_of(k);
+    let built = chat_id.zip(a.state.editing_here()).map(|(id, e)| {
+        let style = metrics_of(k).font(type_::BODY);
+        let field = rune::text_input(&e.input, style)
+            .key("edit-input")
+            .w_full()
+            .color(t.text.color())
+            .caret(t.accent_text.color(), t.accent_subtle.color())
+            .label("Edit message")
+            .on_edit(edit_input)
+            .on_submit(|a: &mut App, _tx| a.act(|s| s.save_edit()))
+            .on_input_key(|a: &mut App, ev: &rune::KeyEvent, _tx: &mut Tx| {
+                if ev.key == rune::Key::Escape {
+                    a.act(|s| s.cancel_edit());
+                    return true;
+                }
+                false
+            });
+        let m = metrics_of(k);
+        let pad = (m.field_h() - style.line_px()) / 2.0;
+        let card = col()
+            .key("edit-card")
+            .w_full()
+            .px(12.0)
+            .py(pad)
+            .radius(radius::MD)
+            .fill(t.surface_raised.color())
+            .border(1.0, t.control_border.color())
+            .outline(1.0, -1.0, t.focus.color())
+            .child(rune::auto_grow(field, 1, 8).role("none"));
+        let hint = text("Esc to cancel \u{b7} Enter to save")
+            .key("edit-hint")
+            .font(type_::at(k, type_::CAPTION))
+            .color(t.text_faint.color());
+        (id, std::cell::RefCell::new(Some(col().key("editor").w_full().gap(4.0).child(card).child(hint))))
+    });
+    move |id: &str| match &built {
+        Some((want, cell)) if want == id => cell.borrow_mut().take(),
+        _ => None,
+    }
+}
+
+/// The menu of one message, when it is open: a context menu where the click landed, or one hung
+/// on the hover bar's More button.
+struct MessageMenus {
+    /// The transcript id of the message whose menu is open.
+    open_chat: Option<String>,
+    more: Rc<RefCell<Option<rune_kit::Menu>>>,
+    point: Option<rune_kit::Menu>,
+    layer: Rc<RefCell<Vec<El>>>,
+    kit: Kit,
+    open_message: Option<u64>,
+}
+
+impl MessageMenus {
+    fn of(a: &App, k: &Kit, channel: u64) -> MessageMenus {
+        let s = &a.state;
+        let me = s.my_id();
+        let (mut open_chat, mut open_message, mut more, mut point) = (None, None, None, None);
+        if let MenuState::Message { channel: c, message, at } = s.ui.menu
+            && c == channel
+            && let Some(m) = s.log(channel).and_then(|l| l.messages.iter().find(|m| m.id == message))
+        {
+            let chat = chat_id_of(m, me);
+            open_chat = Some(chat.clone());
+            open_message = Some(message);
+            let menu = message_items(a, rune_kit::Menu::new("menu-message"), channel, message, chat);
+            match at {
+                Some((x, y)) => point = Some(menu.at(x as f32, y as f32).open(true)),
+                None => more = Some(menu),
+            }
+        }
+        MessageMenus {
+            open_chat,
+            more: Rc::new(RefCell::new(more)),
+            point,
+            layer: Rc::new(RefCell::new(Vec::new())),
+            kit: k.clone(),
+            open_message,
+        }
+    }
+
+    /// Hangs the open menu on the More button of its message.
+    fn wrap(&self) -> impl Fn(El, &str) -> El + 'static {
+        let (open, more, layer, kit) = (self.open_chat.clone(), self.more.clone(), self.layer.clone(), self.kit.clone());
+        move |button: El, id: &str| {
+            if open.as_deref() != Some(id) {
+                return button;
+            }
+            match more.borrow_mut().take() {
+                Some(menu) => menu
+                    .trigger(button)
+                    .open(true)
+                    .on_close(|a: &mut App| a.state.ui.menu = MenuState::None)
+                    .min_width(180.0)
+                    .build(&kit, &mut layer.borrow_mut())
+                    .role("none"),
+                None => button,
+            }
+        }
+    }
+
+    fn finish(self, _a: &App, k: &Kit, layer: &mut Vec<El>) {
+        if let Some(menu) = self.point {
+            // A context menu has no trigger of its own; the point is its anchor.
+            let _ = self.open_message;
+            menu.trigger(el())
+                .on_close(|a: &mut App| a.state.ui.menu = MenuState::None)
+                .min_width(180.0)
+                .build(k, layer);
+        }
+        layer.append(&mut self.layer.borrow_mut());
+    }
+}
+
+/// Reply, Copy text, Edit, Delete.
+fn message_items(a: &App, menu: rune_kit::Menu, channel: u64, message: u64, chat: String) -> rune_kit::Menu {
+    use rune_kit::MenuItem;
+    let s = &a.state;
+    let Some(m) = s.log(channel).and_then(|l| l.messages.iter().find(|m| m.id == message)) else { return menu };
+    let (id_reply, id_copy) = (chat.clone(), chat);
+    let mut menu = menu
+        .item(MenuItem::new("Reply").icon(&icons::REPLY).on_select(move |a: &mut App| {
+            a.act(|s| {
+                s.ui.menu = MenuState::None;
+                s.reply_to(&id_reply)
+            })
+        }))
+        .item(MenuItem::new("Copy text").icon(&icons::COPY).on_select(move |a: &mut App| {
+            a.act(|s| {
+                s.ui.menu = MenuState::None;
+                s.copy_message(&id_copy)
+            })
+        }));
+    let (can_edit, can_delete) = (s.can_edit_message(m), s.can_delete_message(m));
+    if can_edit {
+        menu = menu.item(MenuItem::new("Edit message").icon(&icons::PENCIL).on_select(move |a: &mut App| {
+            a.act(|s| {
+                s.begin_edit(channel, message);
+            })
+        }));
+    }
+    if can_delete {
+        menu = menu.separator().item(
+            MenuItem::new("Delete message")
+                .icon(&icons::TRASH)
+                .danger(true)
+                .on_select_tx(move |a: &mut App, tx: &mut Tx| {
+                    let shift = tx.mods().shift;
+                    a.act(|s| s.delete_pressed(channel, message, shift))
+                }),
+        );
+    }
+    menu
 }

@@ -20,8 +20,8 @@ use rune_kit::{Kit, RollingText};
 use super::body;
 use super::emoji::EmojiSet;
 use super::emoji_picker::picture;
-use crate::components::{Avatar, IconButton, Size};
-use crate::icons::{COPY, DOTS_THREE, PLUS, REPLY, SMILEY};
+use crate::components::{Avatar, IconButton, Size, Variant};
+use crate::icons::{COPY, DOTS_THREE, PENCIL, PLUS, REPLY, SMILEY, TRASH};
 use crate::theme_of;
 use crate::tokens::{motion, radius, type_};
 
@@ -81,6 +81,13 @@ pub struct ChatMessage {
     pub delivery: DeliveryState,
     pub mentions_me: bool,
     pub reactions: Vec<ReactionChip>,
+    /// Set once the message was edited: the hover text of its faint "(edited)" mark ("Edited
+    /// today at 14:05").
+    pub edited: Option<String>,
+    /// The hover bar offers Edit (your own message).
+    pub can_edit: bool,
+    /// The hover bar offers Delete (your own, or anyone's with the permission).
+    pub can_delete: bool,
 }
 
 /// Whether `next` joins the group `prev` ends: same author, at most five minutes later.
@@ -91,6 +98,12 @@ pub fn collapses_into(prev: &ChatMessage, next: &ChatMessage) -> bool {
 type Hook = Box<dyn Fn(El, &str) -> El>;
 /// Hooks the chips: the message id and the reaction key.
 type ChipHook = Box<dyn Fn(El, &str, &str) -> El>;
+/// Hooks the Delete button: the message id and whether Shift was held.
+type DeleteHook = Box<dyn Fn(El, &str) -> El>;
+/// Wraps the More button (the app hangs its menu on it), by message id.
+type Wrap = Rc<dyn Fn(El, &str) -> El>;
+/// Builds the editor that replaces a message's body while it is being edited, by message id.
+type Editor = Rc<dyn Fn(&str) -> Option<El>>;
 /// Looks something up by author id: their picture, or their name's colour.
 /// Builds what hangs under a message's body (its attachments and embeds), by message id.
 type Extras = Rc<dyn Fn(&str) -> Vec<El>>;
@@ -102,6 +115,11 @@ pub struct MessageGroup {
     reply: Option<Hook>,
     copy: Option<Hook>,
     more: Option<Hook>,
+    more_wrap: Option<Wrap>,
+    edit: Option<Hook>,
+    delete: Option<DeleteHook>,
+    context: Option<Hook>,
+    editor: Option<Editor>,
     retry: Option<Hook>,
     react: Option<ChipHook>,
     add_reaction: Option<ChipHook>,
@@ -130,6 +148,11 @@ impl MessageGroup {
             reply: None,
             copy: None,
             more: None,
+            more_wrap: None,
+            edit: None,
+            delete: None,
+            context: None,
+            editor: None,
             retry: None,
             react: None,
             add_reaction: None,
@@ -237,6 +260,41 @@ impl MessageGroup {
         self.more = Some(hook(f));
         self
     }
+    /// The Edit button (on messages with `can_edit`).
+    pub fn on_edit<S: 'static>(mut self, f: impl Fn(&mut S, &str) + 'static) -> Self {
+        self.edit = Some(hook(f));
+        self
+    }
+    /// The Delete button (on messages with `can_delete`); the flag is whether Shift was held
+    /// (the app may skip its confirmation).
+    pub fn on_delete<S: 'static>(mut self, f: impl Fn(&mut S, &str, bool) + 'static) -> Self {
+        let f = Rc::new(f);
+        self.delete = Some(Box::new(move |e, id| {
+            let (f, id) = (f.clone(), id.to_owned());
+            e.on_press_tx(move |s: &mut S, tx| f(s, &id, tx.mods().shift))
+        }));
+        self
+    }
+    /// A secondary press on a message: the app opens its menu at the point.
+    pub fn on_context<S: 'static>(mut self, f: impl Fn(&mut S, &str, rune::PointerPress) + 'static) -> Self {
+        let f = Rc::new(f);
+        self.context = Some(Box::new(move |e, id| {
+            let (f, id) = (f.clone(), id.to_owned());
+            e.on_secondary_press(move |s: &mut S, p, _tx| f(s, &id, p))
+        }));
+        self
+    }
+    /// Lets the app wrap the More button, to hang a menu on it (the button's press stays `on_more`).
+    pub fn wrap_more(mut self, f: impl Fn(El, &str) -> El + 'static) -> Self {
+        self.more_wrap = Some(Rc::new(f));
+        self
+    }
+    /// The editor shown in place of the body of the message the app is editing: the app returns
+    /// `Some` for that message's id and `None` for the rest.
+    pub fn editor(mut self, f: impl Fn(&str) -> Option<El> + 'static) -> Self {
+        self.editor = Some(Rc::new(f));
+        self
+    }
     pub fn on_retry<S: 'static>(mut self, f: impl Fn(&mut S, &str) + 'static) -> Self {
         self.retry = Some(hook(f));
         self
@@ -308,12 +366,25 @@ impl MessageGroup {
         } else {
             1.0
         };
-        content = content.child(
-            body::render_full(k, &m.body, &m.id, self.wire.as_ref(), self.mention.as_ref(), self.emojis.as_ref())
+        let editing = self.editor.as_ref().and_then(|f| f(&m.id));
+        let is_editing = editing.is_some();
+        content = content.child(match editing {
+            Some(editor) => editor,
+            None => body::render_full(k, &m.body, &m.id, self.wire.as_ref(), self.mention.as_ref(), self.emojis.as_ref())
                 .key("body")
                 .opacity(dim)
                 .opacity_motion(motion::CONTROL),
-        );
+        });
+        if let (Some(tip), false) = (&m.edited, is_editing) {
+            content = content.child(
+                text("(edited)")
+                    .key("edited")
+                    .font(type_::at(k, type_::CAPTION))
+                    .color(t.text_faint.color())
+                    .opacity(dim)
+                    .help(tip.clone()),
+            );
+        }
         if let Some(f) = &self.extras {
             let under = f(&m.id);
             if !under.is_empty() {
@@ -386,7 +457,15 @@ impl MessageGroup {
             r.hover(t.hover.color())
         };
         r = r.child(gutter).child(content);
-        r.child(self.actions(k, &m.id, forced))
+        if let Some(h) = &self.context {
+            // A row with a menu is named for assistive technology: who said it, and when.
+            r = h(r, &m.id).role("article").label(format!("{}, {}", m.author_name, m.time_label));
+        }
+        if is_editing {
+            // The editor has its own keys; no bar floats over it.
+            return r;
+        }
+        r.child(self.actions(k, m, forced))
     }
 
     /// The chips under a body, then "+".
@@ -466,8 +545,9 @@ impl MessageGroup {
         line.child(add)
     }
 
-    fn actions(&self, k: &Kit, id: &str, forced: bool) -> El {
+    fn actions(&self, k: &Kit, m: &ChatMessage, forced: bool) -> El {
         let t = theme_of(k);
+        let id = m.id.as_str();
         let btn = |g: &'static rune::Icon, label: &str, h: &Option<Hook>| {
             let b = IconButton::new(g, label.to_owned()).size(Size::Sm);
             let b = b.build(k);
@@ -491,8 +571,25 @@ impl MessageGroup {
                 }
             })
             .child(btn(&REPLY, "Reply", &self.reply))
-            .child(btn(&COPY, "Copy text", &self.copy))
-            .child(btn(&DOTS_THREE, "More", &self.more));
+            .child(btn(&COPY, "Copy text", &self.copy));
+        if let (true, Some(_)) = (m.can_edit, &self.edit) {
+            bar = bar.child(btn(&PENCIL, "Edit message", &self.edit).key(format!("edit-bar-{id}")));
+        }
+        if let (true, Some(h)) = (m.can_delete, &self.delete) {
+            let b = IconButton::new(&TRASH, "Delete message")
+                .size(Size::Sm)
+                .variant(Variant::Ghost)
+                .ink(t.danger.color())
+                .hover_fill(t.danger_bg.color())
+                .build(k)
+                .key(format!("delete-bar-{id}"));
+            bar = bar.child(h(b, id));
+        }
+        let more = btn(&DOTS_THREE, "More", &self.more).key(format!("more-bar-{id}"));
+        bar = bar.child(match &self.more_wrap {
+            Some(w) => w(more, id),
+            None => more,
+        });
         bar = k.elevate(bar, &k.elevation.floating);
         if !forced {
             bar = bar.group_opacity(0.0, 1.0);
@@ -523,6 +620,9 @@ mod tests {
             delivery: DeliveryState::Sent,
             mentions_me: false,
             reactions: Vec::new(),
+            edited: None,
+            can_edit: false,
+            can_delete: false,
         }
     }
 

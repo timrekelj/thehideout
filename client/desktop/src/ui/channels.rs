@@ -563,7 +563,7 @@ fn section_menu(a: &App, k: &Kit, layer: &mut Vec<El>, guild: u64, id: u64, grou
         .role("none")
 }
 
-/// Move up, Move down, Move to section, Edit channel. (Deleting a channel is not in the contract.)
+/// Move up, Move down, Move to section, Edit channel, Delete channel.
 fn channel_items(a: &App, menu: Menu, guild: u64, id: u64) -> Menu {
     let s = &a.state;
     let layout = s.layout(guild);
@@ -655,6 +655,14 @@ fn channel_items(a: &App, menu: Menu, guild: u64, id: u64) -> Menu {
             .icon(&PENCIL)
             .on_select(move |a: &mut App| {
                 a.act(|s| s.open_dialog(DialogKind::ChannelSettings { guild, channel: id }))
+            }),
+    )
+    .item(
+        MenuItem::new("Delete channel\u{2026}")
+            .icon(&TRASH)
+            .danger(true)
+            .on_select(move |a: &mut App| {
+                a.act(|s| s.open_dialog(DialogKind::DeleteChannel { guild, channel: id }))
             }),
     )
 }

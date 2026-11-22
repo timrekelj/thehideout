@@ -272,6 +272,9 @@ pub fn sample(id: &str, who: (&str, &str), at: i64, label: &str, body: &str) -> 
         delivery: DeliveryState::Sent,
         mentions_me: false,
         reactions: Vec::new(),
+        edited: None,
+        can_edit: false,
+        can_delete: false,
     }
 }
 

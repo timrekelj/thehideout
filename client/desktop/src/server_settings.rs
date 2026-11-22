@@ -40,6 +40,8 @@ pub enum ServerPage {
     Overview,
     Roles,
     Members,
+    /// The ban list (BAN_MEMBERS).
+    Bans,
     Emojis,
 }
 
@@ -196,7 +198,10 @@ impl AppState {
 
     /// "Server settings…" is offered to the owner and to anyone who may manage the server or its roles.
     pub fn can_open_server_settings(&self, guild: u64) -> bool {
-        self.can_manage_server(guild) || self.can_manage_roles(guild) || self.can_manage_emojis(guild)
+        self.can_manage_server(guild)
+            || self.can_manage_roles(guild)
+            || self.can_manage_emojis(guild)
+            || self.can_remove_people(guild)
     }
 
     /// Whether the user may edit, delete or hand out `role`.
@@ -264,7 +269,12 @@ impl AppState {
     pub fn settings_page_allowed(&self, guild: u64, page: ServerPage) -> bool {
         match page {
             ServerPage::Overview => self.can_manage_server(guild),
-            ServerPage::Roles | ServerPage::Members => self.can_manage_roles(guild),
+            ServerPage::Roles => self.can_manage_roles(guild),
+            // The people page is for those who hand out roles and those who may remove people.
+            ServerPage::Members => {
+                self.can_manage_roles(guild) || self.can_remove_people(guild)
+            }
+            ServerPage::Bans => self.can_view_bans(guild),
             ServerPage::Emojis => self.can_manage_emojis(guild),
         }
     }
@@ -274,7 +284,7 @@ impl AppState {
         if !self.can_open_server_settings(guild) {
             return;
         }
-        let page = [ServerPage::Overview, ServerPage::Roles, ServerPage::Emojis].into_iter().find(|p| self.settings_page_allowed(guild, *p)).unwrap_or(ServerPage::Roles);
+        let page = [ServerPage::Overview, ServerPage::Roles, ServerPage::Members, ServerPage::Bans, ServerPage::Emojis].into_iter().find(|p| self.settings_page_allowed(guild, *p)).unwrap_or(ServerPage::Roles);
         let name = self.guild(guild).map_or_else(String::new, |g| g.name.clone());
         self.want_members(guild);
         self.want_access(guild);
@@ -312,6 +322,10 @@ impl AppState {
             ss.page = page;
             ss.member_menu = None;
             ss.drag = None;
+            if page == ServerPage::Bans {
+                let guild = ss.guild;
+                self.load_bans(guild);
+            }
         }
     }
 

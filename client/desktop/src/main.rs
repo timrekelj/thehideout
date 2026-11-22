@@ -33,6 +33,9 @@ mod layout;
 mod look;
 mod media;
 mod moderation;
+mod moderation_ui;
+#[cfg(test)]
+mod moderation_ui_tests;
 #[cfg(test)]
 mod moderation_tests;
 mod perms;

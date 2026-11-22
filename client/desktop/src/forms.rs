@@ -212,6 +212,20 @@ pub enum DialogKind {
     DeleteEmoji { guild: u64, emoji: u64 },
     /// Invite someone to the server by email (needs INVITE_PEOPLE).
     InviteByEmail { guild: u64 },
+    /// A confirmation with a preview of the message.
+    DeleteMessage { channel: u64, message: u64 },
+    /// A confirmation: no field, only "Kick".
+    KickMember { guild: u64, user: u64 },
+    /// A reason and what to do with their recent messages.
+    BanMember { guild: u64, user: u64 },
+    /// A confirmation: no field, only "Leave server".
+    LeaveGuild { guild: u64 },
+    /// A confirmation naming the channel.
+    DeleteChannel { guild: u64, channel: u64 },
+    /// Type the server's name to delete it.
+    DeleteGuild { guild: u64 },
+    /// Pick a member and type the server's name to hand it over.
+    TransferOwnership { guild: u64 },
 }
 
 /// The look and place fields of the channel dialogs (create and settings): where the channel
@@ -313,6 +327,8 @@ pub struct DialogState {
     pub phase: Phase,
     /// The Profile dialog's picked picture.
     pub pick: crate::server_settings::ImagePick,
+    /// What the moderation dialogs add (ban clean-up, hand-over target, invite reset).
+    pub form: crate::moderation_ui::ModForm,
 }
 
 pub fn check_name(name: &str, min: usize, max: usize, empty: &str) -> Result<(), String> {
