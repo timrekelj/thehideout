@@ -343,6 +343,16 @@ public nonisolated struct Thehideout_V1_Event: Sendable {
     set {payload = .channelDeleted(newValue)}
   }
 
+  /// The caller changed their notification settings on another session; the
+  /// full new settings. Audience: every open stream of that user.
+  public var notificationSettingsUpdated: Thehideout_V1_NotificationSettings {
+    get {
+      if case .notificationSettingsUpdated(let v)? = payload {return v}
+      return Thehideout_V1_NotificationSettings()
+    }
+    set {payload = .notificationSettingsUpdated(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   /// The event payload.
@@ -414,6 +424,9 @@ public nonisolated struct Thehideout_V1_Event: Sendable {
     /// A channel was deleted. Audience: guild members. Always followed by a
     /// `layout_updated`.
     case channelDeleted(Thehideout_V1_ChannelDeleted)
+    /// The caller changed their notification settings on another session; the
+    /// full new settings. Audience: every open stream of that user.
+    case notificationSettingsUpdated(Thehideout_V1_NotificationSettings)
 
   }
 
@@ -810,7 +823,7 @@ nonisolated extension Thehideout_V1_SubscribeResponse: SwiftProtobuf.Message, Sw
 
 nonisolated extension Thehideout_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{3}message_created\0\u{3}channel_created\0\u{3}guild_member_joined\0\u{1}heartbeat\0\u{3}dm_opened\0\u{3}guild_updated\0\u{3}channel_updated\0\u{3}layout_updated\0\u{3}roles_updated\0\u{3}member_updated\0\u{3}user_updated\0\u{3}emojis_updated\0\u{3}reaction_added\0\u{3}reaction_removed\0\u{3}message_updated\0\u{3}guild_added\0\u{3}voice_state_update\0\u{3}voice_snapshot\0\u{3}voice_moved\0\u{3}message_deleted\0\u{3}guild_member_removed\0\u{3}guild_removed\0\u{3}channel_deleted\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{3}message_created\0\u{3}channel_created\0\u{3}guild_member_joined\0\u{1}heartbeat\0\u{3}dm_opened\0\u{3}guild_updated\0\u{3}channel_updated\0\u{3}layout_updated\0\u{3}roles_updated\0\u{3}member_updated\0\u{3}user_updated\0\u{3}emojis_updated\0\u{3}reaction_added\0\u{3}reaction_removed\0\u{3}message_updated\0\u{3}guild_added\0\u{3}voice_state_update\0\u{3}voice_snapshot\0\u{3}voice_moved\0\u{3}message_deleted\0\u{3}guild_member_removed\0\u{3}guild_removed\0\u{3}channel_deleted\0\u{3}notification_settings_updated\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1118,6 +1131,19 @@ nonisolated extension Thehideout_V1_Event: SwiftProtobuf.Message, SwiftProtobuf.
           self.payload = .channelDeleted(v)
         }
       }()
+      case 25: try {
+        var v: Thehideout_V1_NotificationSettings?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .notificationSettingsUpdated(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .notificationSettingsUpdated(v)
+        }
+      }()
       default: break
       }
     }
@@ -1223,6 +1249,10 @@ nonisolated extension Thehideout_V1_Event: SwiftProtobuf.Message, SwiftProtobuf.
     case .channelDeleted?: try {
       guard case .channelDeleted(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 24)
+    }()
+    case .notificationSettingsUpdated?: try {
+      guard case .notificationSettingsUpdated(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 25)
     }()
     case nil: break
     }

@@ -32,6 +32,12 @@ Connect/protobuf contract in `proto/thehideout/v1`. Lint: `buf lint`; compatibil
 - **Sessions** slide: a session last refreshed over a day ago gets a fresh 30-day lifetime when used.
 - **Minimum client version**: a request whose `x-thehideout-client` header (`desktop/1.2.3 (macos)`, `ios/1.2.3`, `android/1.2.3`) is older than the configured minimum fails with `FAILED_PRECONDITION` "client too old: ..." (a Connect JSON error, or an end-of-stream error for streaming calls). Missing or unparseable headers pass.
 
+## Push notifications (`NotificationService`, `notification_service.proto`)
+- `RegisterDevice(platform, token, app_version, device_name, locale?, sandbox)` binds an APNs / FCM token to the calling session and returns a device id; the same token again keeps its id, a token another account held moves to the caller, a session keeps one device per platform, max 10 per user. `UnregisterDevice(device_id | token)`. Sign-out, revocation, suspension and account deletion remove devices.
+- `SetClientState(foreground)`: a user with a foreground gateway stream is not pushed (streams default to foreground).
+- Settings: `dms_enabled` (default true), `guild_default` (`ALL` | `MENTIONS` | `NOTHING`, default MENTIONS), `show_previews` (default true), and per-guild / per-channel `NotificationOverride { id, level (INHERIT | ALL | MENTIONS | NOTHING), muted_until? }`. Channel beats guild beats global; a mute silences its scope (a guild mute yields to a channel that sets its own level). `INHERIT` without a mute deletes the override. Changes publish `notification_settings_updated` (the full settings) to the caller's streams.
+- Mentions are `@username` (client syntax); there is no @everyone / role mention and no server read state, so pushes carry no badge. Pushes: DM and guild messages (never edits), and `guild_added`. Provider setup, payload and rules: README "Push notifications".
+
 ## Channel layout (`GuildService`)
 - `ListChannelsResponse.layout` holds the sections and per-section channel order (section 0 = top level); there is no separate GetLayout.
 - Structure changes (create/rename/delete section, create channel) bump `GuildLayout.version`. `UpdateLayout` sends the desired order with `expected_version`; a mismatch fails with `ABORTED` (refetch and retry), a non-permutation with `INVALID_ARGUMENT`. `ReorderRoles` works the same with `ListRolesResponse.version`.

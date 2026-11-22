@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package thehideout.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Push notifications for native apps (APNs on iOS, FCM on Android) and the
+// per-user notification settings. Settings are also used by the server to
+// decide who gets a push; changes are mirrored to the caller's other sessions
+// with `notification_settings_updated`.
+service NotificationService {
+  // Registers (or re-registers) the push token of the calling session. A
+  // device belongs to the session that registered it: signing out, session
+  // expiry, account deletion and suspension remove it. Registering the same
+  // token again updates it (and moves it to the caller if another account
+  // had it); at most 10 devices per user (`RESOURCE_EXHAUSTED`, the oldest
+  // is not evicted). `INVALID_ARGUMENT` for an unknown platform or a
+  // malformed token. Works while push is not configured on the server (the
+  // token is stored and used once it is).
+  rpc RegisterDevice(RegisterDeviceRequest) returns (RegisterDeviceResponse);
+
+  // Removes a device of the caller by id or token; unknown devices are a
+  // no-op.
+  rpc UnregisterDevice(UnregisterDeviceRequest) returns (UnregisterDeviceResponse);
+
+  // Tells the server whether the app is in the foreground. A user with a
+  // foreground gateway stream is not pushed (they see the message live).
+  // Streams that never call this count as foreground; mobile apps call it
+  // with `false` when backgrounded and `true` when they come back. Applies to
+  // the calling session's streams only.
+  rpc SetClientState(SetClientStateRequest) returns (SetClientStateResponse);
+
+  // The caller's notification settings (defaults when never changed).
+  rpc GetNotificationSettings(GetNotificationSettingsRequest) returns (GetNotificationSettingsResponse);
+
+  // Changes settings; unset fields are unchanged. Returns the full settings
+  // and publishes `notification_settings_updated` to the caller's streams.
+  rpc UpdateNotificationSettings(UpdateNotificationSettingsRequest) returns (UpdateNotificationSettingsResponse);
+}
+
+// Push platform of a device.
+enum PushPlatform {
+  PUSH_PLATFORM_UNSPECIFIED = 0;
+  PUSH_PLATFORM_IOS = 1;
+  PUSH_PLATFORM_ANDROID = 2;
+}
+
+// What a scope notifies about.
+enum NotificationLevel {
+  NOTIFICATION_LEVEL_UNSPECIFIED = 0;
+  // Overrides only: use the next less specific setting (channel -> guild ->
+  // global default).
+  NOTIFICATION_LEVEL_INHERIT = 1;
+  // Every message.
+  NOTIFICATION_LEVEL_ALL = 2;
+  // Only messages that @mention the user (`@username`, same syntax as the
+  // clients render).
+  NOTIFICATION_LEVEL_MENTIONS = 3;
+  // Nothing.
+  NOTIFICATION_LEVEL_NOTHING = 4;
+}
+
+message RegisterDeviceRequest {
+  PushPlatform platform = 1;
+  // APNs device token (hex) or FCM registration token. Never logged.
+  string token = 2;
+  // App version, e.g. "1.2.3" (<= 32 chars).
+  string app_version = 3;
+  // Human name, e.g. "Tim's iPhone" (<= 64 chars).
+  string device_name = 4;
+  // BCP 47 locale of the app, e.g. "sl-SI".
+  optional string locale = 5;
+  // iOS only: the token comes from a development build and must go through
+  // the APNs sandbox (also forced for every device by THEHIDEOUT_APNS_SANDBOX).
+  bool sandbox = 6;
+}
+
+message RegisterDeviceResponse {
+  uint64 device_id = 1;
+}
+
+message UnregisterDeviceRequest {
+  // Either the id from RegisterDevice or the token (id wins when both set).
+  uint64 device_id = 1;
+  string token = 2;
+}
+
+message UnregisterDeviceResponse {}
+
+message SetClientStateRequest {
+  bool foreground = 1;
+}
+
+message SetClientStateResponse {}
+
+// Settings of one guild or channel; `id` is the guild or channel id.
+message NotificationOverride {
+  uint64 id = 1;
+  // INHERIT (or unspecified) = no opinion on the level.
+  NotificationLevel level = 2;
+  // Muted until this time (nothing is pushed). Use a far-future time for
+  // "until I turn it on". Unset or past = not muted.
+  optional google.protobuf.Timestamp muted_until = 3;
+}
+
+message NotificationSettings {
+  // Push every message of DM channels (default true). A channel override on a
+  // DM wins.
+  bool dms_enabled = 1;
+  // Level for guild channels without an override: ALL, MENTIONS or NOTHING
+  // (default MENTIONS).
+  NotificationLevel guild_default = 2;
+  // Include message text in pushes (default true); off sends "New message".
+  bool show_previews = 3;
+  // Per-guild overrides (only guilds that have one).
+  repeated NotificationOverride guilds = 4;
+  // Per-channel overrides, for guild and DM channels (only those that have one).
+  repeated NotificationOverride channels = 5;
+}
+
+message GetNotificationSettingsRequest {}
+
+message GetNotificationSettingsResponse {
+  NotificationSettings settings = 1;
+}
+
+message UpdateNotificationSettingsRequest {
+  optional bool dms_enabled = 1;
+  // ALL, MENTIONS or NOTHING (`INVALID_ARGUMENT` otherwise).
+  optional NotificationLevel guild_default = 2;
+  optional bool show_previews = 3;
+  // Each entry replaces the override of that guild; INHERIT with no
+  // `muted_until` removes it. At most 100 entries per call.
+  repeated NotificationOverride guilds = 4;
+  // Same for channels. Ids the caller cannot access are `NOT_FOUND`.
+  repeated NotificationOverride channels = 5;
+}
+
+message UpdateNotificationSettingsResponse {
+  NotificationSettings settings = 1;
+}

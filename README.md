@@ -277,6 +277,90 @@ S3 keys; set a real key and a secret of 32+ characters (or unset `LIVEKIT_*`).
   of the signalling port, `rtc.use_external_ip: true` or a `node_ip`, the UDP range open),
   and point its `webhook.urls` at the server's `/livekit/webhook`.
 
+## Push notifications (APNs and FCM)
+
+The mobile apps get notified of DMs, @mentions and (per their settings) other messages
+through Apple's push service (iOS) and Firebase Cloud Messaging (Android). Both
+providers are optional: with neither configured `RegisterDevice` still stores tokens and
+nothing is sent (the dispatcher logs at debug level). A provider takes effect when the
+server starts.
+
+- **APIs** (`proto/thehideout/v1/notification_service.proto`): `RegisterDevice`,
+  `UnregisterDevice`, `SetClientState(foreground)`, `GetNotificationSettings`,
+  `UpdateNotificationSettings`; the gateway event `notification_settings_updated` mirrors a
+  settings change to the user's other sessions.
+- **Who is notified.** For a new message: the other DM participant, or the guild members
+  (every member can see every channel); never the author. A recipient needs a registered
+  device whose session still exists. Their effective level decides: the channel override,
+  else the guild override, else the global default (`guild_default`, or `dms_enabled` for DMs).
+  `all` = every message, `mentions` = the message `@mentions` them (`@username`, parsed like
+  the clients do; not in code spans; there is no @everyone or role mention), `nothing` = never.
+  `muted_until` in the future means nothing (a muted guild still lets a channel with its own
+  level through). Edits, reactions and voice never push; being added to a guild
+  (`guild_added`) does, unless the guild default is `nothing`.
+- **Foreground rule.** A user with a live gateway stream that is not marked backgrounded
+  is not pushed (they see the message live). A stream counts as foreground until the app
+  calls `SetClientState(foreground = false)`; mobile apps call it when they go to the
+  background and with `true` when they return.
+- **Coalescing.** At most one push per channel and recipient per 5 seconds. The first goes
+  out at once; messages arriving in the window become one trailing push (the latest) with the
+  same collapse id (the channel id; `thread-id` on iOS, collapse key and tag on Android).
+  Sends run concurrently (32 at a time), with retries (0.5 s, 1 s, 2 s) on 429 and 5xx and
+  nothing on the message path.
+- **Payload.** Title `Ana` (DM) or `Ana in #general · Hideout`; body = the message as plain
+  text (markdown removed, 180 characters) or `New message` when the user turned previews off
+  (`show_previews`); `Sent an attachment` for text-less messages. Data: `kind`
+  (`message`, `dm`, `mention`, `guild_added`), `guild_id`, `channel_id`, `message_id`. Android
+  channels: `mentions` (DMs and mentions) and `messages`. iOS sets `mutable-content: 1`
+  so a notification service extension can be added later. **No badge count**: the server
+  keeps no read state, so there is nothing to count.
+- **Devices.** A device belongs to the session that registered it (one per platform per
+  session, at most 10 per user); sign-out, session revocation, suspension and account
+  deletion remove it, expiry is noticed on the next push, and rows expire after 30 days
+  unless the app registers again (call `RegisterDevice` at every launch). A token that
+  APNs or FCM reports as dead removes its device.
+
+### APNs (iOS)
+
+1. In the Apple Developer account: Certificates, Identifiers & Profiles, Keys, create a key
+   with *Apple Push Notifications service (APNs)*; download the `.p8` file once and note the
+   **Key ID**; your **Team ID** is in the membership page.
+2. Make sure the App ID `si.zabit.thehideout` (the bundle id) has Push Notifications enabled.
+
+| Variable | Meaning |
+| --- | --- |
+| `THEHIDEOUT_APNS_KEY_PATH` | path of the `.p8` file (or use `THEHIDEOUT_APNS_KEY`) |
+| `THEHIDEOUT_APNS_KEY` | the PEM text of the key; newlines may be written as `\n` |
+| `THEHIDEOUT_APNS_KEY_ID` | the Key ID |
+| `THEHIDEOUT_APNS_TEAM_ID` | the Team ID |
+| `THEHIDEOUT_APNS_TOPIC` | the bundle id, default `si.zabit.thehideout` |
+| `THEHIDEOUT_APNS_SANDBOX` | `true` sends everything through `api.sandbox.push.apple.com` (default `false`) |
+
+Production (`api.push.apple.com`) serves App Store and TestFlight builds; builds from Xcode
+use the sandbox. An app can say so per device with `RegisterDevice.sandbox = true`, so
+one server can serve both without the global switch. The provider token (ES256 JWT) is
+signed locally and renewed every 50 minutes.
+
+### FCM (Android)
+
+1. In the Firebase console create a project, add the Android app, then Project settings,
+   Service accounts, *Generate new private key* (a JSON file; the account needs the
+   *Firebase Cloud Messaging API Admin* role, which the default Firebase Admin SDK account has).
+2. `THEHIDEOUT_FCM_SERVICE_ACCOUNT` = the path of that file, or the JSON itself (on one line).
+
+The server signs an OAuth2 assertion with the account's key, caches the access token until
+shortly before it expires, and sends through the HTTP v1 API.
+
+Treat both secrets like the other credentials (see the production env file); the server never
+logs them or the device tokens. Production compose passes these variables through when set
+(`deploy/.env.production`).
+
+### Privacy
+
+Push tokens are stored and message previews pass through Apple's and Google's push
+services when previews are on; the privacy notice says so (version `2026-11-23`: it names the
+two services as processors, so everyone is asked to accept the notice again).
+
 ## Media storage (S3)
 
 Avatars and guild icons are processed (centre-cropped, 256×256, lossless WebP) and

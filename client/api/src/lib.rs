@@ -69,6 +69,14 @@
 //! sit next to it. Who is where arrives as [`Event::VoiceStateUpdate`] /
 //! [`Event::VoiceSnapshot`]; [`Event::VoiceMoved`] asks you to rejoin.
 //!
+//! # Push notifications
+//!
+//! The mobile apps register their APNs / FCM token with [`Client::register_device`] and tell the
+//! server when they are backgrounded with [`Client::set_client_state`]. The notification
+//! settings ([`NotificationSettings`], per account, guild and channel) are read and changed with
+//! [`Client::notification_settings`] / [`Client::update_notification_settings`]; a change made on
+//! one session arrives on the others as [`Event::NotificationSettingsUpdated`].
+//!
 //! # Real-time updates
 //!
 //! [`Gateway::spawn`] subscribes on the current tokio runtime and keeps the
@@ -103,6 +111,7 @@ mod error;
 mod gateway;
 mod lifecycle;
 mod moderation;
+mod notifications;
 mod state;
 mod structure;
 mod types;
@@ -123,6 +132,9 @@ pub use admin::{
 pub use client::{CLIENT_HEADER, Client, client_header_value, DEFAULT_MAX_UPLOAD_BYTES, MAX_EMOJI_BYTES, MAX_MEDIA_BYTES, MAX_MESSAGE_CHARS};
 pub use content::{Attachment, Embed, EmbedKind, EmbedMedia, EmbedMediaKind, Emoji, PendingAttachment, Reaction, ReactionEmoji};
 pub use error::{ApiError, OwnedGuild, update_required};
+pub use notifications::{
+    DeviceRegistration, NotificationLevel, NotificationOverride, NotificationSettings, NotificationSettingsUpdate, PushPlatform,
+};
 pub use lifecycle::{DeleteCredentials, TermsStatus};
 pub use gateway::{Gateway, GatewayConfig, GatewayHandle, GatewayUpdate};
 pub use structure::{Ban, ChannelIcon, ChannelIconRef, GuildLayout, LayoutEntry, Member, PaletteColor, Permissions, Role, RoleList, Section};

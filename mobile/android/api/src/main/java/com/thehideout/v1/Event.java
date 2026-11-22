@@ -47,6 +47,7 @@ public  final class Event extends
     GUILD_MEMBER_REMOVED(22),
     GUILD_REMOVED(23),
     CHANNEL_DELETED(24),
+    NOTIFICATION_SETTINGS_UPDATED(25),
     PAYLOAD_NOT_SET(0);
     private final int value;
     private PayloadCase(int value) {
@@ -85,6 +86,7 @@ public  final class Event extends
         case 22: return GUILD_MEMBER_REMOVED;
         case 23: return GUILD_REMOVED;
         case 24: return CHANNEL_DELETED;
+        case 25: return NOTIFICATION_SETTINGS_UPDATED;
         case 0: return PAYLOAD_NOT_SET;
         default: return null;
       }
@@ -1854,6 +1856,81 @@ public  final class Event extends
    */
   private void clearChannelDeleted() {
     if (payloadCase_ == 24) {
+      payloadCase_ = 0;
+      payload_ = null;
+    }
+  }
+
+  public static final int NOTIFICATION_SETTINGS_UPDATED_FIELD_NUMBER = 25;
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   */
+  @java.lang.Override
+  public boolean hasNotificationSettingsUpdated() {
+    return payloadCase_ == 25;
+  }
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   */
+  @java.lang.Override
+  public com.thehideout.v1.NotificationSettings getNotificationSettingsUpdated() {
+    if (payloadCase_ == 25) {
+       return (com.thehideout.v1.NotificationSettings) payload_;
+    }
+    return com.thehideout.v1.NotificationSettings.getDefaultInstance();
+  }
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   */
+  private void setNotificationSettingsUpdated(com.thehideout.v1.NotificationSettings value) {
+    java.util.Objects.requireNonNull(value);
+    payload_ = value;
+    payloadCase_ = 25;
+  }
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   */
+  private void mergeNotificationSettingsUpdated(com.thehideout.v1.NotificationSettings value) {
+    java.util.Objects.requireNonNull(value);
+    if (payloadCase_ == 25 &&
+        payload_ != com.thehideout.v1.NotificationSettings.getDefaultInstance()) {
+      payload_ = com.thehideout.v1.NotificationSettings.newBuilder((com.thehideout.v1.NotificationSettings) payload_)
+          .mergeFrom(value).buildPartial();
+    } else {
+      payload_ = value;
+    }
+    payloadCase_ = 25;
+  }
+  /**
+   * <pre>
+   * The caller changed their notification settings on another session; the
+   * full new settings. Audience: every open stream of that user.
+   * </pre>
+   *
+   * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+   */
+  private void clearNotificationSettingsUpdated() {
+    if (payloadCase_ == 25) {
       payloadCase_ = 0;
       payload_ = null;
     }
@@ -3794,6 +3871,84 @@ public  final class Event extends
       return this;
     }
 
+    /**
+     * <pre>
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * </pre>
+     *
+     * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+     */
+    @java.lang.Override
+    public boolean hasNotificationSettingsUpdated() {
+      return instance.hasNotificationSettingsUpdated();
+    }
+    /**
+     * <pre>
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * </pre>
+     *
+     * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+     */
+    @java.lang.Override
+    public com.thehideout.v1.NotificationSettings getNotificationSettingsUpdated() {
+      return instance.getNotificationSettingsUpdated();
+    }
+    /**
+     * <pre>
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * </pre>
+     *
+     * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+     */
+    public Builder setNotificationSettingsUpdated(com.thehideout.v1.NotificationSettings value) {
+      copyOnWrite();
+      instance.setNotificationSettingsUpdated(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * </pre>
+     *
+     * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+     */
+    public Builder setNotificationSettingsUpdated(
+        com.thehideout.v1.NotificationSettings.Builder builderForValue) {
+      copyOnWrite();
+      instance.setNotificationSettingsUpdated(builderForValue.build());
+      return this;
+    }
+    /**
+     * <pre>
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * </pre>
+     *
+     * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+     */
+    public Builder mergeNotificationSettingsUpdated(com.thehideout.v1.NotificationSettings value) {
+      copyOnWrite();
+      instance.mergeNotificationSettingsUpdated(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * </pre>
+     *
+     * <code>.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];</code>
+     */
+    public Builder clearNotificationSettingsUpdated() {
+      copyOnWrite();
+      instance.clearNotificationSettingsUpdated();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:thehideout.v1.Event)
   }
   @java.lang.Override
@@ -3836,13 +3991,14 @@ public  final class Event extends
             com.thehideout.v1.GuildMemberRemoved.class,
             com.thehideout.v1.GuildRemoved.class,
             com.thehideout.v1.ChannelDeleted.class,
+            com.thehideout.v1.NotificationSettings.class,
           };
           java.lang.String info =
-              "\u0000\u0018\u0001\u0000\u0001\u0018\u0018\u0000\u0000\u0000\u0001\u0003\u0002<\u0000" +
+              "\u0000\u0019\u0001\u0000\u0001\u0019\u0019\u0000\u0000\u0000\u0001\u0003\u0002<\u0000" +
               "\u0003<\u0000\u0004<\u0000\u0005<\u0000\u0006<\u0000\u0007<\u0000\b<\u0000\t<\u0000" +
               "\n<\u0000\u000b<\u0000\f<\u0000\r<\u0000\u000e<\u0000\u000f<\u0000\u0010<\u0000\u0011" +
               "<\u0000\u0012<\u0000\u0013<\u0000\u0014<\u0000\u0015<\u0000\u0016<\u0000\u0017<\u0000" +
-              "\u0018<\u0000";
+              "\u0018<\u0000\u0019<\u0000";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

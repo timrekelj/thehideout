@@ -263,6 +263,8 @@ pub async fn revoke_session(state: &AppState, user_id: u64, session_id: u64, tok
         .await
         .map_err(internal)?;
     let _ = state.session.execute_unpaged("DELETE FROM session_seen WHERE token_hash = ?", (token_hash,)).await;
+    // The session's push devices go with it.
+    crate::push::store::delete_for_session(state, token_hash).await?;
     Ok(())
 }
 

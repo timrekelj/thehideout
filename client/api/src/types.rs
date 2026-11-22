@@ -6,6 +6,7 @@ use buffa_types::google::protobuf::Timestamp;
 
 use crate::proto::thehideout::v1 as pb;
 use crate::content::{Attachment, Embed, Emoji, Reaction, ReactionEmoji};
+use crate::notifications::NotificationSettings;
 use crate::structure::{ChannelIcon, ChannelIconRef, GuildLayout, Member, PaletteColor, Role};
 
 /// A registered user.
@@ -225,6 +226,8 @@ pub enum Event {
     GuildRemoved { guild_id: u64 },
     /// A channel was deleted; a `LayoutUpdated` follows.
     ChannelDeleted { guild_id: u64, channel_id: u64 },
+    /// Another session of yours changed the notification settings; replace your copy.
+    NotificationSettingsUpdated(NotificationSettings),
 }
 
 pub(crate) fn time(ts: Option<&Timestamp>) -> SystemTime {
@@ -392,6 +395,7 @@ impl Event {
             },
             Payload::GuildRemoved(r) => Self::GuildRemoved { guild_id: r.guild_id },
             Payload::ChannelDeleted(c) => Self::ChannelDeleted { guild_id: c.guild_id, channel_id: c.channel_id },
+            Payload::NotificationSettingsUpdated(s) => Self::NotificationSettingsUpdated((*s).into()),
         })
     }
 }
@@ -595,6 +599,16 @@ mod tests {
         ));
         let moved = pb::VoiceMoved { guild_id: 1, channel_id: 9, ..Default::default() };
         assert_eq!(event(Payload::VoiceMoved(Box::new(moved))), Some(Event::VoiceMoved { guild_id: 1, channel_id: 9 }));
+    }
+
+    #[test]
+    fn settings_event_converts() {
+        use pb::event::Payload;
+        let wire = pb::NotificationSettings { dms_enabled: true, show_previews: true, ..Default::default() };
+        let Some(Event::NotificationSettingsUpdated(s)) = event(Payload::NotificationSettingsUpdated(Box::new(wire))) else {
+            panic!("expected a settings event");
+        };
+        assert!(s.dms_enabled && s.show_previews && s.guilds.is_empty());
     }
 
     #[test]

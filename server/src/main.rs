@@ -138,6 +138,11 @@ async fn main() -> Result<()> {
     .with_policy(config.policy.clone())
     .with_mailer(mailer(&config)?)
     .with_storage(storage)
+    .with_push(
+        thehideout_server::push::Providers::from_config(&config.push)?
+            .map(|p| Arc::new(p) as Arc<dyn thehideout_server::push::Transport>),
+        Default::default(),
+    )
     .with_attachment_settings(AttachmentSettings {
         max_upload_bytes: config.max_upload_bytes,
         ..Default::default()

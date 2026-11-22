@@ -7,6 +7,7 @@ pub mod guild;
 pub mod invite;
 pub mod media;
 pub mod message;
+pub mod notification;
 pub mod role;
 pub mod voice;
 
@@ -18,6 +19,7 @@ pub use guild::GuildSvc;
 pub use invite::InviteSvc;
 pub use media::MediaSvc;
 pub use message::MessageSvc;
+pub use notification::NotificationSvc;
 pub use role::RoleSvc;
 pub use voice::VoiceSvc;
 pub use admin::AdminSvc;

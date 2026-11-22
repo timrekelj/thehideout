@@ -21,6 +21,7 @@ pub mod moderation;
 pub mod passkeys;
 pub mod permissions;
 pub mod policy;
+pub mod push;
 pub mod ratelimit;
 pub mod scylla_conn;
 pub mod server;

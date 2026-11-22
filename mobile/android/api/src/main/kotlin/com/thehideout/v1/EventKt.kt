@@ -948,6 +948,45 @@ public object EventKt {
     public fun hasChannelDeleted(): kotlin.Boolean {
       return _builder.hasChannelDeleted()
     }
+
+    /**
+     * ```
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * ```
+     *
+     * `.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];`
+     */
+    public var notificationSettingsUpdated: com.thehideout.v1.NotificationSettings
+      @kotlin.jvm.JvmName("getNotificationSettingsUpdated")
+        get() = _builder.notificationSettingsUpdated
+      @kotlin.jvm.JvmName("setNotificationSettingsUpdated")
+        set(value) {
+        _builder.notificationSettingsUpdated = value
+      }
+    /**
+     * ```
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * ```
+     *
+     * `.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];`
+     */
+    public fun clearNotificationSettingsUpdated() {
+      _builder.clearNotificationSettingsUpdated()
+    }
+    /**
+     * ```
+     * The caller changed their notification settings on another session; the
+     * full new settings. Audience: every open stream of that user.
+     * ```
+     *
+     * `.thehideout.v1.NotificationSettings notification_settings_updated = 25 [json_name = "notificationSettingsUpdated"];`
+     * @return Whether the notificationSettingsUpdated field is set.
+     */
+    public fun hasNotificationSettingsUpdated(): kotlin.Boolean {
+      return _builder.hasNotificationSettingsUpdated()
+    }
     public val payloadCase: com.thehideout.v1.Event.PayloadCase
     @kotlin.jvm.JvmName("getPayloadCase")
       get() = _builder.payloadCase
@@ -1028,4 +1067,7 @@ public val com.thehideout.v1.EventOrBuilder.guildRemovedOrNull: com.thehideout.v
 
 public val com.thehideout.v1.EventOrBuilder.channelDeletedOrNull: com.thehideout.v1.ChannelDeleted?
   get() = if (hasChannelDeleted()) getChannelDeleted() else null
+
+public val com.thehideout.v1.EventOrBuilder.notificationSettingsUpdatedOrNull: com.thehideout.v1.NotificationSettings?
+  get() = if (hasNotificationSettingsUpdated()) getNotificationSettingsUpdated() else null
 

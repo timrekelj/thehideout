@@ -879,6 +879,7 @@ fn event(s: &mut AppState, e: Event, tx: &mut Tx) {
         Event::GuildMemberRemoved { guild_id, user_id, reason } => s.member_removed(guild_id, user_id, reason),
         Event::GuildRemoved { guild_id } => s.guild_removed_event(guild_id, None),
         Event::ChannelDeleted { guild_id, channel_id } => s.channel_removed(guild_id, channel_id),
+        Event::NotificationSettingsUpdated(settings) => s.data.notification_settings = Some(settings),
         Event::ChannelCreated(c) => add_channel(s, c),
         Event::DmOpened(dm) => add_dm(s, dm),
         Event::GuildMemberJoined { guild_id, user } => {
@@ -1176,6 +1177,22 @@ mod tests {
         assert!(!s.send("   "));
         assert!(!s.send(&"x".repeat(thehideout_api::MAX_MESSAGE_CHARS + 1)));
         assert!(s.send(&"x".repeat(thehideout_api::MAX_MESSAGE_CHARS)));
+    }
+
+    #[test]
+    fn notification_settings_from_another_session_are_kept() {
+        use thehideout_api::{NotificationLevel, NotificationSettings};
+        let mut s = state();
+        assert!(s.data.notification_settings.is_none());
+        let settings = NotificationSettings {
+            dms_enabled: false,
+            guild_default: NotificationLevel::All,
+            show_previews: true,
+            guilds: vec![],
+            channels: vec![],
+        };
+        apply(&mut s, Reply::Gateway(GatewayUpdate::Event(Event::NotificationSettingsUpdated(settings.clone()))), &mut Tx::default());
+        assert_eq!(s.data.notification_settings, Some(settings));
     }
 
     #[test]

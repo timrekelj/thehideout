@@ -524,6 +524,7 @@ async fn remove_credentials(state: &AppState, account: &Account) -> Result<(), C
     exec(state, "DELETE FROM passkeys WHERE user_id = ?", (db_id,)).await?;
     exec(state, "DELETE FROM recovery_codes WHERE user_id = ?", (db_id,)).await?;
     crate::auth::revoke_all_sessions(state, account.id, None).await?;
+    crate::push::store::delete_all_for_user(state, account.id).await?;
     if let Some(avatar) = account.avatar.as_deref().filter(|a| !a.is_empty()) {
         crate::moderation::delete_object(state, avatar).await;
     }
