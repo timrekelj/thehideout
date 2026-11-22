@@ -121,6 +121,9 @@ struct TranscriptScreen: View {
             draft = store.state.draft(channelID)
         }
         .onChange(of: draft) { _, new in if editing == nil { store.setDraft(channel: channelID, text: new) } }
+        // Only a transcript that is still the open channel closes it on the way out: one going to the
+        // background (its tab switched away, a sheet over it) must not clear the channel that just
+        // became visible — the shell re-syncs the open channel on every tab selection instead.
         .onDisappear { if store.state.openChannel == channelID { store.closeChannel() } }
     }
 

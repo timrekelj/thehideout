@@ -155,6 +155,34 @@ final class ChatUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["DMs"].isSelected, "the shell routed to the DMs tab")
     }
 
+    /// The cross-tab round trip: guild transcript → profile Message → the DM (routed) → back to Servers:
+    /// the retained #general transcript is on screen again (and the store agrees it is the read channel),
+    /// and the DMs tab kept the conversation, with Back returning to its list.
+    func testDmRouteThenBackToServersKeepsTheRetainedTranscript() {
+        let app = launch()
+        openGeneral(app)
+        app.buttons["Members"].tap()
+        let bruno = app.buttons["bruno"].firstMatch
+        XCTAssertTrue(bruno.waitForExistence(timeout: 10))
+        bruno.tap()
+        let message = app.buttons["Message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        message.tap()
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tabBars.buttons["DMs"].isSelected)
+        // Back to Servers: the retained guild transcript is shown again, not the server list.
+        app.tabBars.buttons["Servers"].tap()
+        XCTAssertTrue(app.navigationBars["#general"].waitForExistence(timeout: 10), "the retained #general transcript")
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 10))
+        // The DMs tab kept the conversation; Back there returns to the list without stealing the tab.
+        app.tabBars.buttons["DMs"].tap()
+        XCTAssertTrue(app.navigationBars["bruno"].waitForExistence(timeout: 10))
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 10))
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["ana"].waitForExistence(timeout: 5), "back on the DM list")
+        XCTAssertTrue(app.tabBars.buttons["DMs"].isSelected)
+    }
+
     /// Tapping a mention in the feed lands in the conversation, not the list (the Android bug this guards
     /// against). The fake world's seed data is fixed but not guaranteed to mention tim in exactly one place,
     /// so this skips rather than assert-false when the feed happens to be empty.

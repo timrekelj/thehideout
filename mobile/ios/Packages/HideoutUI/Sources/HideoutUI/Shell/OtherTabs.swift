@@ -97,9 +97,13 @@ struct NewMessageSheet: View {
 struct MentionsTab: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
+    /// The tab's retained path (the shell binds it): the feed at the root, a transcript on top.
+    @Binding var path: [ChannelRoute]
+
+    init(path: Binding<[ChannelRoute]> = .constant([])) { _path = path }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             let feed = store.state.mentionFeed()
             Group {
                 if feed.isEmpty {

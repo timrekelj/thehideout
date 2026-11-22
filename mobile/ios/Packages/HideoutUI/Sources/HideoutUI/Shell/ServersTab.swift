@@ -2,26 +2,45 @@ import HideoutCore
 import HideoutDesign
 import SwiftUI
 
-struct ChannelRoute: Hashable { let id: ID }
+public struct ChannelRoute: Hashable, Sendable {
+    public let id: ID
+    public init(id: ID) { self.id = id }
+}
+
+/// A destination in the Servers tab's stack: a server's channel list, then a transcript. The shell owns
+/// the path (`ShellNav.serversPath`), so returning to the tab knows which transcript it retains.
+public enum ServerRoute: Hashable, Sendable {
+    case guild(ID)
+    case channel(ID)
+}
 
 /// Servers: the list at the root, then a server's channels (sections), then a transcript.
 struct ServersTab: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
+    /// The tab's retained navigation path (the shell binds it): the list at the root, at most a server
+    /// and its transcript on top, so Back returns toward the list and a returning tab can be synced.
+    @Binding var path: [ServerRoute]
+
+    init(path: Binding<[ServerRoute]> = .constant([])) { _path = path }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             TokenList {
                 ForEach(store.state.guilds) { guild in
-                    NavigationLink(value: guild.id) {
+                    NavigationLink(value: ServerRoute.guild(guild.id)) {
                         ServerListRow(guild: guild, unread: store.state.guildUnread(guild.id))
                     }
                     .listRowBackground(theme.colors.surface)
                 }
             }
             .navigationTitle("Servers")
-            .navigationDestination(for: ID.self) { ChannelListScreen(guildID: $0) }
-            .navigationDestination(for: ChannelRoute.self) { TranscriptScreen(channelID: $0.id) }
+            .navigationDestination(for: ServerRoute.self) { route in
+                switch route {
+                case .guild(let id): ChannelListScreen(guildID: id)
+                case .channel(let id): TranscriptScreen(channelID: id)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -98,7 +117,7 @@ struct ChannelListScreen: View {
     private func rows(_ channels: [Channel]) -> some View {
         ForEach(channels) { channel in
             if channel.kind == .text {
-                NavigationLink(value: ChannelRoute(id: channel.id)) {
+                NavigationLink(value: ServerRoute.channel(channel.id)) {
                     ChannelRow(channel, unread: store.state.unread(channel.id))
                 }
                 .listRowBackground(theme.colors.surface)

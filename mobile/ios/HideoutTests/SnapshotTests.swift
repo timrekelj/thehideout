@@ -114,3 +114,96 @@ final class ShellSnapshotTests: SnapshotCase {
         )
     }
 }
+
+/// The shell's navigation state driven directly (no UI): the regression guard for the cross-tab DM jump.
+/// From a guild transcript, a profile's Message routes to the DM; when the Servers tab returns to the
+/// foreground, its retained transcript must become the open (read) channel again — its unread clears and
+/// the DM's inbound messages start counting as unread. Without the sync in `ShellNav.select`, the store
+/// keeps the DM as `openChannel` while the guild transcript is the visible one.
+@MainActor
+final class ShellNavTests: XCTestCase {
+    private func liveStore() async throws -> (AppStore, FakeBackend) {
+        let fake = FakeBackend()
+        let store = AppStore(api: fake, tokens: MemoryTokenStore(token: "fake"))
+        await store.bootstrap()
+        store.setActive(true)
+        for _ in 0..<400 where fake.openStreams == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        return (store, fake)
+    }
+
+    private func waitFor(_ condition: @escaping () -> Bool) async throws {
+        for _ in 0..<400 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    func testDmRouteThenReturnToServersSyncsTheRetainedTranscriptAsOpen() async throws {
+        let (store, fake) = try await liveStore()
+        let nav = ShellNav(initialTab: .servers)
+
+        // In the Servers tab, #general pushed and open.
+        nav.serversPath = [.guild(FakeBackend.Ids.hideout), .channel(FakeBackend.Ids.general)]
+        nav.select(.servers, store: store)
+        await store.settle()
+        XCTAssertEqual(store.state.openChannel, FakeBackend.Ids.general)
+        XCTAssertEqual(nav.foregroundChannel, FakeBackend.Ids.general)
+
+        // A member profile's Message: the explicit route lands in the DM (DMs tab, transcript pushed).
+        store.startDm(user: FakeBackend.Ids.ana)
+        await store.settle()
+        let request = try XCTUnwrap(store.state.routeRequest)
+        nav.follow(request, store: store)
+        XCTAssertEqual(nav.selectedTab, .dms)
+        XCTAssertEqual(nav.dmRoute?.id, FakeBackend.Ids.dmAna)
+        XCTAssertEqual(store.state.openChannel, FakeBackend.Ids.dmAna)
+
+        // While the DM tab is foreground, a guild message is unread and a DM message is read.
+        fake.incoming(channel: FakeBackend.Ids.general, author: FakeBackend.Ids.bruno, content: "guild ping")
+        fake.incoming(channel: FakeBackend.Ids.dmAna, author: FakeBackend.Ids.ana, content: "dm ping")
+        try await waitFor { store.state.unread(FakeBackend.Ids.general).count > 0 }
+        XCTAssertEqual(store.state.unread(FakeBackend.Ids.general), Unread(count: 1))
+        XCTAssertEqual(store.state.unread(FakeBackend.Ids.dmAna), Unread())
+
+        // Back to Servers: the retained #general transcript is visible again and becomes the open
+        // channel — its unread clears, and now the DM's inbound messages count as unread instead.
+        nav.select(.servers, store: store)
+        XCTAssertEqual(nav.foregroundChannel, FakeBackend.Ids.general)
+        XCTAssertEqual(store.state.openChannel, FakeBackend.Ids.general)
+        XCTAssertEqual(store.state.unread(FakeBackend.Ids.general), Unread(), "the visible transcript is read again")
+        fake.incoming(channel: FakeBackend.Ids.dmAna, author: FakeBackend.Ids.ana, content: "dm ping 2")
+        try await waitFor { store.state.unread(FakeBackend.Ids.dmAna).count > 0 }
+        XCTAssertEqual(store.state.unread(FakeBackend.Ids.dmAna), Unread(count: 1, mentions: 1))
+        XCTAssertEqual(store.state.unread(FakeBackend.Ids.general), Unread())
+    }
+
+    func testAnInboundDmNeverRoutesOrStealsTheTab() async throws {
+        let (store, fake) = try await liveStore()
+        let nav = ShellNav(initialTab: .servers)
+        nav.select(.servers, store: store)
+        XCTAssertNil(store.state.routeRequest)
+
+        // A DM opened elsewhere (or a message in one) arrives on the gateway: no route request, no tab
+        // change, no open channel — just the unread badge.
+        fake.emit(.dmOpened(DMChannel(id: 4242, participants: [User(id: FakeBackend.Ids.tim, username: "tim"), User(id: FakeBackend.Ids.ana, username: "ana")])))
+        fake.incoming(channel: FakeBackend.Ids.dmAna, author: FakeBackend.Ids.ana, content: "hi there")
+        try await waitFor { store.state.unread(FakeBackend.Ids.dmAna).count > 0 }
+        XCTAssertNil(store.state.routeRequest)
+        XCTAssertEqual(nav.selectedTab, .servers)
+        XCTAssertNil(store.state.openChannel)
+        XCTAssertEqual(store.state.unread(FakeBackend.Ids.dmAna), Unread(count: 1, mentions: 1))
+        XCTAssertTrue(store.state.dms.contains { $0.id == 4242 }, "the new conversation is listed, not shown")
+    }
+
+    func testAnOrdinaryBackOnlyPopsThePathAndKeepsTheTab() async throws {
+        let (store, _) = try await liveStore()
+        let nav = ShellNav(initialTab: .dms)
+        nav.dmRoute = ChannelRoute(id: FakeBackend.Ids.dmAna)
+        nav.select(.dms, store: store)
+        XCTAssertEqual(store.state.openChannel, FakeBackend.Ids.dmAna)
+        // Back in the DMs tab: the path pops to the list (dmRoute nil) and the transcript's onDisappear
+        // closes the channel; the selected tab stays DMs throughout.
+        nav.dmRoute = nil
+        store.closeChannel()
+        XCTAssertEqual(nav.selectedTab, .dms, "Back does not steal the tab")
+        XCTAssertNil(nav.foregroundChannel)
+        XCTAssertNil(store.state.openChannel)
+    }
+}
