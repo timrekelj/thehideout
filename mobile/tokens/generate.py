@@ -829,8 +829,8 @@ def gen_kotlin(t):
     w(" * `bg < surface < surface_raised < surface_overlay` does.")
     w(" */")
     w("fun ThemeColors.toColorScheme(dark: Boolean): ColorScheme {")
-    w("    val make = if (dark) ::darkColorScheme else ::lightColorScheme")
-    w("    return make(")
+    w("    val base = if (dark) darkColorScheme() else lightColorScheme()")
+    w("    return base.copy(")
     mapping = [
         ("primary", "accent"),
         ("onPrimary", "accentFg"),

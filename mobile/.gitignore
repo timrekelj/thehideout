@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+build/
+.gradle/
+local.properties
+*.xcuserstate
+xcuserdata/
+DerivedData/

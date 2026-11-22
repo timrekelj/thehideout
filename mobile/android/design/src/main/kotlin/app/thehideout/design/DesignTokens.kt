@@ -231,8 +231,8 @@ fun rgba(v: Long): Color = Color(
  * `bg < surface < surface_raised < surface_overlay` does.
  */
 fun ThemeColors.toColorScheme(dark: Boolean): ColorScheme {
-    val make = if (dark) ::darkColorScheme else ::lightColorScheme
-    return make(
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    return base.copy(
         primary = accent,
         onPrimary = accentFg,
         primaryContainer = accentSubtle,
