@@ -70,9 +70,16 @@ pub struct Builder {
     connect_grace: Option<Duration>,
     message_rate: (u32, f64),
     policy: thehideout_server::policy::Policy,
+    push: Option<(Arc<dyn thehideout_server::push::Transport>, thehideout_server::push::Tuning)>,
 }
 
 impl Builder {
+    /// Push notifications through `transport` (a recording fake) with the given tuning.
+    pub fn push(mut self, transport: Arc<dyn thehideout_server::push::Transport>, tuning: thehideout_server::push::Tuning) -> Self {
+        self.push = Some((transport, tuning));
+        self
+    }
+
     /// Operator contact and minimum client version (see `policy::Policy`).
     pub fn policy(mut self, policy: thehideout_server::policy::Policy) -> Self {
         self.policy = policy;
@@ -162,6 +169,7 @@ impl TestApp {
             connect_grace: None,
             message_rate: (100_000, 1_000.0),
             policy: Default::default(),
+            push: None,
         }
     }
 
@@ -244,6 +252,10 @@ impl TestApp {
         let state = state
             .with_public_url(format!("http://localhost:{}", addr.port()).parse().unwrap())
             .with_policy(options.policy.clone());
+        let state = match options.push.clone() {
+            Some((transport, tuning)) => state.with_push(Some(transport), tuning),
+            None => state,
+        };
         let livekit = options.livekit.then(|| Arc::new(voice::RecordingLiveKit::default()));
         let state = match &livekit {
             Some(fake) => {

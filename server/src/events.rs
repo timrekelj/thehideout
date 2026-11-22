@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 
 use crate::proto::thehideout::v1::{
     Channel, ChannelDeleted, DmChannel, EmojisUpdated, Guild, GuildMemberJoined, GuildMemberRemoved, GuildRemoved,
-    LayoutUpdated, MemberUpdated, Message, MessageDeleted, ReactionChange, RolesUpdated, User, VoiceMoved,
+    LayoutUpdated, MemberUpdated, Message, MessageDeleted, NotificationSettings, ReactionChange, RolesUpdated, User, VoiceMoved,
     VoiceStateUpdate,
 };
 
@@ -63,13 +63,39 @@ pub enum UserControl {
     /// The user is no longer in this guild; streams stop listening to it and
     /// emit `guild_removed`.
     RemovedFromGuild(GuildRemoved),
+    /// The user changed their notification settings (on another session);
+    /// becomes a `notification_settings_updated` event.
+    SettingsUpdated(NotificationSettings),
 }
 
-#[derive(Default)]
+/// Server-internal view of the bus for the push dispatcher: every new message
+/// and every guild a user is added to, whoever is subscribed.
+#[derive(Debug, Clone)]
+pub enum Tap {
+    /// `Message.guild_id` is 0 for DM channels.
+    MessageCreated(Message),
+    GuildAdded { user_id: u64, guild: Guild },
+}
+
+/// Tap events buffered before a slow dispatcher starts missing some.
+const TAP_CAPACITY: usize = 4096;
+
 pub struct EventBus {
+    tap: broadcast::Sender<Arc<Tap>>,
     guilds: Mutex<HashMap<u64, broadcast::Sender<Arc<EventPayload>>>>,
     dms: Mutex<HashMap<u64, broadcast::Sender<Arc<EventPayload>>>>,
     users: Mutex<HashMap<u64, broadcast::Sender<UserControl>>>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self {
+            tap: broadcast::channel(TAP_CAPACITY).0,
+            guilds: Mutex::default(),
+            dms: Mutex::default(),
+            users: Mutex::default(),
+        }
+    }
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -81,9 +107,23 @@ impl EventBus {
         Self::default()
     }
 
+    /// Receives the push dispatcher's view of the bus from now on.
+    pub fn subscribe_tap(&self) -> broadcast::Receiver<Arc<Tap>> {
+        self.tap.subscribe()
+    }
+
+    fn tap_message(&self, payload: &EventPayload) {
+        if let EventPayload::MessageCreated(message) = payload
+            && self.tap.receiver_count() > 0
+        {
+            let _ = self.tap.send(Arc::new(Tap::MessageCreated(message.clone())));
+        }
+    }
+
     /// Delivers `payload` to every current subscriber of the guild. Never fails; having no
     /// subscribers is normal.
     pub fn publish_to_guild(&self, guild_id: u64, payload: EventPayload) {
+        self.tap_message(&payload);
         let mut guilds = lock(&self.guilds);
         if let Some(tx) = guilds.get(&guild_id) {
             if tx.receiver_count() == 0 {
@@ -105,6 +145,7 @@ impl EventBus {
     /// Delivers `payload` to every current subscriber of the DM channel. Never fails; having no
     /// subscribers is normal.
     pub fn publish_to_dm(&self, dm_id: u64, payload: EventPayload) {
+        self.tap_message(&payload);
         let mut dms = lock(&self.dms);
         if let Some(tx) = dms.get(&dm_id) {
             if tx.receiver_count() == 0 {
@@ -125,6 +166,9 @@ impl EventBus {
 
     /// Tells the user's open streams they joined `guild`.
     pub fn notify_user_joined_guild(&self, user_id: u64, guild: Guild) {
+        if self.tap.receiver_count() > 0 {
+            let _ = self.tap.send(Arc::new(Tap::GuildAdded { user_id, guild: guild.clone() }));
+        }
         self.notify_user(user_id, UserControl::JoinedGuild(guild));
     }
 
@@ -146,6 +190,11 @@ impl EventBus {
     /// Tells the user's open streams they are no longer a member of the guild.
     pub fn notify_user_removed_from_guild(&self, user_id: u64, guild_id: u64) {
         self.notify_user(user_id, UserControl::RemovedFromGuild(GuildRemoved { guild_id, ..Default::default() }));
+    }
+
+    /// Tells the user's open streams their notification settings changed.
+    pub fn notify_user_settings_updated(&self, user_id: u64, settings: NotificationSettings) {
+        self.notify_user(user_id, UserControl::SettingsUpdated(settings));
     }
 
     fn notify_user(&self, user_id: u64, control: UserControl) {

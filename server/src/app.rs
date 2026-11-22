@@ -30,7 +30,7 @@ use crate::media::attachments::AttachmentSettings;
 use crate::media::{self, MAX_INPUT_BYTES};
 use crate::ratelimit::RateLimiter;
 use crate::services::auth::AuthMemory;
-use crate::services::{AdminSvc, AuthSvc, DmSvc, EmojiSvc, GatewaySvc, GuildSvc, InviteSvc, MediaSvc, MessageSvc, RoleSvc, VoiceSvc};
+use crate::services::{AdminSvc, AuthSvc, DmSvc, EmojiSvc, GatewaySvc, GuildSvc, InviteSvc, MediaSvc, MessageSvc, NotificationSvc, RoleSvc, VoiceSvc};
 use crate::snowflake::Snowflake;
 use crate::storage::Storage;
 
@@ -80,6 +80,8 @@ pub struct AppState {
     pub streams: Arc<StreamGate>,
     /// Operator name and contact (legal pages) and the minimum client version.
     pub policy: Arc<crate::policy::Policy>,
+    /// Push notification dispatch (off without a transport).
+    pub push: Arc<crate::push::Pusher>,
 }
 
 impl AppState {
@@ -113,8 +115,16 @@ impl AppState {
             shutdown: Shutdown::default(),
             streams: Arc::default(),
             policy: Arc::default(),
+            push: Arc::new(crate::push::Pusher::disabled()),
         }
         .with_legal_footer()
+    }
+
+    /// Delivers pushes through `transport` (APNs / FCM, or a fake in tests);
+    /// without one push stays off and tokens are only stored.
+    pub fn with_push(mut self, transport: Option<Arc<dyn crate::push::Transport>>, tuning: crate::push::Tuning) -> Self {
+        self.push = Arc::new(crate::push::Pusher::new(transport, tuning));
+        self
     }
 
     /// Sets operator contact details and the minimum client version.
@@ -267,6 +277,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 pub fn build_app(state: AppState) -> Router {
     crate::voice::spawn_sweeper(&state);
     crate::lifecycle::spawn_background(&state);
+    crate::push::dispatch::spawn(&state);
     let public_url = state.public_url.clone();
     let connect = ConnectRouter::new()
         .add_service(Arc::new(AuthSvc::new(state.clone())))
@@ -278,6 +289,7 @@ pub fn build_app(state: AppState) -> Router {
         .add_service(Arc::new(InviteSvc::new(state.clone())))
         .add_service(Arc::new(EmojiSvc::new(state.clone())))
         .add_service(Arc::new(VoiceSvc::new(state.clone())))
+        .add_service(Arc::new(NotificationSvc::new(state.clone())))
         .add_service(Arc::new(GatewaySvc::new(state.clone())));
 
     // Media RPCs get their own router so only they accept large bodies; the

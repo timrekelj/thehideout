@@ -77,6 +77,11 @@ pub const MIGRATIONS: &[(i32, &str, &str)] = &[
         "account_lifecycle",
         include_str!("../migrations/0014_account_lifecycle.cql"),
     ),
+    (
+        15,
+        "push",
+        include_str!("../migrations/0015_push.cql"),
+    ),
 ];
 
 /// How the keyspace is replicated (`THEHIDEOUT_SCYLLA_REPLICATION`).

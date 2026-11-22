@@ -61,6 +61,8 @@ pub struct Config {
     pub max_streams_per_user: usize,
     /// Most gateway streams open at once (`THEHIDEOUT_MAX_STREAMS`).
     pub max_streams: usize,
+    /// Push providers (`THEHIDEOUT_APNS_*`, `THEHIDEOUT_FCM_SERVICE_ACCOUNT`); both off by default.
+    pub push: crate::push::config::PushConfig,
 }
 
 /// ScyllaDB login.
@@ -358,6 +360,7 @@ impl Config {
             trusted_proxies,
             max_streams_per_user,
             max_streams,
+            push: crate::push::config::PushConfig::from_env()?,
         })
     }
 }

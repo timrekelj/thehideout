@@ -123,10 +123,11 @@ impl GatewayService for GatewaySvc {
             dms,
             heartbeat,
             sequence: 0,
-            token_hash,
+            token_hash: token_hash.clone(),
             last_check: Instant::now(),
             recheck_interval: self.state.heartbeat_interval.min(Duration::from_secs(60)),
             _permit: permit,
+            _presence: self.state.push.presence.open(user_id, &token_hash),
         };
         Response::stream_ok(futures::stream::unfold(Some(session), |session| async move {
             let mut session = session?;
@@ -155,6 +156,8 @@ struct EventStream {
     recheck_interval: Duration,
     /// Holds this stream's slot against the per-user and global caps.
     _permit: StreamPermit,
+    /// Counts the stream as live for push suppression (see `push::Presence`).
+    _presence: crate::push::PresenceGuard,
 }
 
 impl EventStream {
@@ -212,6 +215,7 @@ impl EventStream {
                 }
                 Ok(UserControl::ProfileUpdated(user)) => Ok(Payload::UserUpdated(user.into())),
                 Ok(UserControl::VoiceMoved(moved)) => Ok(Payload::VoiceMoved(moved.into())),
+                Ok(UserControl::SettingsUpdated(settings)) => Ok(Payload::NotificationSettingsUpdated(settings.into())),
                 Ok(UserControl::RemovedFromGuild(removed)) => {
                     // Stop listening first: nothing of this guild is delivered after this.
                     self.guilds.remove(&removed.guild_id);
