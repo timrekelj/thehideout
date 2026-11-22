@@ -46,6 +46,29 @@ adb shell am start -n si.zabit.thehideout/.MainActivity --ez gallery true  # the
 The debug build talks to `http://10.0.2.2:8080` (debug-only `network_security_config` allows cleartext
 to 10.0.2.2/localhost/127.0.0.1; release is HTTPS-only and defaults to `https://thehideout.zabit.si`).
 
+**If `10.0.2.2:8080` hangs** (the sign-in card shows "Can't reach the server." after ~10 s, and the
+server's own access log shows nothing — the request never arrived): on some AVD images (seen on
+`Medium_Phone_API_37.0`, a Google Play image with a simulated Wi-Fi radio) the NAT alias is reachable
+by `adb shell` (and `nc`) but blocked for the app's own UID — confirmed with
+`adb shell run-as si.zabit.thehideout toybox nc -w3 10.0.2.2 8080`, which times out the same way the
+app does, while the identical command against `127.0.0.1:8080` succeeds. It isn't a cleartext,
+HTTP/2-vs-1.1, or Connect-protocol problem (OkHttp only ever negotiates HTTP/1.1 over a cleartext
+connection unless `Protocol.H2_PRIOR_KNOWLEDGE` is configured, which this app never does); the TCP
+handshake itself doesn't complete for that UID. The reliable fix is the host loopback instead of the
+NAT alias:
+
+```sh
+adb reverse tcp:8080 tcp:8080                      # forward the emulator's own :8080 to the host's
+```
+
+then open the server sheet ("Server: … · Change") and set it to `http://127.0.0.1:8080` — already
+permitted by the debug `network_security_config` and already treated as a non-native-passkey host by
+`PasskeyLauncher`, so nothing else to change.
+
+The server sheet probes with `GET /health` (not `HEAD /`, which 404s on this server — there's no route
+for `/`) before saving, and that probe itself only works off the main thread; both were bugs fixed
+while chasing the above (`AppContainer.probeServer`).
+
 ## Authentication and onboarding (phase 2)
 
 The root view switches on `SessionPhase` (`Loading`, `SignedOut`, `SignedIn`, `TermsRequired`,
@@ -72,9 +95,9 @@ whether an account exists.
   (`UNAUTHENTICATED`) clears the Keystore token; a network failure keeps it for next launch.
   `AcceptTerms` on the gate re-bootstraps into the app.
 - **Server URL.** The sign-in card's "Server: … · Change" opens a sheet that probes the URL
-  (`HEAD /`) and persists it in DataStore; changing it signs the old session out and rebuilds the
+  (`GET /health`) and persists it in DataStore; changing it signs the old session out and rebuilds the
   client/store/auth against the new server. Debug default `http://10.0.2.2:8080`, release
-  `https://thehideout.zabit.si`.
+  `https://thehideout.zabit.si`. The sheet opens prefilled with the current server URL.
 - **Invite codes and deep links.** The code field auto-formats `XXXX-XXXX` (uppercase, dash after
   the fourth character, I/L/O forgiven as 1/1/0); pasted links are rejected with "Paste just the
   code from your invite email, not the link." `thehideout://invite/<token>` and the App Link
@@ -129,4 +152,7 @@ whether an account exists.
   and the shell/gallery, and Compose UI tests (`AuthUiTest`) against the fake: sign in → shell,
   invite → accept → shell, wrong code → inline error, pasted link rejected.
 - Real-server smoke runs happen on the emulator against `docker compose up -d` + `cargo run` in
-  `server/` (see the repo README); the debug APK points at `http://10.0.2.2:8080`.
+  `server/` (see the repo README); the debug APK points at `http://10.0.2.2:8080`, or
+  `adb reverse tcp:8080 tcp:8080` + `http://127.0.0.1:8080` if the NAT alias is blocked for the app's
+  UID on the AVD in use (see above). Verified end to end: the bootstrap invite → shell, sign out →
+  password sign-in → shell, sign out → emailed-code sign-in → shell.
