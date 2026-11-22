@@ -211,6 +211,8 @@ fn main() {
             "looks": palettes,
         },
         "avatars": avatars,
+        // Which fill an id gets: FNV-1a (32-bit) over the id's UTF-8 bytes, modulo 8.
+        "avatarRule": { "hash": "fnv1a32", "buckets": 8, "ink": thehideout_design::components::avatar::AVATAR_INK.hex() },
         "radii": radius::SCALE.iter().map(|(n, v)| (n.trim_start_matches("radius-").to_owned(), json!(v))).collect::<Map<_, _>>(),
         "radiusFull": radius::FULL,
         "spacing": space::SCALE.iter().map(|(n, v)| (n.trim_start_matches("space-").to_owned(), json!(v))).collect::<Map<_, _>>(),
