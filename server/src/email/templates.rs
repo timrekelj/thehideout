@@ -25,8 +25,9 @@ fn code_html(code: &str) -> String {
     )
 }
 
-fn email(to: &str, key: String, subject: &str, text: String, html: String) -> Email {
+fn email(kind: &'static str, to: &str, key: String, subject: &str, text: String, html: String) -> Email {
     Email {
+        kind,
         to: to.to_owned(),
         subject: subject.to_owned(),
         text,
@@ -81,7 +82,7 @@ pub fn invite(
             "The invite expires in 7 days. If you weren't expecting it, ignore this email.".into(),
         ],
     );
-    email(to, key, "You're invited to thehideout", text, html)
+    email("invite", to, key, "You're invited to thehideout", text, html)
 }
 
 /// Sign-in code.
@@ -97,6 +98,7 @@ pub fn sign_in_code(to: &str, key: String, code: &str) -> Email {
         ],
     );
     email(
+        "sign_in_code",
         to,
         key,
         &format!("{code} is your thehideout sign-in code"),
@@ -117,7 +119,7 @@ pub fn password_reset(to: &str, key: String, code: &str) -> Email {
             "It expires in 10 minutes. If you didn't ask to reset your password, ignore this email.".into(),
         ],
     );
-    email(to, key, "Reset your thehideout password", text, html)
+    email("password_reset", to, key, "Reset your thehideout password", text, html)
 }
 
 /// Code confirming a new address.
@@ -135,7 +137,7 @@ pub fn email_change_code(to: &str, key: String, code: &str) -> Email {
             "It expires in 10 minutes. If you didn't ask for this, ignore this email.".into(),
         ],
     );
-    email(to, key, "Confirm your thehideout email", text, html)
+    email("email_change_code", to, key, "Confirm your thehideout email", text, html)
 }
 
 /// Sent to the old address after an email change.
@@ -154,7 +156,7 @@ pub fn email_changed(to: &str, key: String, new_email: &str) -> Email {
             "If this wasn't you, reset your password and contact an admin.".into(),
         ],
     );
-    email(to, key, "Your thehideout email was changed", text, html)
+    email("email_changed", to, key, "Your thehideout email was changed", text, html)
 }
 
 /// A sign-in from a device the account has not used before.
@@ -175,7 +177,7 @@ pub fn new_device(to: &str, key: String, device: &str, method: &str) -> Email {
                 .into(),
         ],
     );
-    email(to, key, "New sign-in to thehideout", text, html)
+    email("new_device", to, key, "New sign-in to thehideout", text, html)
 }
 
 /// A security setting changed (password, two-factor, passkeys).
@@ -192,6 +194,7 @@ pub fn security_change(to: &str, key: String, what: &str) -> Email {
         ],
     );
     email(
+        "security_change",
         to,
         key,
         "Security change on your thehideout account",

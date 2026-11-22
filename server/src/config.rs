@@ -2,7 +2,12 @@ use std::env;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use std::path::PathBuf;
+
 use anyhow::{bail, Context, Result};
+
+use crate::clientip::TrustedProxies;
+use crate::migrations::Replication;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -42,6 +47,48 @@ pub struct Config {
     /// LiveKit (voice channels); `None` = voice is not configured and
     /// `JoinVoice` answers UNAVAILABLE.
     pub livekit: Option<LiveKitConfig>,
+    /// ScyllaDB credentials (`THEHIDEOUT_SCYLLA_USERNAME` / `THEHIDEOUT_SCYLLA_PASSWORD`).
+    pub scylla_auth: Option<ScyllaAuth>,
+    /// CA bundle (PEM) that enables TLS to ScyllaDB (`THEHIDEOUT_SCYLLA_TLS_CA`).
+    pub scylla_tls_ca: Option<PathBuf>,
+    /// Replication of the keyspace when it is created (`THEHIDEOUT_SCYLLA_REPLICATION`).
+    pub scylla_replication: Replication,
+    /// Reverse proxies whose `X-Forwarded-For` is trusted (`THEHIDEOUT_TRUSTED_PROXIES`).
+    pub trusted_proxies: TrustedProxies,
+    /// Most gateway streams one user may hold open (`THEHIDEOUT_MAX_STREAMS_PER_USER`).
+    pub max_streams_per_user: usize,
+    /// Most gateway streams open at once (`THEHIDEOUT_MAX_STREAMS`).
+    pub max_streams: usize,
+}
+
+/// ScyllaDB login.
+#[derive(Debug, Clone)]
+pub struct ScyllaAuth {
+    pub username: String,
+    pub password: Redacted,
+}
+
+/// Log output format (`THEHIDEOUT_LOG_FORMAT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+impl LogFormat {
+    /// `text` (default) or `json`.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "" | "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),
+            other => bail!("invalid THEHIDEOUT_LOG_FORMAT {other:?}, expected text or json"),
+        }
+    }
+
+    pub fn from_env() -> Result<Self> {
+        Self::parse(&var("THEHIDEOUT_LOG_FORMAT", "text"))
+    }
 }
 
 /// Connection settings of the LiveKit SFU that carries voice channel media.
@@ -249,6 +296,30 @@ impl Config {
         check_s3_credentials(&s3, &public_url)?;
         let livekit = LiveKitConfig::from_env()?;
         check_livekit_credentials(livekit.as_ref(), &public_url)?;
+        let scylla_auth = match (non_empty("THEHIDEOUT_SCYLLA_USERNAME"), non_empty("THEHIDEOUT_SCYLLA_PASSWORD")) {
+            (Some(username), Some(password)) => Some(ScyllaAuth { username, password: Redacted(password) }),
+            (None, None) => None,
+            _ => bail!("THEHIDEOUT_SCYLLA_USERNAME and THEHIDEOUT_SCYLLA_PASSWORD must both be set (or neither)"),
+        };
+        let allow_no_auth = match var("THEHIDEOUT_SCYLLA_ALLOW_NO_AUTH", "").trim().to_lowercase().as_str() {
+            "1" | "true" | "yes" => true,
+            "" | "0" | "false" | "no" => false,
+            other => bail!("invalid THEHIDEOUT_SCYLLA_ALLOW_NO_AUTH {other:?}, expected 1 or 0"),
+        };
+        check_scylla_auth(scylla_auth.as_ref(), allow_no_auth, &public_url)?;
+        let scylla_replication = Replication::parse(&non_empty("THEHIDEOUT_SCYLLA_REPLICATION").unwrap_or_else(|| "SimpleStrategy:1".into()))?;
+        let trusted_proxies = TrustedProxies::parse(&var("THEHIDEOUT_TRUSTED_PROXIES", ""))?;
+        let max_streams_per_user: usize = non_empty("THEHIDEOUT_MAX_STREAMS_PER_USER")
+            .unwrap_or_else(|| crate::streams::DEFAULT_MAX_PER_USER.to_string())
+            .parse()
+            .context("invalid THEHIDEOUT_MAX_STREAMS_PER_USER")?;
+        let max_streams: usize = non_empty("THEHIDEOUT_MAX_STREAMS")
+            .unwrap_or_else(|| crate::streams::DEFAULT_MAX_TOTAL.to_string())
+            .parse()
+            .context("invalid THEHIDEOUT_MAX_STREAMS")?;
+        if max_streams_per_user == 0 || max_streams == 0 {
+            bail!("THEHIDEOUT_MAX_STREAMS_PER_USER and THEHIDEOUT_MAX_STREAMS must be at least 1");
+        }
         Ok(Self {
             public_url,
             email_from: non_empty("THEHIDEOUT_EMAIL_FROM")
@@ -274,6 +345,12 @@ impl Config {
             embed_max_video_bytes,
             admins: crate::admin::parse_admins(&var("THEHIDEOUT_ADMINS", "")),
             livekit,
+            scylla_auth,
+            scylla_tls_ca: non_empty("THEHIDEOUT_SCYLLA_TLS_CA").map(PathBuf::from),
+            scylla_replication,
+            trusted_proxies,
+            max_streams_per_user,
+            max_streams,
         })
     }
 }
@@ -369,6 +446,69 @@ fn check_livekit_credentials(livekit: Option<&LiveKitConfig>, public_url: &url::
         );
     }
     Ok(())
+}
+
+/// ScyllaDB without a login is only for development or a private network:
+/// refuse to start a non-local deployment (`THEHIDEOUT_PUBLIC_URL` is not a
+/// development host) without `THEHIDEOUT_SCYLLA_USERNAME`/`PASSWORD`, unless
+/// `THEHIDEOUT_SCYLLA_ALLOW_NO_AUTH=1` says the database is not reachable by anyone else.
+fn check_scylla_auth(auth: Option<&ScyllaAuth>, allow_no_auth: bool, public_url: &url::Url) -> Result<()> {
+    if auth.is_none()
+        && !allow_no_auth
+        && public_url
+            .host()
+            .is_some_and(|h| !crate::email::is_dev_host(&h))
+    {
+        bail!(
+            "THEHIDEOUT_SCYLLA_USERNAME/THEHIDEOUT_SCYLLA_PASSWORD are not set for a non-local deployment \
+             (THEHIDEOUT_PUBLIC_URL={public_url}); set them, or set THEHIDEOUT_SCYLLA_ALLOW_NO_AUTH=1 if \
+             ScyllaDB is only reachable on a private network"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod scylla_auth_tests {
+    use super::*;
+
+    fn page(url: &str) -> url::Url {
+        url::Url::parse(url).unwrap()
+    }
+
+    fn auth() -> ScyllaAuth {
+        ScyllaAuth { username: "app".into(), password: Redacted("pw".into()) }
+    }
+
+    #[test]
+    fn no_credentials_are_fine_on_dev_hosts_only() {
+        for host in ["http://localhost:8080", "http://127.0.0.1:8080", "https://hideout.test"] {
+            assert!(check_scylla_auth(None, false, &page(host)).is_ok(), "{host}");
+        }
+        let err = check_scylla_auth(None, false, &page("https://hideout.example.com")).unwrap_err();
+        assert!(err.to_string().contains("THEHIDEOUT_SCYLLA_USERNAME"), "{err}");
+        assert!(err.to_string().contains("ALLOW_NO_AUTH"), "{err}");
+    }
+
+    #[test]
+    fn credentials_or_the_explicit_opt_out_allow_production() {
+        let prod = page("https://hideout.example.com");
+        assert!(check_scylla_auth(Some(&auth()), false, &prod).is_ok());
+        assert!(check_scylla_auth(None, true, &prod).is_ok());
+    }
+
+    #[test]
+    fn the_password_is_not_debug_printed() {
+        assert!(!format!("{:?}", auth()).contains("pw"));
+    }
+
+    #[test]
+    fn log_format_parses() {
+        assert_eq!(LogFormat::parse("").unwrap(), LogFormat::Text);
+        assert_eq!(LogFormat::parse("TEXT").unwrap(), LogFormat::Text);
+        assert_eq!(LogFormat::parse(" json ").unwrap(), LogFormat::Json);
+        assert!(LogFormat::parse("xml").is_err());
+    }
 }
 
 #[cfg(test)]

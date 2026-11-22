@@ -618,11 +618,15 @@ pub fn spawn_sweeper(state: &AppState) {
     let configured = state.livekit.config.is_some();
     let grace = state.livekit.connect_grace;
     let period = (grace / 3).clamp(Duration::from_millis(50), Duration::from_secs(5));
+    let shutdown = state.shutdown.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(period);
         let mut last_warning = None;
         loop {
-            tick.tick().await;
+            tokio::select! {
+                _ = tick.tick() => {}
+                _ = shutdown.triggered() => return,
+            }
             let Some(states) = states.upgrade() else { return };
             let dropped = states.expire_unconnected(grace);
             drop(states);

@@ -43,6 +43,47 @@ and edit it; the server loads the repo-root `.env`, and real environment
 variables override it. `.env.example` documents every variable and its default.
 Never commit `.env`.
 
+## Running in production
+
+Operational settings (all in `.env.example`):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `THEHIDEOUT_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` are believed, e.g. `127.0.0.1/32,172.16.0.0/12`. Empty = the socket peer is the client. |
+| `THEHIDEOUT_LOG_FORMAT` | `text` | `text` or `json`. |
+| `THEHIDEOUT_MAX_STREAMS_PER_USER` | `8` | Open gateway streams per user; more get `RESOURCE_EXHAUSTED`. |
+| `THEHIDEOUT_MAX_STREAMS` | `5000` | Open gateway streams per instance. |
+| `THEHIDEOUT_SCYLLA_USERNAME` / `THEHIDEOUT_SCYLLA_PASSWORD` | unset | ScyllaDB login (both or neither). |
+| `THEHIDEOUT_SCYLLA_TLS_CA` | unset | PEM CA file; enables TLS to Scylla (node certs must name the host/IP in `THEHIDEOUT_SCYLLA_NODES`). |
+| `THEHIDEOUT_SCYLLA_ALLOW_NO_AUTH` | unset | `1` allows starting a non-dev deployment without Scylla credentials (Scylla on a private network). |
+| `THEHIDEOUT_SCYLLA_REPLICATION` | `SimpleStrategy:1` | Replication when the keyspace is created: `SimpleStrategy:<n>` or `NetworkTopologyStrategy:dc1=3,dc2=3`. An existing keyspace is never altered; a mismatch logs a warning. |
+
+- **Client IPs.** Rate limits and the access log use the client address. Behind a proxy, set
+  `THEHIDEOUT_TRUSTED_PROXIES` to the proxy's address range; from a trusted peer the client is the
+  right-most `X-Forwarded-For` entry that is not itself trusted (falling back to `X-Real-IP`).
+  Headers from any other peer are ignored. List only proxies you control.
+- **Logs.** Each request logs method, path (no query string), status, latency and client IP, never
+  headers. `RUST_LOG` filters as usual.
+- **Health.** `GET /health` is liveness (always `ok`). `GET /ready` returns 200 when ScyllaDB and
+  object storage each answer within 2 s, else 503 with `{"status":"unavailable","failed":["scylla"|"s3"]}`.
+  No auth.
+- **Shutdown.** SIGTERM and SIGINT stop accepting connections, end every open gateway stream (clients
+  see `UNAVAILABLE` and reconnect) and background sweepers, then wait for in-flight requests and queued
+  email for at most 10 s before exiting.
+- **Timeouts.** Requests time out after 30 s (408), except uploads and media reads (10 min) and the
+  gateway stream (none). Clients have 10 s to send request headers.
+- **Email.** Mail is sent in the background. Transient failures (network errors, 5xx, 429, SMTP 4xx)
+  are retried after 2 s, 10 s and 30 s (up to 4 attempts). The final failure is logged with the template
+  kind and the recipient's domain only.
+- **Migrations.** Instances starting together take turns: migrations run under a lock row in
+  `schema_lock` (`INSERT ... IF NOT EXISTS USING TTL 300`, refreshed per migration, released at the
+  end; a crashed holder's lock expires after 5 minutes). A version is recorded in `schema_migrations`
+  only after all of its statements succeed, and "already exists" errors left by an interrupted run are
+  skipped so the version completes on the next start.
+- **ScyllaDB hardening.** Enabling authentication also means raising the `system_auth` keyspace
+  replication to match your cluster. A non-dev `THEHIDEOUT_PUBLIC_URL` refuses to start without Scylla
+  credentials unless `THEHIDEOUT_SCYLLA_ALLOW_NO_AUTH=1`.
+
 ## Accounts, invites and email
 
 Accounts are invite-only; there is no open sign-up.

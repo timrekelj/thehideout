@@ -15,6 +15,7 @@ use crate::convert::{id_from_db, id_to_db, system_time_to_proto};
 use crate::events::{EventPayload, UserControl};
 use crate::proto::thehideout::v1::event::Payload;
 use crate::proto::thehideout::v1::*;
+use crate::streams::{Denied, StreamPermit};
 
 pub struct GatewaySvc {
     state: AppState,
@@ -45,6 +46,17 @@ impl GatewayService for GatewaySvc {
         _req: ServiceRequest<'_, SubscribeRequest>,
     ) -> ServiceResult<ServiceStream<SubscribeResponse>> {
         let user_id = authenticate(&self.state, &ctx).await?;
+        // Before any other work, so a refused stream costs one session lookup.
+        let permit = self.state.streams.acquire(user_id).map_err(|denied| {
+            tracing::warn!(user = user_id, ?denied, open = self.state.streams.open(), "gateway stream refused");
+            match denied {
+                Denied::User => ConnectError::resource_exhausted("too many open event streams for this account; close one and retry"),
+                Denied::Server => ConnectError::resource_exhausted("the server has too many open event streams; retry shortly"),
+            }
+        })?;
+        if self.state.shutdown.is_triggered() {
+            return Err(ConnectError::unavailable("server is shutting down"));
+        }
         let token_hash = hash_token(bearer_token(&ctx).expect("authenticate succeeded"));
         // Before the heartbeat clock starts, so the bookkeeping does not eat into the first interval.
         crate::stats::touch_user(&self.state, user_id).await;
@@ -114,6 +126,7 @@ impl GatewayService for GatewaySvc {
             token_hash,
             last_check: Instant::now(),
             recheck_interval: self.state.heartbeat_interval.min(Duration::from_secs(60)),
+            _permit: permit,
         };
         Response::stream_ok(futures::stream::unfold(Some(session), |session| async move {
             let mut session = session?;
@@ -140,6 +153,8 @@ struct EventStream {
     token_hash: String,
     last_check: Instant,
     recheck_interval: Duration,
+    /// Holds this stream's slot against the per-user and global caps.
+    _permit: StreamPermit,
 }
 
 impl EventStream {
@@ -163,6 +178,9 @@ impl EventStream {
     async fn next_payload(&mut self) -> Result<Payload, ConnectError> {
         let control = self.control.as_mut().expect("control receiver present while streaming");
         tokio::select! {
+            // First, so a stream with a busy bus still ends promptly on shutdown.
+            biased;
+            _ = self.state.shutdown.triggered() => Err(ConnectError::unavailable("server is shutting down; reconnect")),
             _ = self.heartbeat.tick() => {
                 // Re-verify the session so a token that expired (Scylla TTL) or was
                 // revoked cannot keep an open stream alive past its validity.
