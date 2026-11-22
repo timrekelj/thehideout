@@ -26,6 +26,7 @@ public struct HideoutRoot: View {
         }
         .environment(store)
         .environment(themeStore)
+        .environment(\.initialTab, options.tab)
         .themed(themeStore)
         .task {
             await store.bootstrap()
@@ -33,6 +34,11 @@ public struct HideoutRoot: View {
         }
         .onChange(of: scenePhase) { _, phase in store.setActive(phase == .active) }
     }
+}
+
+extension EnvironmentValues {
+    /// The tab the shell opens on.
+    @Entry var initialTab: ShellTab = .servers
 }
 
 /// Switches on the session phase.

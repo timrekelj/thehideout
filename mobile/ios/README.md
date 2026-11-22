@@ -41,6 +41,7 @@ xcrun simctl io booted screenshot /tmp/shot.png
 |---|---|
 | `--fake` | The `FakeBackend` replaces the network: signed in as tim in desktop's fake world (ana, bruno, cvetka; The Hideout with sections, voice channels, DMs) |
 | `--gallery` | Debug builds only: opens the design gallery (colours, type, components, look switcher). Also at You > Design gallery |
+| `--tab servers\|dms\|mentions\|you` | Debug builds only: the tab to open on (for screenshots) |
 | `--ui-testing` | Same as `--fake`; reserved for the XCUITest suite |
 
 Without arguments the app talks to `http://127.0.0.1:8080` (change `server_url` in `UserDefaults`); sign-in arrives in phase 2.

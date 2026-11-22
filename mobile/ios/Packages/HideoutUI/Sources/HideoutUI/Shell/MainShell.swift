@@ -8,11 +8,13 @@ public enum ShellTab: Hashable, Sendable { case servers, dms, mentions, you }
 /// On iPad and other regular widths `.sidebarAdaptable` turns the bar into a sidebar.
 struct MainShell: View {
     @Environment(AppStore.self) private var store
-    @State private var tab: ShellTab = .servers
+    @Environment(\.initialTab) private var initialTab
+    @State private var tab: ShellTab?
 
     var body: some View {
+        let selection = Binding(get: { tab ?? initialTab }, set: { tab = $0 })
         let home = store.state.homeUnread
-        TabView(selection: $tab) {
+        TabView(selection: selection) {
             Tab("Servers", systemImage: "square.grid.2x2.fill", value: ShellTab.servers) { ServersTab() }
             Tab("DMs", systemImage: "bubble.left.and.bubble.right.fill", value: ShellTab.dms) { DMsTab() }
                 .badge(home.mentions)
