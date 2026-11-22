@@ -68,9 +68,18 @@ pub struct Builder {
     admins: Vec<String>,
     livekit: bool,
     connect_grace: Option<Duration>,
+    message_rate: (u32, f64),
 }
 
 impl Builder {
+    /// The per-user message rate (a burst, then per second). Tests default to
+    /// an effectively unlimited rate so they can send freely; the rate-limit
+    /// tests set the production one.
+    pub fn message_rate(mut self, burst: u32, refill_per_sec: f64) -> Self {
+        self.message_rate = (burst, refill_per_sec);
+        self
+    }
+
     /// Voice on, with a recording fake instead of a LiveKit server
     /// ([`voice::API_KEY`] / [`voice::API_SECRET`], room API calls recorded in
     /// `TestApp::livekit`).
@@ -144,6 +153,7 @@ impl TestApp {
             admins: Vec::new(),
             livekit: false,
             connect_grace: None,
+            message_rate: (100_000, 1_000.0),
         }
     }
 
@@ -218,6 +228,7 @@ impl TestApp {
         state.attachments = options.attachments;
         state.embeds = options.embeds;
         state.embeds.cache_namespace = format!("{tag}:");
+        state.limiter = Arc::new(thehideout_server::ratelimit::RateLimiter::new().with_message_rate(options.message_rate.0, options.message_rate.1));
         state.admins = Arc::new(options.admins.iter().map(|n| format!("{}_{tag}", thehideout_server::admin::normalize_username(n))).collect());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
