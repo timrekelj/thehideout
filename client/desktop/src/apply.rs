@@ -400,6 +400,14 @@ fn apply_reply(s: &mut AppState, reply: Reply, tx: &mut Tx) {
             result,
         } => s.admin_set_replied(user, is_admin, result),
         Reply::AdminFileDeleted { key, result } => s.admin_file_deleted(&key, result),
+        Reply::Terms(r) => s.terms_replied(r),
+        Reply::TermsAccepted { version, result } => s.terms_accepted_replied(&version, result),
+        Reply::DeletionCodeSent(r) => s.deletion_code_replied(r),
+        Reply::AccountDeleted(r) => s.account_deleted_replied(r),
+        Reply::DataExportQueued(r) => s.export_replied(r),
+        Reply::AdminUserSuspended { user, result } => s.admin_suspend_replied(user, result),
+        Reply::AdminUserUnsuspended { user, result } => s.admin_unsuspend_replied(user, result),
+        Reply::AdminUserDeleted { user, result } => s.admin_delete_replied(user, result),
         Reply::SignedOut => {}
         Reply::Gateway(update) => gateway(s, update, tx),
     }
@@ -950,6 +958,7 @@ mod tests {
 
     fn user(id: u64, name: &str) -> User {
         User {
+            deleted: false,
             id,
             username: name.into(),
             created_at: UNIX_EPOCH,

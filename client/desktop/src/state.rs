@@ -331,6 +331,8 @@ pub struct Ui {
     pub server_settings: Option<ServerSettings>,
     /// The site-admin dashboard (admins only), which replaces the shell the same way.
     pub admin: Option<crate::admin::AdminState>,
+    /// Terms prompts, account deletion and data export (see `lifecycle.rs`).
+    pub lifecycle: crate::lifecycle::Lifecycle,
     /// Text for the next poll to put on the clipboard (a press handler has no `Tx`).
     pub copy_request: Option<String>,
     /// The message being edited in the transcript.
@@ -398,6 +400,7 @@ impl Ui {
             voice_menu: Default::default(),
             server_settings: None,
             admin: None,
+            lifecycle: Default::default(),
             copy_request: None,
             editing: None,
             toast_seq: 0,
@@ -509,7 +512,7 @@ impl AppState {
         self.data
             .users
             .get(&id)
-            .map_or_else(|| format!("user {id}"), |u| u.username.clone())
+            .map_or_else(|| format!("user {id}"), |u| if u.deleted { crate::lifecycle::DELETED_USER.to_owned() } else { u.username.clone() })
     }
 
     pub fn guild(&self, id: u64) -> Option<&Guild> {

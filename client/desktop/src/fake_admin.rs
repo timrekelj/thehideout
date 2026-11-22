@@ -97,6 +97,10 @@ pub struct AdminWorld {
     pub fail_deletes: u32,
     /// The next `SetAdmin` is refused as if another admin had just changed the rules under it.
     pub refuse_next_set: bool,
+    /// Suspended users: the reason and when it ends (`None` = until lifted).
+    suspended: std::collections::HashMap<u64, (String, Option<SystemTime>)>,
+    /// Users whose accounts were deleted (anonymized).
+    deleted: std::collections::HashSet<u64>,
 }
 
 fn user(id: u64, name: &str, admin: bool, avatar: Option<String>) -> User {
@@ -107,6 +111,7 @@ fn user(id: u64, name: &str, admin: bool, avatar: Option<String>) -> User {
         avatar,
         is_admin: admin,
         email: None,
+        deleted: false,
     }
 }
 
@@ -126,6 +131,8 @@ impl AdminWorld {
             unavailable: false,
             fail_deletes: 0,
             refuse_next_set: false,
+            suspended: Default::default(),
+            deleted: Default::default(),
         }
     }
 
@@ -199,6 +206,8 @@ impl AdminWorld {
             unavailable: false,
             fail_deletes: 0,
             refuse_next_set: false,
+            suspended: Default::default(),
+            deleted: Default::default(),
         };
         world.seed_files(&mut rng);
         world.seed_activity(&mut rng);
@@ -546,6 +555,10 @@ impl AdminWorld {
                     .map(|f| f.bytes)
                     .sum(),
                 last_active_at: s.last_active.map(time),
+                suspended: self.suspended.contains_key(&u.id),
+                suspended_until: self.suspended.get(&u.id).and_then(|s| s.1),
+                suspended_reason: self.suspended.get(&u.id).map(|s| s.0.clone()).unwrap_or_default(),
+                deleted: self.deleted.contains(&u.id),
             })
             .collect();
         rows.sort_by_key(|r| r.user.username.to_lowercase());
@@ -648,6 +661,27 @@ impl AdminWorld {
                     result,
                 }]
             }
+            Command::AdminSuspendUser { user, reason, until } => {
+                let result = match refuse {
+                    Some(e) => Err(e),
+                    None => self.suspend(me, user, &reason, until),
+                };
+                vec![Reply::AdminUserSuspended { user, result }]
+            }
+            Command::AdminUnsuspendUser { user } => {
+                let result = match refuse {
+                    Some(e) => Err(e),
+                    None => self.unsuspend(me, user),
+                };
+                vec![Reply::AdminUserUnsuspended { user, result }]
+            }
+            Command::AdminDeleteUser { user, force_transfer, reason } => {
+                let result = match refuse {
+                    Some(e) => Err(e),
+                    None => self.delete_user(me, user, force_transfer, &reason),
+                };
+                vec![Reply::AdminUserDeleted { user, result }]
+            }
             Command::AdminDeleteFile { key, reason } => {
                 let result = match refuse {
                     Some(e) => Err(e),
@@ -657,6 +691,84 @@ impl AdminWorld {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The ids of deleted users.
+    pub fn deleted_ids(&self) -> Vec<u64> {
+        self.deleted.iter().copied().collect()
+    }
+
+    fn row_of(&self, id: u64) -> Result<AdminUserRow, ApiError> {
+        self.user_rows("").into_iter().find(|r| r.user.id == id).ok_or(ApiError::NotFound)
+    }
+
+    /// The target of a suspension or deletion: it exists, is not deleted, and (the server's rule)
+    /// is not a site admin.
+    fn live_target(&self, id: u64) -> Result<&User, ApiError> {
+        match self.users.iter().find(|u| u.id == id) {
+            Some(u) if !self.deleted.contains(&id) => Ok(u),
+            _ => Err(ApiError::NotFound),
+        }
+    }
+
+    fn suspend(&mut self, me: &User, target: u64, reason: &str, until: Option<SystemTime>) -> Result<AdminUserRow, ApiError> {
+        let t = self.live_target(target)?;
+        if t.is_admin || target == me.id {
+            return Err(ApiError::Precondition("site admins cannot be suspended: remove their admin rights first".into()));
+        }
+        if reason.chars().count() > 512 {
+            return Err(ApiError::InvalidArgument("reason is too long".into()));
+        }
+        if until.is_some_and(|t| t <= SystemTime::now()) {
+            return Err(ApiError::InvalidArgument("until must be in the future".into()));
+        }
+        let name = t.username.clone();
+        self.suspended.insert(target, (reason.trim().to_owned(), until));
+        self.log(me, "user.suspend", format!("user:{target}"), reason.trim().to_owned());
+        let _ = name;
+        self.row_of(target)
+    }
+
+    fn unsuspend(&mut self, me: &User, target: u64) -> Result<AdminUserRow, ApiError> {
+        self.live_target(target)?;
+        self.suspended.remove(&target);
+        self.log(me, "user.unsuspend", format!("user:{target}"), String::new());
+        self.row_of(target)
+    }
+
+    fn delete_user(&mut self, me: &User, target: u64, force: bool, reason: &str) -> Result<(), ApiError> {
+        let t = self.live_target(target)?;
+        if t.is_admin {
+            return Err(ApiError::Precondition("site admins cannot be deleted: remove their admin rights first".into()));
+        }
+        let owned: Vec<thehideout_api::OwnedGuild> = self
+            .guilds
+            .iter()
+            .filter(|g| g.owner_id == target)
+            .map(|g| thehideout_api::OwnedGuild { id: g.id, name: g.name.clone(), member_count: 2 })
+            .collect();
+        if !owned.is_empty() {
+            if !force {
+                return Err(ApiError::OwnsGuilds(owned));
+            }
+            // Guilds pass to the first other user (the server picks the highest role).
+            let heir = self.users.iter().map(|u| u.id).find(|id| *id != target && !self.deleted.contains(id));
+            for g in self.guilds.iter_mut().filter(|g| g.owner_id == target) {
+                if let Some(heir) = heir {
+                    g.owner_id = heir;
+                }
+            }
+        }
+        self.deleted.insert(target);
+        self.suspended.remove(&target);
+        if let Some(u) = self.users.iter_mut().find(|u| u.id == target) {
+            u.username = "Deleted user".to_owned();
+            u.avatar = None;
+            u.email = None;
+            u.deleted = true;
+        }
+        self.log(me, "account.delete", format!("user:{target}"), reason.trim().to_owned());
+        Ok(())
     }
 
     fn set_admin(&mut self, me: &User, target: u64, make: bool) -> Result<User, ApiError> {

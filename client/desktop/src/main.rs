@@ -30,6 +30,7 @@ mod fake_lines;
 mod format;
 mod forms;
 mod layout;
+mod lifecycle;
 mod look;
 mod media;
 mod moderation;
@@ -38,6 +39,8 @@ mod moderation_ui;
 mod moderation_ui_tests;
 #[cfg(test)]
 mod moderation_tests;
+#[cfg(test)]
+mod account_lifecycle_tests;
 mod perms;
 mod real;
 #[cfg(test)]

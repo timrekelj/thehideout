@@ -91,6 +91,11 @@ pub struct Auth {
     pub invite: TextEdit,
     /// Invite: add a passkey right after the account is made.
     pub add_passkey: bool,
+    /// Invite: the invitee accepted the terms and privacy notice (sent with the accept call;
+    /// the screen's checkbox sets it). Starts false, so an accept without it fails clearly.
+    pub accept_terms: bool,
+    /// Invite: the invitee confirmed being at least 16 (same).
+    pub confirm_age: bool,
     pub phase: Phase,
     pub error: Option<AuthError>,
     /// A note that isn't an error ("We sent a code to ...").
@@ -119,6 +124,8 @@ impl Auth {
             recovery: TextEdit::new(""),
             invite: TextEdit::new(""),
             add_passkey: false,
+            accept_terms: false,
+            confirm_age: false,
             phase: Phase::Idle,
             error: None,
             notice: None,
@@ -147,6 +154,8 @@ impl Auth {
             AuthStep::SecondFactor { .. } => self.code.focused = true,
             AuthStep::InviteCode => self.invite.focused = true,
             AuthStep::InviteAccept { .. } => {
+                self.accept_terms = false;
+                self.confirm_age = false;
                 self.username.clear();
                 self.password.clear();
                 self.username.focused = true;
@@ -174,10 +183,42 @@ pub fn auth_error(e: &ApiError) -> AuthError {
         ApiError::InviteRequired => (AuthField::Form, "You need an invite to make an account.".to_owned()),
         ApiError::InvalidArgument(m) => (AuthField::Form, sentence(m)),
         ApiError::RateLimited => (AuthField::Form, "Too many attempts. Try again in a moment.".to_owned()),
+        ApiError::Suspended { reason, until } => (AuthField::Form, suspended_text(reason, *until)),
+        ApiError::TermsUpdateRequired => (AuthField::Form, "Accept the terms and privacy notice to continue.".to_owned()),
         ApiError::Network(_) => (AuthField::Form, "Can't reach the server.".to_owned()),
         other => (AuthField::Form, sentence(&other.to_string())),
     };
     AuthError { field, message }
+}
+
+/// "Your account is suspended. Reason: ... It ends on 2026-12-01." for the sign-in form.
+pub fn suspended_text(reason: &str, until: Option<std::time::SystemTime>) -> String {
+    let mut text = "Your account is suspended.".to_owned();
+    if !reason.trim().is_empty() {
+        text.push_str(&format!(" Reason: {}", sentence(reason)));
+    }
+    match until {
+        Some(t) => {
+            let secs = t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+            let (y, m, d) = civil(secs.div_euclid(86_400));
+            text.push_str(&format!(" It ends on {y:04}-{m:02}-{d:02}."));
+        }
+        None => text.push_str(" It has no end date; contact an admin."),
+    }
+    text
+}
+
+/// (year, month, day) of a day count since 1970-01-01 (proleptic Gregorian).
+fn civil(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 /// Capitalised, ending in a full stop.

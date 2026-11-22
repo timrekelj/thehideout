@@ -20,11 +20,13 @@ use std::collections::HashSet;
 use super::*;
 use thehideout_api::{
     DeviceSession, Invite, InvitePreview, InviteStatus, NewInvite, Paged, Passkey,
-    SecondFactorMethod, SecuritySummary, TotpSetup,
+    SecondFactorMethod, SecuritySummary, TermsStatus, TotpSetup,
 };
 
 use crate::backend::{InviteAction, SecurityInfo};
 
+/// The terms version the fake server requires.
+pub const TERMS_VERSION: &str = "2026-11-22";
 /// The one valid emailed / authenticator code.
 pub const CODE: &str = "123456";
 /// The fake authenticator secret.
@@ -85,6 +87,10 @@ pub(super) struct Accounts {
     generation: u64,
     /// The passkey ceremony under way: when it finishes, and what it answers then.
     pub(super) ceremony: Option<(f64, Reply)>,
+    /// The signed-in user has not accepted the current terms.
+    pub(super) terms_outdated: bool,
+    /// The user already exported their data in the last 24 hours.
+    exported: bool,
 }
 
 fn at(unix: i64) -> std::time::SystemTime {
@@ -229,6 +235,8 @@ impl Accounts {
             email_change: HashMap::new(),
             generation: 0,
             ceremony: None,
+            terms_outdated: false,
+            exported: false,
         }
     }
 
@@ -292,6 +300,10 @@ impl World {
             return Reply::SecondFactor { challenge: id, methods };
         }
         Reply::Auth(Ok(self.session_for(username)))
+    }
+
+    pub(super) fn enable_totp(&mut self, username: &str) {
+        self.account.totp.insert(username.to_lowercase(), RECOVERY.iter().map(|c| (*c).to_owned()).collect());
     }
 
     fn me_has_totp(&self) -> bool {
@@ -449,11 +461,51 @@ impl World {
         Ok(invite)
     }
 
+    /// The server's deletion rules: no owned guilds; the password (or the emailed code); the
+    /// authenticator or a recovery code when it is on. The fake takes either proof first.
+    fn delete_account(
+        &mut self,
+        password: Option<String>,
+        email_code: Option<String>,
+        totp_code: Option<String>,
+    ) -> Result<(), ApiError> {
+        let me = self.me.id;
+        let owned: Vec<thehideout_api::OwnedGuild> = self
+            .guilds
+            .iter()
+            .filter(|g| g.owner_id == me)
+            .map(|g| thehideout_api::OwnedGuild {
+                id: g.id,
+                name: g.name.clone(),
+                member_count: self.members.get(&g.id).map_or(1, |m| m.len() as u32),
+            })
+            .collect();
+        if !owned.is_empty() {
+            return Err(ApiError::OwnsGuilds(owned));
+        }
+        match (password, email_code) {
+            (Some(p), _) if p == "wrong" => return Err(ApiError::PermissionDenied),
+            (Some(_), _) => {}
+            (None, Some(c)) if c.trim() == CODE => {}
+            (None, Some(_)) => return Err(ApiError::WrongCode { attempts_remaining: 4 }),
+            (None, None) => return Err(ApiError::InvalidArgument("password required".into())),
+        }
+        if self.me_has_totp() {
+            let code = totp_code.ok_or_else(|| ApiError::InvalidArgument("totp_code required".into()))?;
+            if code.trim() != CODE && !RECOVERY.contains(&code.trim()) {
+                return Err(ApiError::WrongCode { attempts_remaining: 9 });
+            }
+        }
+        Ok(())
+    }
+
     fn accept_invite(
         &mut self,
         code: &str,
         username: &str,
         password: Option<&str>,
+        terms_version: &str,
+        age_confirmed: bool,
     ) -> Result<Session, ApiError> {
         let i = self.account.find_invite(code).ok_or(ApiError::NotFound)?;
         match self.account.invites[i].invite.status {
@@ -467,6 +519,12 @@ impl World {
                 return Err(ApiError::Precondition("this invite has expired".into()))
             }
             _ => return Err(ApiError::Precondition("this invite was revoked".into())),
+        }
+        if terms_version != TERMS_VERSION {
+            return Err(ApiError::TermsUpdateRequired);
+        }
+        if !age_confirmed {
+            return Err(ApiError::InvalidArgument("you must confirm that you are at least 16 years old".into()));
         }
         let name = username.trim();
         if name.chars().count() < 3
@@ -674,6 +732,8 @@ impl World {
                             guild_names: names,
                             expires_at: inv.expires_at,
                             status: inv.status,
+                            terms_version: TERMS_VERSION.to_owned(),
+                            minimum_age: 16,
                         })
                     }
                 })]
@@ -682,13 +742,46 @@ impl World {
                 code,
                 username,
                 password,
+                terms_version,
+                age_confirmed,
             } => {
                 vec![Reply::Auth(self.accept_invite(
                     &code,
                     &username,
                     password.as_deref(),
+                    &terms_version,
+                    age_confirmed,
                 ))]
             }
+            Command::CheckTerms => vec![Reply::Terms(Ok(TermsStatus {
+                current: TERMS_VERSION.to_owned(),
+                update_required: self.account.terms_outdated.then(|| TERMS_VERSION.to_owned()),
+            }))],
+            Command::AcceptTerms { version } => {
+                let result = if version == TERMS_VERSION {
+                    self.account.terms_outdated = false;
+                    Ok(())
+                } else {
+                    Err(ApiError::Precondition(format!("the current terms version is {TERMS_VERSION}")))
+                };
+                vec![Reply::TermsAccepted { version, result }]
+            }
+            Command::RequestAccountDeletionCode => vec![Reply::DeletionCodeSent(if self.me.email.is_some() {
+                Ok(())
+            } else {
+                Err(ApiError::Precondition("your account has no email address".into()))
+            })],
+            Command::DeleteAccount { password, email_code, totp_code } => {
+                vec![Reply::AccountDeleted(self.delete_account(password, email_code, totp_code))]
+            }
+            Command::ExportData => vec![Reply::DataExportQueued(match self.me.email.clone() {
+                None => Err(ApiError::Precondition("your account has no email address to send the export to".into())),
+                Some(_) if self.account.exported => Err(ApiError::RateLimited),
+                Some(email) => {
+                    self.account.exported = true;
+                    Ok(mask(&email))
+                }
+            })],
             Command::LoadSecurity => vec![Reply::Security(Ok(self.security()))],
             Command::ChangePassword { current, new } => {
                 vec![Reply::PasswordChanged(if current == "wrong" {

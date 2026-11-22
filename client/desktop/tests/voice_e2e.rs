@@ -33,6 +33,8 @@ mod format;
 mod forms;
 #[path = "../src/layout.rs"]
 mod layout;
+#[path = "../src/lifecycle.rs"]
+mod lifecycle;
 #[path = "../src/look.rs"]
 mod look;
 #[path = "../src/media.rs"]

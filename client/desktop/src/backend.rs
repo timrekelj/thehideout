@@ -11,7 +11,7 @@ use thehideout_api::{
     Channel, ChannelIconRef, ChannelKind, DeviceSession, DmChannel, Emoji, GatewayUpdate, Guild, GuildLayout,
     Invite, InvitePreview, Member, Message, NewInvite, Overview, Page, Paged, PaletteColor, Passkey,
     PendingAttachment, Permissions, ReactionEmoji, Role, RoleList, SecondFactorMethod, Section, SecuritySummary,
-    TotpSetup, User, VoiceJoin, VoiceState,
+    TermsStatus, TotpSetup, User, VoiceJoin, VoiceState,
 };
 
 /// What a picked picture is for.
@@ -81,6 +81,10 @@ pub enum Command {
         code: String,
         username: String,
         password: Option<String>,
+        /// The terms version the invitee accepted (`InvitePreview::terms_version`); "" = not accepted.
+        terms_version: String,
+        /// They confirmed being at least `InvitePreview::minimum_age`.
+        age_confirmed: bool,
     },
     // ---- account security -------------------------------------------------------------------
     /// Passkeys, sessions and how the account is protected: `Reply::Security`.
@@ -467,6 +471,40 @@ pub enum Command {
         key: String,
         reason: String,
     },
+    // ---- account lifecycle ------------------------------------------------------------------
+    /// Whether the terms changed since the user accepted them: `Reply::Terms`.
+    CheckTerms,
+    /// Accepts the current terms: `Reply::TermsAccepted`.
+    AcceptTerms {
+        version: String,
+    },
+    /// Emails a deletion code (for accounts without a password): `Reply::DeletionCodeSent`.
+    RequestAccountDeletionCode,
+    /// Deletes the account (anonymized); the password, or the emailed code without one, plus a
+    /// TOTP or recovery code when two-factor authentication is on: `Reply::AccountDeleted`.
+    DeleteAccount {
+        password: Option<String>,
+        email_code: Option<String>,
+        totp_code: Option<String>,
+    },
+    /// Emails a link to an export of the user's data: `Reply::DataExportQueued`.
+    ExportData,
+    /// Site admins: `Reply::AdminUserSuspended`.
+    AdminSuspendUser {
+        user: u64,
+        reason: String,
+        until: Option<std::time::SystemTime>,
+    },
+    /// Site admins: `Reply::AdminUserUnsuspended`.
+    AdminUnsuspendUser {
+        user: u64,
+    },
+    /// Site admins: `Reply::AdminUserDeleted`; `force_transfer` hands the user's guilds over.
+    AdminDeleteUser {
+        user: u64,
+        force_transfer: bool,
+        reason: String,
+    },
     SignOut,
     /// Launch: validate the saved session, if there is one.
     Resume,
@@ -836,6 +874,29 @@ pub enum Reply {
     },
     AdminFileDeleted {
         key: String,
+        result: R<()>,
+    },
+    /// Answer to `CheckTerms`.
+    Terms(R<TermsStatus>),
+    TermsAccepted {
+        version: String,
+        result: R<()>,
+    },
+    DeletionCodeSent(R<()>),
+    /// The account is gone and its session dead.
+    AccountDeleted(R<()>),
+    /// The address the export link goes to, masked.
+    DataExportQueued(R<String>),
+    AdminUserSuspended {
+        user: u64,
+        result: R<AdminUserRow>,
+    },
+    AdminUserUnsuspended {
+        user: u64,
+        result: R<AdminUserRow>,
+    },
+    AdminUserDeleted {
+        user: u64,
         result: R<()>,
     },
     SignedOut,
