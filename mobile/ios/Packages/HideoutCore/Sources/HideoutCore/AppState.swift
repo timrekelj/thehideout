@@ -92,6 +92,15 @@ public struct Unread: Sendable, Equatable {
 
 public enum Place: Sendable, Equatable { case home, guild(ID) }
 
+/// An explicit route the shell should show now: the conversation `channel` (a DM), with a nonce so a
+/// repeat is still a new request. Only `startDm` and the `StartDm` reply set it — the one navigation
+/// that isn't a tap on a link. Gateway events never set it, so an incoming DM doesn't move the user.
+public struct RouteRequest: Sendable, Equatable {
+    public var channel: ID
+    public var nonce: Int
+    public init(channel: ID, nonce: Int) { self.channel = channel; self.nonce = nonce }
+}
+
 /// Where the "New" divider sits in the channel being read.
 public enum Marker: Sendable, Equatable {
     case none
@@ -190,6 +199,8 @@ public struct AppState: Sendable {
     public var place: Place = .home
     /// The channel (or DM) whose transcript is open.
     public var openChannel: ID?
+    /// The route the shell should follow now (DMs tab selected, that conversation pushed). See `RouteRequest`.
+    public var routeRequest: RouteRequest?
     public var unread: [ID: Unread] = [:]
     public var marker: Marker = .none
     public var connection: ConnectionStatus = .connecting
@@ -205,6 +216,7 @@ public struct AppState: Sendable {
     public var outbox: [Effect] = []
     var nonceCounter = 0
     var noticeCounter = 0
+    var routeCounter = 0
 
     public struct SectionKey: Sendable, Hashable {
         public var guild: ID

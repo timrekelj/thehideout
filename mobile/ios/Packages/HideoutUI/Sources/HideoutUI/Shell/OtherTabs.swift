@@ -6,9 +6,20 @@ struct DMsTab: View {
     @Environment(AppStore.self) private var store
     @Environment(\.theme) private var theme
     @State private var showNewMessage = false
+    /// The conversation pushed on this tab's stack: the shell's explicit route (`MainShell` binds it),
+    /// or the row tapped in the list. nil: the list itself.
+    @Binding var pushed: ChannelRoute?
+
+    init(pushed: Binding<ChannelRoute?> = .constant(nil)) { _pushed = pushed }
+
+    /// The stack's path as that single route: the list at the root, at most one transcript on top, so
+    /// Back returns to the list and the shell's route request pushes (or replaces) the conversation.
+    private var path: Binding<[ChannelRoute]> {
+        Binding(get: { pushed.map { [$0] } ?? [] }, set: { pushed = $0.last })
+    }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: path) {
             let dms = store.state.dms.sorted { a, b in
                 (store.state.log(a.id)?.messages.last?.createdAt ?? a.createdAt) > (store.state.log(b.id)?.messages.last?.createdAt ?? b.createdAt)
             }
@@ -63,6 +74,8 @@ struct NewMessageSheet: View {
             TokenList {
                 ForEach(people) { user in
                     Button {
+                        // The reducer records the route request; the shell lands here in the
+                        // conversation (existing or freshly opened) once it is set.
                         store.startDm(user: user.id)
                         dismiss()
                     } label: {

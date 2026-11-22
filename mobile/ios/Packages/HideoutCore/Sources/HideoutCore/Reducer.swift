@@ -3,7 +3,8 @@ import Foundation
 // The reducer: pure transitions of `AppState`. A port of desktop's `apply.rs` plus the state methods it
 // calls (state.rs, moderation.rs, voice.rs, emoji.rs, structure.rs). Differences from desktop, all about
 // navigation: a phone shows a channel only when its transcript is pushed, so `openChannel` is explicit
-// (entering a server does not open its first channel) and a deleted open channel just closes.
+// (entering a server does not open its first channel), a deleted open channel just closes, and `startDm`
+// records a `routeRequest` — the one navigation that isn't a tap on a link, so the shell can push it.
 
 extension AppState {
     // MARK: notices
@@ -173,6 +174,7 @@ extension AppState {
         if let dm = oneToOneDm(with: user) {
             goHome()
             open(channel: dm.id)
+            requestRoute(dm.id)
         } else {
             outbox.append(.startDm(user: user))
         }
@@ -187,9 +189,17 @@ extension AppState {
             addDm(dm)
             goHome()
             open(channel: dm.id)
+            requestRoute(dm.id)
         case .failure(let e):
             notice(.danger, "Couldn't open the conversation. \(sentence(e.description))")
         }
+    }
+
+    /// The single explicit route: the shell shows `channel` now (DMs tab selected, its transcript pushed).
+    /// A nonce keeps two requests for the same conversation distinct, so the second still navigates.
+    mutating func requestRoute(_ channel: ID) {
+        routeCounter += 1
+        routeRequest = RouteRequest(channel: channel, nonce: routeCounter)
     }
 
     mutating func addDm(_ dm: DMChannel) {

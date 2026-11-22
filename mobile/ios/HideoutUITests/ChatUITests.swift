@@ -1,7 +1,8 @@
 import XCTest
 
 /// Phase 3a chat flows against the fake world (`--ui-testing`, signed in as tim): open a channel and send
-/// (pending then sent), react, edit, delete, open a DM, and a mention tap landing in the transcript.
+/// (pending then sent), react, edit, delete, open a DM, a mention tap landing in the transcript, and starting
+/// a DM from New message or a member profile landing in its conversation.
 @MainActor
 final class ChatUITests: XCTestCase {
     private func launch() -> XCUIApplication {
@@ -94,6 +95,64 @@ final class ChatUITests: XCTestCase {
         XCTAssertTrue(ana.waitForExistence(timeout: 10))
         ana.tap()
         XCTAssertTrue(composer(app).waitForExistence(timeout: 10))
+    }
+
+    /// New message → pick someone you already have a DM with → land in that conversation (composer, not
+    /// the sheet or the list), and Back returns to the list without stealing the tab.
+    func testNewMessageToAnExistingDmLandsInTheConversation() {
+        let app = launch()
+        XCTAssertTrue(app.tabBars.buttons["DMs"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["DMs"].tap()
+        let newMessage = app.buttons["New message"]
+        XCTAssertTrue(newMessage.waitForExistence(timeout: 10))
+        newMessage.tap()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5), "the New message sheet is up")
+        let ana = app.buttons["ana"].firstMatch
+        XCTAssertTrue(ana.waitForExistence(timeout: 10))
+        ana.tap()
+        XCTAssertTrue(app.navigationBars["ana"].waitForExistence(timeout: 10), "the DM transcript is pushed")
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 10))
+        // An ordinary back pops to the list; the selected tab must stay DMs.
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["bruno"].waitForExistence(timeout: 5), "back on the DM list")
+        XCTAssertTrue(app.tabBars.buttons["DMs"].isSelected)
+    }
+
+    /// New message → pick someone with no DM yet: the StartDm reply arrives asynchronously and the fresh
+    /// conversation still lands on screen. (Opening a server first loads the member list, so cvetka is a
+    /// known user — with no DM with tim in the fake world, this can only come through the sheet's startDm.)
+    func testNewMessageToSomeoneNewLandsInTheFreshDm() {
+        let app = launch()
+        openGeneral(app)
+        XCTAssertTrue(app.tabBars.buttons["DMs"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["DMs"].tap()
+        let newMessage = app.buttons["New message"]
+        XCTAssertTrue(newMessage.waitForExistence(timeout: 10))
+        newMessage.tap()
+        let cvetka = app.buttons["cvetka"].firstMatch
+        XCTAssertTrue(cvetka.waitForExistence(timeout: 10))
+        cvetka.tap()
+        XCTAssertTrue(app.navigationBars["cvetka"].waitForExistence(timeout: 10), "the fresh DM's transcript")
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 10))
+    }
+
+    /// A member profile's "Message" routes out of the guild transcript into the DM: the shell selects the
+    /// DMs tab and pushes the conversation, and the sheets over the transcript come down.
+    func testProfileMessageOpensTheDm() {
+        let app = launch()
+        openGeneral(app)
+        let members = app.buttons["Members"]
+        XCTAssertTrue(members.waitForExistence(timeout: 10))
+        members.tap()
+        let bruno = app.buttons["bruno"].firstMatch
+        XCTAssertTrue(bruno.waitForExistence(timeout: 10))
+        bruno.tap()
+        let message = app.buttons["Message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        message.tap()
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 10), "the DM transcript, not the guild one")
+        XCTAssertTrue(app.navigationBars["bruno"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["DMs"].isSelected, "the shell routed to the DMs tab")
     }
 
     /// Tapping a mention in the feed lands in the conversation, not the list (the Android bug this guards

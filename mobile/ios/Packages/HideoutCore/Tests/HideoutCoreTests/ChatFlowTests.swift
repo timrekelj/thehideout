@@ -57,6 +57,59 @@ struct ChatFlowTests {
         #expect(s.dms.count == before)
     }
 
+    // MARK: the explicit route (the shell follows `routeRequest` by pushing the conversation)
+
+    @Test func startDmRequestsTheRouteForAnExistingDm() async throws {
+        var s = try await makeState()
+        s.startDm(user: Ids.ana)
+        #expect(s.routeRequest == RouteRequest(channel: Ids.dmAna, nonce: 1))
+    }
+
+    @Test func startDmWithAStrangerRequestsNothingUntilTheReply() async throws {
+        var s = try await makeState()
+        s.startDm(user: 999)
+        #expect(s.outbox == [.startDm(user: 999)])
+        #expect(s.routeRequest == nil, "the async open asks the server first; the reply routes")
+    }
+
+    @Test func dmOpenedReplyRequestsTheRouteSoTheShellLandsInTheConversation() async throws {
+        var s = try await makeState()
+        let stranger = User(id: 777, username: "newperson")
+        s.applyDmOpened(result: .success(DMChannel(id: 888, participants: [s.users[Ids.tim]!, stranger])))
+        #expect(s.routeRequest == RouteRequest(channel: 888, nonce: 1))
+        // A second request is a new route even for the same conversation, so the shell follows it again.
+        s.applyDmOpened(result: .success(DMChannel(id: 888, participants: [s.users[Ids.tim]!, stranger])))
+        #expect(s.routeRequest == RouteRequest(channel: 888, nonce: 2))
+        #expect(s.routeRequest != RouteRequest(channel: 888, nonce: 1))
+    }
+
+    @Test func dmOpenedFailureRequestsNoRoute() async throws {
+        var s = try await makeState()
+        s.applyDmOpened(result: .failure(.notFound))
+        #expect(s.routeRequest == nil)
+    }
+
+    @Test func inboundDmEventsNeverRequestARoute() async throws {
+        var s = try await makeState()
+        // A DM arriving on the gateway (someone opened one with us, or a message in one) must not
+        // navigate the foreground: only the user's own Message/New message does.
+        s.applyEvent(.dmOpened(s.dm(Ids.dmAna)!))
+        s.applyEvent(.messageCreated(msg(100, in: Ids.dmAna, by: Ids.ana, guild: nil)))
+        #expect(s.routeRequest == nil)
+        #expect(s.openChannel == nil)
+        #expect(s.unread(Ids.dmAna) == Unread(count: 1, mentions: 1), "the inbound DM message is just unread")
+    }
+
+    @Test func whileTheDmIsOpenItsMessagesAreReadAndGuildOnesAreUnread() async throws {
+        var s = try await makeState()
+        s.startDm(user: Ids.ana)
+        s.outbox.removeAll()
+        s.applyEvent(.messageCreated(msg(100, in: Ids.dmAna, by: Ids.ana, guild: nil)))
+        s.applyEvent(.messageCreated(msg(101, in: Ids.general, by: Ids.bruno)))
+        #expect(s.unread(Ids.dmAna) == Unread(), "the open DM's transcript is on screen")
+        #expect(s.unread(Ids.general) == Unread(count: 1), "the guild transcript is not")
+    }
+
     // MARK: edit (optimistic, with rollback)
 
     @Test func editIsOptimisticAndTheReplySettlesIt() async throws {

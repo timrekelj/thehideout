@@ -64,6 +64,9 @@ struct MembersSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .sheet(item: $profile) { user in ProfileSheet(user: user) }
+            // A profile's "Message" routes the shell into the DM; this sheet (and the profile on it)
+            // comes down with the transcript it was opened over.
+            .onChange(of: store.state.routeRequest) { _, request in if request != nil { dismiss() } }
         }
         .presentationDetents([.medium, .large])
     }
@@ -82,6 +85,8 @@ struct ProfileSheet: View {
             Text(user.username).typeStyle(\.heading)
             if user.id != store.state.myID {
                 Button {
+                    // The reducer records the route request; the shell switches to the DMs tab and
+                    // pushes this conversation, and the sheets over the guild transcript dismiss.
                     store.startDm(user: user.id)
                     dismiss()
                 } label: {
