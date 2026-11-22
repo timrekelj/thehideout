@@ -148,6 +148,7 @@ impl Client {
         let mut request = hyper::Request::post(uri)
             .header(hyper::header::CONTENT_TYPE, content_type)
             .header(hyper::header::CONTENT_LENGTH, size)
+            .header(crate::client::CLIENT_HEADER, crate::client::client_header_value())
             .body(body)
             .map_err(|e| ApiError::InvalidArgument(format!("bad upload request: {e}")))?;
         if let Some(token) = self.token() {
@@ -180,6 +181,7 @@ impl Client {
             .parse()
             .map_err(|e| ApiError::InvalidArgument(format!("bad media url: {e}")))?;
         let request = hyper::Request::get(uri)
+            .header(crate::client::CLIENT_HEADER, crate::client::client_header_value())
             .body(connectrpc::client::full_body(Bytes::new()))
             .map_err(|e| ApiError::Other(e.to_string()))?;
         let response = self.http.send(request).await?;

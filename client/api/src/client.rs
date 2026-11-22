@@ -13,6 +13,19 @@ use crate::types::{Channel, ChannelKind, DmChannel, Event, Guild, Message, Page,
 
 type Result<T> = std::result::Result<T, ApiError>;
 
+/// Request header naming this app build, sent on every request.
+pub const CLIENT_HEADER: &str = "x-thehideout-client";
+
+/// `desktop/<version> (<os>)`.
+pub(crate) fn format_client_header(version: &str, os: &str) -> String {
+    format!("desktop/{version} ({os})")
+}
+
+/// The value of [`CLIENT_HEADER`] for this build.
+pub fn client_header_value() -> String {
+    format_client_header(env!("CARGO_PKG_VERSION"), std::env::consts::OS)
+}
+
 /// A TLS transport for `https://` base URLs, trusting the webpki root certificates.
 fn tls_client() -> HttpClient {
     use connectrpc::rustls;
@@ -93,7 +106,7 @@ impl Client {
             .base_url
             .parse()
             .map_err(|e| ApiError::InvalidArgument(format!("bad server url {:?}: {e}", self.base_url)))?;
-        let mut config = ClientConfig::new(uri);
+        let mut config = ClientConfig::new(uri).with_default_header(CLIENT_HEADER, client_header_value());
         if let Some(token) = self.token() {
             config = config.with_default_header("authorization", format!("Bearer {token}"));
         }

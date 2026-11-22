@@ -1,6 +1,7 @@
 //! The error type of every API call.
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use connectrpc::{ConnectError, ErrorCode};
 
@@ -40,6 +41,9 @@ pub enum ApiError {
     Precondition(String),
     /// The upload is larger than the server (or the local limit) allows.
     TooLarge,
+    /// The server refuses this app version (FAILED_PRECONDITION, message starting
+    /// "client too old"): the user must install a newer build.
+    ClientTooOld,
     /// The server could not be reached or the connection broke.
     Network(String),
     /// Anything else, with the server's message.
@@ -72,6 +76,7 @@ impl fmt::Display for ApiError {
             Self::Precondition(msg) if msg.is_empty() => f.write_str("not allowed right now"),
             Self::Precondition(msg) => write!(f, "not allowed: {msg}"),
             Self::TooLarge => f.write_str("file is too large"),
+            Self::ClientTooOld => f.write_str("this version of thehideout is too old, update required"),
             Self::Network(msg) => write!(f, "network error: {msg}"),
             Self::Other(msg) => write!(f, "{msg}"),
         }
@@ -99,6 +104,17 @@ impl ApiError {
 
 /// The server's message for a sign-up without an invite.
 const INVITE_REQUIRED: &str = "invite required";
+/// Prefix of the FAILED_PRECONDITION message a server sends to a client it no longer supports.
+const CLIENT_TOO_OLD: &str = "client too old";
+
+static UPDATE_REQUIRED: AtomicBool = AtomicBool::new(false);
+
+/// Whether any call so far was refused with [`ApiError::ClientTooOld`]. Sticky for the process:
+/// the app polls it to show its blocking "Update required" screen, wherever the call was made
+/// (a request or the gateway stream).
+pub fn update_required() -> bool {
+    UPDATE_REQUIRED.load(Ordering::Relaxed)
+}
 /// Type of the error detail on rejected codes.
 const CODE_ERROR: &str = "thehideout.v1.CodeError";
 
@@ -134,6 +150,10 @@ impl From<ConnectError> for ApiError {
             ErrorCode::ResourceExhausted => Self::RateLimited,
             ErrorCode::AlreadyExists => Self::AlreadyExists,
             ErrorCode::FailedPrecondition if msg == INVITE_REQUIRED => Self::InviteRequired,
+            ErrorCode::FailedPrecondition if msg.to_ascii_lowercase().starts_with(CLIENT_TOO_OLD) => {
+                UPDATE_REQUIRED.store(true, Ordering::Relaxed);
+                Self::ClientTooOld
+            }
             ErrorCode::FailedPrecondition => Self::Precondition(msg),
             ErrorCode::Unavailable | ErrorCode::DeadlineExceeded => Self::Network(msg),
             _ => Self::Other(msg),
@@ -159,6 +179,11 @@ mod tests {
         assert_eq!(map(ErrorCode::AlreadyExists), ApiError::AlreadyExists);
         assert_eq!(map(ErrorCode::FailedPrecondition), ApiError::Precondition("boom".into()));
         assert_eq!(ApiError::from(ConnectError::new(ErrorCode::FailedPrecondition, "invite required")), ApiError::InviteRequired);
+        assert_eq!(ApiError::from(ConnectError::new(ErrorCode::FailedPrecondition, "client too old: need 0.2.0")), ApiError::ClientTooOld);
+        assert!(update_required());
+        // Only FAILED_PRECONDITION, and only that prefix.
+        assert_eq!(map(ErrorCode::Internal), ApiError::Other("boom".into()));
+        assert_eq!(ApiError::from(ConnectError::new(ErrorCode::NotFound, "client too old")), ApiError::NotFound);
         assert_eq!(map(ErrorCode::Unavailable), ApiError::Network("boom".into()));
         assert_eq!(map(ErrorCode::Aborted), ApiError::Conflict);
         assert_eq!(map(ErrorCode::Unimplemented), ApiError::Unimplemented);
