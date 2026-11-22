@@ -2,11 +2,10 @@ package app.thehideout.ui.components
 
 import android.content.Intent
 import android.widget.FrameLayout
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,11 +18,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -44,7 +45,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -52,6 +52,7 @@ import app.thehideout.core.attachment.mediaUrl
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -66,10 +67,12 @@ fun AttachmentLightbox(request: LightboxRequest, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(initialPage = request.startIndex.coerceIn(0, request.items.lastIndex)) { request.items.size }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    val dismissFraction by derivedStateOf { (kotlin.math.abs(dragOffsetY) / DISMISS_DISTANCE).coerceIn(0f, 1f) }
+    val dismissFraction by remember { derivedStateOf { (abs(dragOffsetY) / DISMISS_DISTANCE).coerceIn(0f, 1f) } }
     var busy by remember { mutableStateOf(false) }
-
-    BackHandler(onBack = onDismiss)
+    // Only a page at scale 1 may be dragged to dismiss: a vertical pan while zoomed in pans the
+    // picture instead (ZoomableLightboxMedia's own `transformable`, gated by `canPan`).
+    var pageScale by remember { mutableFloatStateOf(1f) }
+    LaunchedEffect(pagerState.currentPage) { pageScale = 1f }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -84,12 +87,17 @@ fun AttachmentLightbox(request: LightboxRequest, onDismiss: () -> Unit) {
                     .pointerInput(Unit) {
                         detectVerticalDragGestures(
                             onDragEnd = {
-                                if (kotlin.math.abs(dragOffsetY) > DISMISS_DISTANCE) onDismiss() else dragOffsetY = 0f
+                                if (abs(dragOffsetY) > DISMISS_DISTANCE) onDismiss() else dragOffsetY = 0f
                             },
-                        ) { _, amount -> dragOffsetY += amount }
+                        ) { _, amount -> if (pageScale <= 1f) dragOffsetY += amount }
                     },
             ) { page ->
-                ZoomableLightboxMedia(request.items[page], mediaBase)
+                ZoomableLightboxMedia(
+                    item = request.items[page],
+                    mediaBase = mediaBase,
+                    isActive = pagerState.currentPage == page,
+                    onScaleChange = { if (page == pagerState.currentPage) pageScale = it },
+                )
             }
 
             val current = request.items[pagerState.currentPage]
@@ -104,65 +112,85 @@ fun AttachmentLightbox(request: LightboxRequest, onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.weight(1f).padding(start = 8.dp),
                 )
-                IconButton(onClick = {
+                IconButton(enabled = !busy, onClick = {
                     scope.launch {
                         busy = true
-                        val bytes = fetchAttachmentBytes(context, mediaUrl(mediaBase, current.key))
-                        val file = java.io.File(context.cacheDir, "attachments").apply { mkdirs() }.resolve(safeFileName(current.name))
-                        file.writeBytes(bytes)
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                        val share = Intent(Intent.ACTION_SEND).apply {
-                            type = current.contentType.ifBlank { "application/octet-stream" }
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        try {
+                            val file = fetchAttachmentToCache(context, mediaUrl(mediaBase, current.key), safeFileName(current.name))
+                            val uri = attachmentContentUri(context, file)
+                            val share = Intent(Intent.ACTION_SEND).apply {
+                                type = current.contentType.ifBlank { "application/octet-stream" }
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            runCatching { context.startActivity(Intent.createChooser(share, null)) }
+                        } catch (e: Exception) {
+                            attachmentErrorToast(context, e)
+                        } finally {
+                            busy = false
                         }
-                        context.startActivity(Intent.createChooser(share, null))
-                        busy = false
                     }
                 }) { SymIcon(Sym.Share, "Share", tint = MediaColors.ink) }
-                IconButton(onClick = {
+                IconButton(enabled = !busy, onClick = {
                     scope.launch {
                         busy = true
-                        val bytes = fetchAttachmentBytes(context, mediaUrl(mediaBase, current.key))
-                        saveAttachmentToDownloads(context, bytes, safeFileName(current.name), current.contentType)
-                        busy = false
+                        try {
+                            saveAttachmentToDownloads(context, mediaUrl(mediaBase, current.key), safeFileName(current.name), current.contentType)
+                        } catch (e: Exception) {
+                            attachmentErrorToast(context, e)
+                        } finally {
+                            busy = false
+                        }
                     }
                 }) { SymIcon(Sym.Download, "Save", tint = MediaColors.ink) }
                 IconButton(onClick = onDismiss) { SymIcon(Sym.Close, "Close", tint = MediaColors.ink) }
             }
             if (busy) {
                 Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)) {
-                    androidx.compose.material3.CircularProgressIndicator(color = MediaColors.ink)
+                    CircularProgressIndicator(color = MediaColors.ink)
                 }
             }
         }
     }
 }
 
-/** Pinch and double-tap zoom with pan on a picture; a plain, controller-driven surface on a video. */
+/**
+ * Pinch and double-tap zoom with pan on a picture; a plain, controller-driven surface on a video
+ * (no pinch or double-tap zoom there — scrubbing and seeking are the controller's job).
+ */
 @Composable
-private fun ZoomableLightboxMedia(item: LightboxItem, mediaBase: String) {
+private fun ZoomableLightboxMedia(item: LightboxItem, mediaBase: String, isActive: Boolean, onScaleChange: (Float) -> Unit) {
     var scale by remember(item.key) { mutableFloatStateOf(1f) }
     var offset by remember(item.key) { mutableStateOf(Offset.Zero) }
+    val zoomable = !item.isVideo
     Box(
         Modifier
             .fillMaxSize()
-            // canPan = { scale != 1f }: a single-finger drag only pans once zoomed in, so an
-            // unzoomed swipe reaches the HorizontalPager above instead of being eaten here.
-            .transformable(
-                state = androidx.compose.foundation.gestures.rememberTransformableState { _, zoom, pan, _ ->
-                    val next = (scale * zoom).coerceIn(1f, 5f)
-                    scale = next
-                    offset = if (next <= 1f) Offset.Zero else offset + pan
+            .then(
+                if (zoomable) {
+                    Modifier
+                        // canPan = { scale != 1f }: a single-finger drag only pans once zoomed in, so an
+                        // unzoomed swipe reaches the HorizontalPager above instead of being eaten here.
+                        .transformable(
+                            state = rememberTransformableState { _, zoom, pan, _ ->
+                                val next = (scale * zoom).coerceIn(1f, 5f)
+                                scale = next
+                                offset = if (next <= 1f) Offset.Zero else offset + pan
+                                onScaleChange(next)
+                            },
+                            canPan = { scale != 1f },
+                        )
+                        .pointerInput(item.key) {
+                            detectTapGestures(onDoubleTap = {
+                                scale = if (scale > 1f) 1f else 2.5f
+                                offset = Offset.Zero
+                                onScaleChange(scale)
+                            })
+                        }
+                } else {
+                    Modifier
                 },
-                canPan = { scale != 1f },
             )
-            .pointerInput(item.key) {
-                detectTapGestures(onDoubleTap = {
-                    scale = if (scale > 1f) 1f else 2.5f
-                    offset = Offset.Zero
-                })
-            }
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -172,25 +200,37 @@ private fun ZoomableLightboxMedia(item: LightboxItem, mediaBase: String) {
         contentAlignment = Alignment.Center,
     ) {
         if (item.isVideo) {
-            LightboxVideo(mediaUrl(mediaBase, item.key))
+            LightboxVideo(mediaUrl(mediaBase, item.key), item.startPositionMs, isActive)
         } else {
             AttachmentImage(mediaUrl(mediaBase, item.key), item.name, Modifier.fillMaxSize(), ContentScale.Fit)
         }
     }
 }
 
-/** A video surface with Media3's standard controller (play/pause, scrub, time) via `PlayerView`. */
+/**
+ * A video surface with Media3's standard controller (play/pause, scrub, time) via `PlayerView`:
+ * starts at `startPositionMs` (handed off from the inline card's "Expand"), and plays only while
+ * `isActive` (the pager's current page), so swiping away pauses it and only one player plays at once.
+ */
 @Composable
-private fun LightboxVideo(url: String) {
+private fun LightboxVideo(url: String, startPositionMs: Long, isActive: Boolean) {
     val context = LocalContext.current
     val player = remember(url) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(url))
+            seekTo(startPositionMs)
             prepare()
-            playWhenReady = true
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
+    DisposableEffect(player) {
+        onDispose {
+            ActiveAttachmentPlayer.released(player)
+            player.release()
+        }
+    }
+    LaunchedEffect(player, isActive) {
+        if (isActive) ActiveAttachmentPlayer.play(player) else player.pause()
+    }
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = {
