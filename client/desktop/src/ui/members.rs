@@ -74,7 +74,7 @@ pub fn build(a: &App, k: &Kit, layer: &mut Vec<El>, allowed: bool) -> El {
         let user = u.id;
         // Kick and Ban are offered on a press or a right-click, to those who may and only for
         // someone they outrank.
-        let moderate = guild.filter(|g| s.has_member_menu(*g, user));
+        let moderate = guild.filter(|g| !u.deleted && s.has_member_menu(*g, user));
         let mut row = MemberRow::new(user.to_string(), u.username.clone())
             .backdrop(t.surface.color())
             .owner(owner == Some(user))

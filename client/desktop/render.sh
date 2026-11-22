@@ -33,6 +33,13 @@ for mode in "" "-light"; do
   $BIN --scene "server-settings-roles-voice$mode" --size 1280x1100 --at 1 --snap "$OUT/server-settings-roles-voice$mode.png" "$@"
   $BIN --scene "main-small$mode" --size 800x600 --at 1 --snap "$OUT/main-small$mode.png" "$@"
 done
+# The account lifecycle screens (see scenes.rs). The Security page with its Account section is long.
+for mode in "" "-light"; do
+  for scene in auth-invite-accept-terms terms-update auth-suspended delete-account-dialog delete-account-owns-guilds admin-users-actions admin-suspend-dialog message-deleted-user; do
+    $BIN --scene "$scene$mode" --size 1280x800 --at 1 --snap "$OUT/$scene$mode.png" "$@"
+  done
+  $BIN --scene "settings-account$mode" --size 1280x1500 --at 1 --snap "$OUT/settings-account$mode.png" "$@"
+done
 # The Appearance, Voice & audio and Security pages are tall: a taller window shows all of them.
 for mode in "" "-light"; do
   for scene in settings-appearance settings-voice settings-voice-ptt settings-security; do

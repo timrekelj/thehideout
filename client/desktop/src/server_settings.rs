@@ -216,6 +216,10 @@ impl AppState {
 
     /// The colour of a member's name: that of their highest-positioned role that has one.
     pub fn name_color(&self, guild: u64, user: u64) -> PaletteColor {
+        // A deleted account has no role colour to show: its name is the plain placeholder.
+        if self.data.users.get(&user).is_some_and(|u| u.deleted) {
+            return PaletteColor::None;
+        }
         let mine = self.member_role_ids(guild, user);
         self.roles_of(guild).iter().filter(|r| mine.contains(&r.id) && r.color != PaletteColor::None).max_by_key(|r| r.position).map_or(PaletteColor::None, |r| r.color)
     }

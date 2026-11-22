@@ -2,6 +2,7 @@
 //! wires handlers that mutate `AppState` through `App::act` (which also hands the queued commands
 //! to the backend). Nothing here owns state.
 
+pub mod account;
 pub mod admin;
 pub mod attach;
 pub mod auth;

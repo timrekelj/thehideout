@@ -277,6 +277,7 @@ pub fn page(a: &App, k: &Kit) -> El {
         "Where your account is signed in. Sign out of anything you don't recognise.",
         devices,
     ));
+    page = page.child(super::account::security_section(a, k));
     col().w_full().items_center().child(page)
 }
 

@@ -249,6 +249,9 @@ impl AppState {
             return;
         }
         ad.user_errors.insert(user, lifecycle_error_text(e));
+        if let ApiError::OwnsGuilds(guilds) = e {
+            self.ui.account.admin_owned.insert(user, guilds.clone());
+        }
     }
 
     pub fn admin_suspend_replied(&mut self, user: u64, result: Result<AdminUserRow, ApiError>) {
@@ -259,6 +262,7 @@ impl AppState {
             Ok(fresh) => {
                 let name = fresh.user.username.clone();
                 self.merge_admin_row(user, fresh);
+                self.admin_user_dialog_settled(user, true);
                 self.toast(ToastKind::Success, format!("{name} is suspended"));
             }
             Err(e) => self.admin_user_failed(user, &e),
@@ -297,6 +301,7 @@ impl AppState {
                     }
                     ad.stale.insert(crate::admin::AdminPage::Audit);
                 }
+                self.admin_user_dialog_settled(user, true);
                 self.toast(ToastKind::Success, format!("{name} was deleted"));
             }
             Err(e) => self.admin_user_failed(user, &e),

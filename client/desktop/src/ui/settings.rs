@@ -93,7 +93,7 @@ pub(super) fn frame(a: &App, k: &Kit, bar: f32, nav: El, page: El) -> El {
 
 /// The left column: a title as tall as the sidebar's header, then one row per page.
 fn nav(k: &Kit, section: Section) -> El {
-    nav_shell(
+    let rows = nav_shell(
         k,
         "Settings",
         vec![
@@ -116,7 +116,9 @@ fn nav(k: &Kit, section: Section) -> El {
                 .build(k)
                 .key("settings-nav-security"),
         ],
-    )
+    );
+    // The version and the legal links sit at the bottom of the nav.
+    rows.child(el().grow(1.0)).child(super::account::about(k))
 }
 
 /// A nav column: `title` as tall as the sidebar's header, then `rows`.

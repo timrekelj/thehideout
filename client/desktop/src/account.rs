@@ -224,7 +224,7 @@ impl AppState {
     }
 
     fn auth_invalid(&mut self, field: AuthField, message: &str) {
-        self.auth.error = Some(AuthError { field, message: message.into() });
+        self.auth.error = Some(AuthError { field, message: message.into(), suspension: None });
     }
 
     /// Enter or the primary button, whatever the step.
@@ -594,6 +594,7 @@ impl AppState {
 
     /// After the first load of a session: the sign-up offer, if one is due.
     pub(crate) fn after_initial(&mut self) {
+        self.check_terms();
         if let Some(passkey) = self.ui.security.welcome.take() {
             if passkey {
                 self.ui.security.next = Some(SecKind::Welcome);

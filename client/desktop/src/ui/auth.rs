@@ -211,7 +211,8 @@ fn to_sign_in(a: &mut App) {
 pub fn build(a: &App, k: &Kit) -> El {
     let t = theme_of(k);
     let auth = &a.state.auth;
-    let top_level = matches!(auth.step, AuthStep::Password | AuthStep::InviteCode);
+    let suspension = auth.error.as_ref().and_then(|e| e.suspension.as_ref());
+    let top_level = suspension.is_none() && matches!(auth.step, AuthStep::Password | AuthStep::InviteCode);
 
     let mut card = col()
         .key("auth-card")
@@ -242,7 +243,11 @@ pub fn build(a: &App, k: &Kit) -> El {
                     .w_full(),
             ),
     );
-    for part in step(a, k) {
+    let parts = match suspension {
+        Some(s) => super::account::suspended_card(a, k, s),
+        None => step(a, k),
+    };
+    for part in parts {
         card = card.child(part);
     }
     if top_level {
@@ -789,19 +794,98 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                             .a11y_hidden(),
                     ),
             );
+            out.push(agree_row(a, k));
+            out.push(age_row(a, k, preview.minimum_age));
+            let ready = auth.accept_terms && auth.confirm_age;
+            if !ready && !busy {
+                out.push(
+                    text("Tick both boxes to create your account.")
+                        .key("auth-agree-hint")
+                        .font(type_::at(k, type_::CAPTION))
+                        .color(t.text_muted.color())
+                        .wrap()
+                        .w_full(),
+                );
+            }
             out.extend(form_error(a, k));
-            out.push(primary(
-                k,
-                if busy {
-                    "Creating account\u{2026}"
-                } else {
-                    "Create account"
-                },
-                busy,
-            ));
+            out.push(create_button(k, busy, !ready));
         }
     }
     out
+}
+
+/// "Create account": disabled while busy or while the terms or age box is unticked.
+fn create_button(k: &Kit, busy: bool, unticked: bool) -> El {
+    let label = if busy { "Creating account\u{2026}" } else { "Create account" };
+    Button::new(label)
+        .disabled(busy || unticked)
+        .on_press(|a: &mut App| a.act(|s| s.submit_auth()))
+        .build(k)
+        .key("auth-submit")
+        .w_full()
+        .mt(4.0)
+}
+
+/// A checkbox with its label to the right (the label may hold links, so it is not the
+/// checkbox's own; the box carries the name for assistive technology).
+fn check_row(k: &Kit, key: &str, name: &str, on: bool, toggle: fn(&mut App), label: El) -> El {
+    row()
+        .key(key.to_owned())
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(
+            Checkbox::new(on)
+                .label(name.to_owned())
+                .hide_label()
+                .on_toggle(toggle)
+                .build(k),
+        )
+        .child(label.grow(1.0).shrink().min_w(0.0))
+}
+
+/// "I agree to the Terms and Privacy Policy", the two names being links to the server's pages.
+fn agree_row(a: &App, k: &Kit) -> El {
+    let t = theme_of(k);
+    let plain = |s: &str| {
+        text(s.to_owned())
+            .font(type_::at(k, type_::CONTROL))
+            .color(t.text.color())
+    };
+    let label = row()
+        .gap(4.0)
+        .center_y()
+        .flex_wrap()
+        .child(plain("I agree to the"))
+        .child(super::account::legal_link(k, "auth-agree-terms", "Terms", "terms", true).font(type_::at(k, type_::CONTROL)))
+        .child(plain("and"))
+        .child(super::account::legal_link(k, "auth-agree-privacy", "Privacy Policy", "privacy", true).font(type_::at(k, type_::CONTROL)));
+    check_row(
+        k,
+        "auth-agree",
+        "I agree to the Terms and Privacy Policy",
+        a.state.auth.accept_terms,
+        |a: &mut App| a.state.auth.accept_terms = !a.state.auth.accept_terms,
+        label,
+    )
+}
+
+/// "I'm 16 or older" (the server's minimum age).
+fn age_row(a: &App, k: &Kit, minimum_age: u32) -> El {
+    let t = theme_of(k);
+    let words = format!("I'm {minimum_age} or older");
+    let label = text(words.clone())
+        .font(type_::at(k, type_::CONTROL))
+        .color(t.text.color())
+        .a11y_hidden();
+    check_row(
+        k,
+        "auth-age",
+        &words,
+        a.state.auth.confirm_age,
+        |a: &mut App| a.state.auth.confirm_age = !a.state.auth.confirm_age,
+        label,
+    )
 }
 
 /// "Server: http://127.0.0.1:8080 · Change", which opens a field for another URL.
@@ -841,5 +925,11 @@ fn server_line(a: &App, k: &Kit) -> El {
             .on_submit(|a: &mut App, _| a.state.auth.server_open = false);
         c = c.child(col().key("auth-server").w_full().child(input.build(k)));
     }
+    c = c.child(
+        row()
+            .w_full()
+            .center()
+            .child(super::account::legal_links(k, "auth")),
+    );
     c.child(el().h(0.0))
 }

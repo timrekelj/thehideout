@@ -1032,6 +1032,108 @@ fn invite_reset(a: &mut App, dark: bool) {
     *a = app;
 }
 
+// ---- the account lifecycle ---------------------------------------------------------------------
+
+/// The invite's account step with the terms ticked and the age box still empty.
+fn auth_invite_accept_terms(a: &mut App, dark: bool) {
+    auth_invite_accept(a, dark);
+    a.state.auth.add_passkey = false;
+    a.state.auth.accept_terms = true;
+}
+
+/// The server's terms moved on since this user accepted them.
+fn terms_update(a: &mut App, dark: bool) {
+    let (mut app, fake) = booted(dark);
+    fake.outdate_terms();
+    app.act(|s| s.check_terms());
+    app.pump();
+    *a = app;
+}
+
+/// Signed out because the account is suspended for a week.
+fn auth_suspended(a: &mut App, dark: bool) {
+    *a = signed_out(dark);
+    let until = fake_now() + std::time::Duration::from_secs(7 * 86_400);
+    let e = thehideout_api::ApiError::Suspended { reason: "Spamming links in several servers".into(), until: Some(until) };
+    a.state.auth.error = Some(crate::forms::auth_error(&e));
+}
+
+/// Settings → Security, down to the export and the Danger zone (rendered in a tall window).
+fn settings_account(a: &mut App, dark: bool) {
+    let mut app = security_page(dark);
+    app.state.ui.lifecycle.export_sent_to = Some("t***@example.com".into());
+    *a = app;
+}
+
+/// "Delete account" for an account with a password and an authenticator app, half filled in.
+fn delete_account_dialog(a: &mut App, dark: bool) {
+    let (mut app, fake) = booted_as(dark, "cvetka");
+    fake.enable_totp("cvetka");
+    app.act(|s| s.open_security());
+    app.pump();
+    app.act(|s| s.open_delete_account());
+    if let Some(d) = app.state.ui.account.delete.as_mut() {
+        d.password.replace_text("hunter22");
+        d.password.focused = false;
+        d.totp.replace_text("482");
+    }
+    *a = app;
+}
+
+/// Tim owns The Hideout: the server refuses and names it.
+fn delete_account_owns_guilds(a: &mut App, dark: bool) {
+    let (mut app, _fake) = booted(dark);
+    app.act(|s| s.open_security());
+    app.pump();
+    app.act(|s| s.open_delete_account());
+    if let Some(d) = app.state.ui.account.delete.as_mut() {
+        d.password.replace_text("hunter22");
+        d.password.focused = false;
+    }
+    app.act(|s| s.submit_delete_account());
+    app.pump();
+    *a = app;
+}
+
+/// The Users page with one account suspended, one deleted and Ana's actions menu open.
+fn admin_users_actions(a: &mut App, dark: bool) {
+    let mut app = admin_at(dark, AdminPage::Users);
+    let until = fake_now() + std::time::Duration::from_secs(7 * 86_400);
+    app.act(|s| s.admin_suspend(BRUNO, "Spamming links", Some(until)));
+    app.pump();
+    app.act(|s| s.toggle_admin_menu(ANA));
+    app.pump();
+    app.state.ui.toasts.clear();
+    *a = app;
+}
+
+/// The Suspend dialog with a reason typed.
+fn admin_suspend_dialog(a: &mut App, dark: bool) {
+    let mut app = admin_at(dark, AdminPage::Users);
+    app.act(|s| s.ask_admin_suspend(ANA));
+    if let Some(crate::state::AdminUserDialog::Suspend { reason, .. }) = app.state.ui.account.admin_dialog.as_mut() {
+        reason.replace_text("Spamming links in #general");
+    }
+    *a = app;
+}
+
+/// A member whose account was deleted: "Deleted user" in the chat and the member list.
+fn message_deleted_user(a: &mut App, dark: bool) {
+    let (mut app, fake) = booted(dark);
+    let ana = app.state.data.users.get(&ANA).cloned().expect("ana is known");
+    let deleted = thehideout_api::User {
+        deleted: true,
+        username: crate::lifecycle::DELETED_USER.into(),
+        avatar: None,
+        email: None,
+        is_admin: false,
+        ..ana
+    };
+    fake.gateway(thehideout_api::GatewayUpdate::Event(thehideout_api::Event::UserUpdated(deleted)));
+    app.pump();
+    *a = app;
+}
+
 type Scene = (&'static str, fn(&mut App));
 
 pub const SCENES: &[Scene] = &[
@@ -1148,6 +1250,24 @@ pub const SCENES: &[Scene] = &[
     }),
     ("profile-dialog", |a| profile_dialog(a, true)),
     ("profile-dialog-light", |a| profile_dialog(a, false)),
+    ("auth-invite-accept-terms", |a| auth_invite_accept_terms(a, true)),
+    ("auth-invite-accept-terms-light", |a| auth_invite_accept_terms(a, false)),
+    ("terms-update", |a| terms_update(a, true)),
+    ("terms-update-light", |a| terms_update(a, false)),
+    ("auth-suspended", |a| auth_suspended(a, true)),
+    ("auth-suspended-light", |a| auth_suspended(a, false)),
+    ("settings-account", |a| settings_account(a, true)),
+    ("settings-account-light", |a| settings_account(a, false)),
+    ("delete-account-dialog", |a| delete_account_dialog(a, true)),
+    ("delete-account-dialog-light", |a| delete_account_dialog(a, false)),
+    ("delete-account-owns-guilds", |a| delete_account_owns_guilds(a, true)),
+    ("delete-account-owns-guilds-light", |a| delete_account_owns_guilds(a, false)),
+    ("admin-users-actions", |a| admin_users_actions(a, true)),
+    ("admin-users-actions-light", |a| admin_users_actions(a, false)),
+    ("admin-suspend-dialog", |a| admin_suspend_dialog(a, true)),
+    ("admin-suspend-dialog-light", |a| admin_suspend_dialog(a, false)),
+    ("message-deleted-user", |a| message_deleted_user(a, true)),
+    ("message-deleted-user-light", |a| message_deleted_user(a, false)),
     ("emoji-picker", |a| emoji_picker(a, true)),
     ("emoji-picker-ocean", |a| {
         emoji_picker(a, true);

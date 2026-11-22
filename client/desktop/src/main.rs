@@ -41,6 +41,8 @@ mod moderation_ui_tests;
 mod moderation_tests;
 #[cfg(test)]
 mod account_lifecycle_tests;
+#[cfg(test)]
+mod account_ui_tests;
 mod perms;
 mod real;
 #[cfg(test)]

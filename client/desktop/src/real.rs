@@ -200,6 +200,15 @@ impl Shared {
         self.push(Reply::Gateway(GatewayUpdate::AuthExpired));
     }
 
+    /// The server says the account is suspended: forget the session like `expire`, and tell the
+    /// app why (it shows the sign-in screen's suspended card).
+    fn suspended(&self, reason: String, until: Option<std::time::SystemTime>) {
+        self.new_generation();
+        self.client().set_token(None);
+        self.store.clear();
+        self.push(Reply::Suspended { reason, until });
+    }
+
     /// The form's server, normalised, and a client for it without a token (sign-in calls).
     fn signed_out_client(&self) -> (String, Client) {
         let url = normalize(&self.server.lock().unwrap());
@@ -342,10 +351,10 @@ impl RealBackend {
             if shared.generation() != generation {
                 return;
             }
-            if matches!(result, Err(ApiError::Unauthenticated)) {
-                shared.expire();
-            } else {
-                shared.push(make(result));
+            match result {
+                Err(ApiError::Unauthenticated) => shared.expire(),
+                Err(ApiError::Suspended { reason, until }) => shared.suspended(reason, until),
+                result => shared.push(make(result)),
             }
         });
     }

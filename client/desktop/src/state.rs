@@ -333,6 +333,8 @@ pub struct Ui {
     pub admin: Option<crate::admin::AdminState>,
     /// Terms prompts, account deletion and data export (see `lifecycle.rs`).
     pub lifecycle: crate::lifecycle::Lifecycle,
+    /// The delete-account dialog and the admin's user actions (see the end of this file).
+    pub account: AccountUi,
     /// Text for the next poll to put on the clipboard (a press handler has no `Tx`).
     pub copy_request: Option<String>,
     /// The message being edited in the transcript.
@@ -401,6 +403,7 @@ impl Ui {
             server_settings: None,
             admin: None,
             lifecycle: Default::default(),
+            account: Default::default(),
             copy_request: None,
             editing: None,
             toast_seq: 0,
@@ -1267,7 +1270,7 @@ impl AppState {
                     .data
                     .users
                     .values()
-                    .find(|u| u.id != me && u.username.to_lowercase() == wanted)
+                    .find(|u| u.id != me && !u.deleted && u.username.to_lowercase() == wanted)
                 {
                     Some(u) => Command::OpenDm { user_id: u.id },
                     None => return fail(d, format!("No one called \"{wanted}\" in your servers")),
@@ -1393,6 +1396,197 @@ pub fn chat_id_of(m: &Message, me: u64) -> String {
         format!("n:{}", m.nonce)
     } else {
         format!("m:{}", m.id)
+    }
+}
+
+// ---- the account screens' own state --------------------------------------------------------------
+
+/// The suspend dialog's durations: the label and the days (`None`: until an admin lifts it).
+pub const SUSPEND_DURATIONS: [(&str, Option<u64>); 4] =
+    [("1 day", Some(1)), ("7 days", Some(7)), ("30 days", Some(30)), ("Indefinitely", None)];
+
+/// When a suspension picked from [`SUSPEND_DURATIONS`] ends, counted from `now`.
+pub fn suspend_until(now: SystemTime, choice: usize) -> Option<SystemTime> {
+    let days = SUSPEND_DURATIONS.get(choice).and_then(|d| d.1)?;
+    Some(now + std::time::Duration::from_secs(days * 86_400))
+}
+
+/// The fields of the "Delete account" dialog (what is asked depends on the account: a password,
+/// or an emailed code when it has none, plus the authenticator code when that is on).
+pub struct DeleteDialog {
+    pub password: TextEdit,
+    pub email_code: TextEdit,
+    pub totp: TextEdit,
+}
+
+/// An admin's question about one user.
+pub enum AdminUserDialog {
+    Suspend { user: u64, reason: TextEdit, duration: usize, open: bool },
+    Delete { user: u64, reason: TextEdit, force: bool },
+}
+
+impl AdminUserDialog {
+    pub fn user(&self) -> u64 {
+        match self {
+            AdminUserDialog::Suspend { user, .. } | AdminUserDialog::Delete { user, .. } => *user,
+        }
+    }
+}
+
+/// UI-only state of the account screens (the lifecycle's own state is in `lifecycle.rs`).
+#[derive(Default)]
+pub struct AccountUi {
+    pub delete: Option<DeleteDialog>,
+    /// The Users page's open actions menu (the user it belongs to).
+    pub admin_menu: Option<u64>,
+    pub admin_dialog: Option<AdminUserDialog>,
+    /// The servers that stopped an admin's deletion of a user (the server named them).
+    pub admin_owned: HashMap<u64, Vec<thehideout_api::OwnedGuild>>,
+}
+
+impl AppState {
+    /// Whether the account has no password (it signs in with codes or passkeys), once the
+    /// Security info says so.
+    pub fn passwordless(&self) -> bool {
+        self.ui.security.info.as_ref().is_some_and(|i| !i.summary.has_password)
+    }
+
+    pub fn has_totp(&self) -> bool {
+        self.ui.security.totp == Some(true)
+    }
+
+    pub fn open_delete_account(&mut self) {
+        let lc = &mut self.ui.lifecycle;
+        lc.delete_error = None;
+        lc.owned_guilds.clear();
+        lc.deletion_code_sent = false;
+        let mut password = TextEdit::new("").secure();
+        password.focused = !self.passwordless();
+        self.ui.account.delete = Some(DeleteDialog { password, email_code: TextEdit::new(""), totp: TextEdit::new("") });
+    }
+
+    pub fn close_delete_account(&mut self) {
+        // A deletion in flight cannot be taken back: the dialog stays until it answers.
+        if !self.ui.lifecycle.delete_busy {
+            self.ui.account.delete = None;
+        }
+    }
+
+    /// Everything the account asks for is filled in.
+    pub fn delete_ready(&self) -> bool {
+        let Some(d) = &self.ui.account.delete else { return false };
+        let code = |e: &TextEdit| e.text.trim().chars().filter(char::is_ascii_digit).count() == 6;
+        let proof = if self.passwordless() { code(&d.email_code) } else { !d.password.text.is_empty() };
+        proof && (!self.has_totp() || code(&d.totp))
+    }
+
+    /// "Delete account" in the dialog.
+    pub fn submit_delete_account(&mut self) {
+        if !self.delete_ready() {
+            return;
+        }
+        let Some(d) = &self.ui.account.delete else { return };
+        let (password, code, totp) = if self.passwordless() {
+            (String::new(), d.email_code.text.clone(), d.totp.text.clone())
+        } else {
+            (d.password.text.clone(), String::new(), d.totp.text.clone())
+        };
+        let totp = if self.has_totp() { totp } else { String::new() };
+        self.delete_account(&password, &code, &totp);
+    }
+
+    /// A server named in the "you still own" list: leave the dialog for its Overview page, where
+    /// the owner transfers or deletes it.
+    pub fn open_owned_server(&mut self, guild: u64) {
+        self.ui.account.delete = None;
+        self.ui.lifecycle.owned_guilds.clear();
+        self.ui.lifecycle.delete_error = None;
+        self.open_server_settings(guild);
+    }
+
+    /// The live session was refused as suspended: back to the sign-in screen's suspended card.
+    pub fn session_suspended(&mut self, reason: String, until: Option<SystemTime>) {
+        let error = crate::forms::auth_error(&thehideout_api::ApiError::Suspended { reason, until });
+        self.reset(Some(error));
+        self.outbox.push(Command::SignOut);
+    }
+
+    /// "Back to sign in" on the suspended card.
+    pub fn dismiss_suspension(&mut self) {
+        self.auth.error = None;
+    }
+
+    // ---- admin: actions on one user --------------------------------------------------------------
+
+    /// Admins and yourself are out of reach: the server refuses suspending or deleting them.
+    pub fn admin_can_act_on(&self, user: u64) -> bool {
+        user != self.my_id()
+            && self.ui.admin.as_ref().and_then(|ad| ad.users.items.iter().find(|r| r.user.id == user)).is_some_and(|r| !r.user.is_admin && !r.deleted)
+    }
+
+    pub fn toggle_admin_menu(&mut self, user: u64) {
+        let a = &mut self.ui.account;
+        a.admin_menu = if a.admin_menu == Some(user) { None } else { Some(user) };
+    }
+
+    pub fn close_admin_menu(&mut self) {
+        self.ui.account.admin_menu = None;
+    }
+
+    pub fn ask_admin_suspend(&mut self, user: u64) {
+        if !self.admin_can_act_on(user) {
+            return;
+        }
+        let mut reason = TextEdit::new("");
+        reason.focused = true;
+        self.ui.account.admin_menu = None;
+        self.ui.account.admin_dialog = Some(AdminUserDialog::Suspend { user, reason, duration: 1, open: false });
+    }
+
+    pub fn ask_admin_delete(&mut self, user: u64) {
+        if !self.admin_can_act_on(user) {
+            return;
+        }
+        self.ui.account.admin_menu = None;
+        self.ui.account.admin_owned.remove(&user);
+        if let Some(ad) = self.ui.admin.as_mut() {
+            ad.user_errors.remove(&user);
+        }
+        let mut reason = TextEdit::new("");
+        reason.focused = true;
+        self.ui.account.admin_dialog = Some(AdminUserDialog::Delete { user, reason, force: false });
+    }
+
+    pub fn cancel_admin_user_dialog(&mut self) {
+        let user = self.ui.account.admin_dialog.as_ref().map(AdminUserDialog::user);
+        if user.is_some_and(|u| self.ui.admin.as_ref().is_some_and(|ad| ad.busy_users.contains(&u))) {
+            return;
+        }
+        self.ui.account.admin_dialog = None;
+    }
+
+    /// "Suspend" / "Delete user" in the dialog.
+    pub fn submit_admin_user_dialog(&mut self) {
+        let now = (self.now)();
+        match &self.ui.account.admin_dialog {
+            Some(AdminUserDialog::Suspend { user, reason, duration, .. }) => {
+                let (user, reason, until) = (*user, reason.text.clone(), suspend_until(now, *duration));
+                self.admin_suspend(user, &reason, until);
+            }
+            Some(AdminUserDialog::Delete { user, reason, force }) => {
+                let (user, reason, force) = (*user, reason.text.clone(), *force);
+                self.admin_delete_user(user, force, &reason);
+            }
+            None => {}
+        }
+    }
+
+    /// The reply to a suspend or delete came back: a success closes the dialog, a refusal keeps it
+    /// open with the row's error.
+    pub(crate) fn admin_user_dialog_settled(&mut self, user: u64, ok: bool) {
+        if ok && self.ui.account.admin_dialog.as_ref().is_some_and(|d| d.user() == user) {
+            self.ui.account.admin_dialog = None;
+        }
     }
 }
 
