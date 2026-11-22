@@ -1,0 +1,68 @@
+# Reverse proxy with automatic HTTPS (Let's Encrypt). Configured via env vars from
+# compose.yml: THEHIDEOUT_DOMAIN, LIVEKIT_DOMAIN, ACME_EMAIL.
+{
+	email {$ACME_EMAIL}
+
+	servers {
+		timeouts {
+			# Slow-loris protection and upload limits. There is deliberately NO
+			# `write` timeout: the gateway is a long-lived server-streaming response.
+			read_header 30s
+			read_body 10m
+			idle 10m
+		}
+	}
+}
+
+# Shared by both sites.
+(secure_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}
+
+# The thehideout server: Connect RPC (HTTP/1.1 + h2), the gateway stream and
+# /media. The LiveKit webhook is NOT proxied (LiveKit calls the server directly
+# inside the compose network).
+{$THEHIDEOUT_DOMAIN} {
+	import secure_headers
+	encode zstd gzip
+
+	# Largest attachment is 50 MiB; allow some multipart overhead.
+	request_body {
+		max_size 60MB
+	}
+
+	# Never expose the webhook (or health details) to the internet.
+	@internal path /livekit/webhook /ready
+	respond @internal 404
+
+	reverse_proxy server:8080 {
+		# Stream the gateway response as it is produced instead of buffering it.
+		flush_interval -1
+		# Caddy sets X-Forwarded-For / -Proto / -Host itself (and discards any value
+		# a client sent, since no trusted_proxies is configured).
+		transport http {
+			dial_timeout 10s
+			# No read/write timeout towards the server: gateway streams stay open for
+			# hours. Dead peers are detected by the TCP keepalive and the heartbeat.
+			keepalive 2m
+			read_timeout 0
+			write_timeout 0
+		}
+		health_uri /health
+		health_interval 15s
+		health_timeout 5s
+	}
+}
+
+# LiveKit signalling (WebSocket); media does not pass through Caddy.
+{$LIVEKIT_DOMAIN} {
+	import secure_headers
+	reverse_proxy livekit:7880 {
+		flush_interval -1
+	}
+}

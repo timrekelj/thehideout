@@ -1,0 +1,290 @@
+# thehideout production stack: server + ScyllaDB + LiveKit (with TURN) + Caddy (TLS).
+#
+# Run from this directory, with the env file passed explicitly:
+#
+#   cp .env.production.example .env.production   # then fill it in
+#   docker compose --env-file .env.production up -d --build
+#
+# Optional bundled S3 (SeaweedFS) instead of an external provider:
+#   docker compose --env-file .env.production --profile seaweedfs up -d --build
+#
+# See README.md in this directory for the full guide.
+
+name: thehideout
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  # --- Database ---------------------------------------------------------------
+  # Single node, PasswordAuthenticator on, not developer mode. Only on the
+  # internal `db` network: no published ports, no route to the internet.
+  # Size it with SCYLLA_SMP / SCYLLA_MEMORY (see .env.production.example).
+  scylla:
+    image: scylladb/scylla:2025.4
+    restart: unless-stopped
+    command: >-
+      --smp ${SCYLLA_SMP:-2}
+      --memory ${SCYLLA_MEMORY:-2G}
+      --overprovisioned ${SCYLLA_OVERPROVISIONED:-1}
+      --developer-mode ${SCYLLA_DEVELOPER_MODE:-0}
+      --authenticator PasswordAuthenticator
+      --authorizer CassandraAuthorizer
+    volumes:
+      - scylla-data:/var/lib/scylla
+    networks:
+      - db
+    healthcheck:
+      # Healthy once the node is up and the native (CQL) transport is running.
+      test: ["CMD-SHELL", "nodetool status | grep -q '^UN' && nodetool statusbinary | grep -q running"]
+      interval: 15s
+      timeout: 15s
+      retries: 40
+      start_period: 60s
+    ulimits:
+      nofile: 262144
+    logging: *logging
+
+  # One-shot: creates the application role on first boot and replaces the default
+  # `cassandra/cassandra` superuser password. Idempotent: safe to re-run, and it
+  # re-applies the passwords from the env file (use it to rotate them).
+  scylla-init:
+    image: scylladb/scylla:2025.4
+    restart: "no"
+    depends_on:
+      scylla:
+        condition: service_healthy
+    environment:
+      SCYLLA_SUPERUSER_PASSWORD: ${SCYLLA_SUPERUSER_PASSWORD:?set SCYLLA_SUPERUSER_PASSWORD}
+      THEHIDEOUT_SCYLLA_USERNAME: ${THEHIDEOUT_SCYLLA_USERNAME:-thehideout}
+      THEHIDEOUT_SCYLLA_PASSWORD: ${THEHIDEOUT_SCYLLA_PASSWORD:?set THEHIDEOUT_SCYLLA_PASSWORD}
+    entrypoint: ["/bin/bash", "/scylla-init.sh"]
+    configs:
+      - source: scylla-init
+        target: /scylla-init.sh
+    networks:
+      - db
+    logging: *logging
+
+  # --- Application ------------------------------------------------------------
+  server:
+    image: thehideout-server:${THEHIDEOUT_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # No env_file: the env file also holds the Scylla superuser password and other
+    # secrets the server must not see. Only what it needs is passed, explicitly.
+    environment:
+      # Fixed by the topology (they win over anything in the env file).
+      - THEHIDEOUT_LISTEN_ADDR=0.0.0.0:8080
+      - THEHIDEOUT_PUBLIC_URL=https://${THEHIDEOUT_DOMAIN:?set THEHIDEOUT_DOMAIN}
+      - THEHIDEOUT_SCYLLA_NODES=scylla:9042
+      - THEHIDEOUT_TRUSTED_PROXIES=${EDGE_SUBNET:-172.28.0.0/24}
+      - THEHIDEOUT_LOG_FORMAT=json
+      - LIVEKIT_URL=wss://${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}
+      - LIVEKIT_API_URL=http://livekit:7880
+      # Required values from .env.production.
+      - THEHIDEOUT_SCYLLA_USERNAME=${THEHIDEOUT_SCYLLA_USERNAME:-thehideout}
+      - THEHIDEOUT_SCYLLA_PASSWORD=${THEHIDEOUT_SCYLLA_PASSWORD:?set THEHIDEOUT_SCYLLA_PASSWORD}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}
+      - THEHIDEOUT_S3_ENDPOINT=${THEHIDEOUT_S3_ENDPOINT:?set THEHIDEOUT_S3_ENDPOINT}
+      - THEHIDEOUT_S3_BUCKET=${THEHIDEOUT_S3_BUCKET:-thehideout-media}
+      - THEHIDEOUT_S3_ACCESS_KEY=${THEHIDEOUT_S3_ACCESS_KEY:?set THEHIDEOUT_S3_ACCESS_KEY}
+      - THEHIDEOUT_S3_SECRET_KEY=${THEHIDEOUT_S3_SECRET_KEY:?set THEHIDEOUT_S3_SECRET_KEY}
+      - THEHIDEOUT_RESEND_API_KEY=${THEHIDEOUT_RESEND_API_KEY:?set THEHIDEOUT_RESEND_API_KEY}
+      - THEHIDEOUT_EMAIL_FROM=${THEHIDEOUT_EMAIL_FROM:?set THEHIDEOUT_EMAIL_FROM}
+      - THEHIDEOUT_KEYSPACE=${THEHIDEOUT_KEYSPACE:-thehideout}
+      - THEHIDEOUT_S3_REGION=${THEHIDEOUT_S3_REGION:-us-east-1}
+      - THEHIDEOUT_S3_PATH_STYLE=${THEHIDEOUT_S3_PATH_STYLE:-true}
+      - RUST_LOG=${RUST_LOG:-info}
+      # Optional: passed through only when set in .env.production.
+      - THEHIDEOUT_BOOTSTRAP_ADMIN_EMAIL
+      - THEHIDEOUT_ADMINS
+      - THEHIDEOUT_EMBEDS
+      - THEHIDEOUT_EMBEDS_CONTACT
+      - THEHIDEOUT_EMBED_MIRRORS
+      - THEHIDEOUT_EMBED_MAX_VIDEO_BYTES
+      - THEHIDEOUT_MAX_UPLOAD_BYTES
+      - THEHIDEOUT_HEARTBEAT_SECS
+      - THEHIDEOUT_S3_PUBLIC_BASE
+      - THEHIDEOUT_SCYLLA_REPLICATION
+    depends_on:
+      scylla:
+        condition: service_healthy
+      scylla-init:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+    stop_grace_period: 30s
+    networks:
+      - db
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  # --- Voice ------------------------------------------------------------------
+  # LiveKit SFU. Signalling (7880) is only reachable through Caddy (wss); media
+  # goes straight to the host on 7881/tcp and the UDP range, TURN on 3478/udp.
+  livekit-config:
+    image: alpine:3.21
+    restart: "no"
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}
+      LIVEKIT_TURN_DOMAIN: ${LIVEKIT_TURN_DOMAIN:-${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}}
+      LIVEKIT_UDP_START: ${LIVEKIT_UDP_START:-50000}
+      LIVEKIT_UDP_END: ${LIVEKIT_UDP_END:-50100}
+    # Renders the template into a volume the LiveKit container mounts (the
+    # LiveKit image has no shell and its config file has no env substitution).
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        sed -e "s|__LIVEKIT_API_KEY__|$$LIVEKIT_API_KEY|g" \
+            -e "s|__LIVEKIT_API_SECRET__|$$LIVEKIT_API_SECRET|g" \
+            -e "s|__LIVEKIT_TURN_DOMAIN__|$$LIVEKIT_TURN_DOMAIN|g" \
+            -e "s|__LIVEKIT_UDP_START__|$$LIVEKIT_UDP_START|g" \
+            -e "s|__LIVEKIT_UDP_END__|$$LIVEKIT_UDP_END|g" \
+            /template/livekit.yaml > /out/livekit.yaml
+        chmod 0444 /out/livekit.yaml
+    volumes:
+      - livekit-rendered:/out
+    configs:
+      - source: livekit-template
+        target: /template/livekit.yaml
+    networks:
+      - edge
+
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: --config /etc/livekit/livekit.yaml
+    depends_on:
+      livekit-config:
+        condition: service_completed_successfully
+    volumes:
+      - livekit-rendered:/etc/livekit:ro
+    ports:
+      # ICE/TCP fallback, UDP media range (must match livekit.yaml) and TURN/UDP.
+      - "7881:7881"
+      - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}/udp"
+      - "3478:3478/udp"
+    networks:
+      edge:
+        aliases:
+          - livekit
+    logging: *logging
+
+  # --- Edge -------------------------------------------------------------------
+  # The only service published for the web: TLS (Let's Encrypt, automatic) in
+  # front of the server and LiveKit signalling.
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    environment:
+      THEHIDEOUT_DOMAIN: ${THEHIDEOUT_DOMAIN:?set THEHIDEOUT_DOMAIN}
+      LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - server
+      - livekit
+    networks:
+      - edge
+    logging: *logging
+
+  # --- Optional bundled S3 (compose profile `seaweedfs`) -----------------------
+  # Prefer an external provider (see .env.production.example). When using this,
+  # set THEHIDEOUT_S3_ENDPOINT=http://seaweedfs:8333 and a non-default key pair.
+  # It is only on the internal `edge` network: nothing is published.
+  seaweedfs:
+    profiles: ["seaweedfs"]
+    image: chrislusf/seaweedfs:4.20
+    restart: unless-stopped
+    command: >-
+      server -dir=/data -ip=seaweedfs -master.volumeSizeLimitMB=512
+      -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - seaweedfs-data:/data
+    configs:
+      - source: seaweedfs-s3
+        target: /etc/seaweedfs/s3.json
+    networks:
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    logging: *logging
+
+  seaweedfs-init:
+    profiles: ["seaweedfs"]
+    image: chrislusf/seaweedfs:4.20
+    restart: "no"
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - echo "s3.bucket.create -name $${BUCKET}" | weed shell -master=seaweedfs:9333
+    environment:
+      BUCKET: ${THEHIDEOUT_S3_BUCKET:-thehideout-media}
+    networks:
+      - edge
+
+networks:
+  # Scylla only: `internal` means no route out and nothing published.
+  db:
+    internal: true
+  # Everything that talks to the outside. The fixed subnet is what the server
+  # trusts as "the proxy" (THEHIDEOUT_TRUSTED_PROXIES); keep EDGE_SUBNET in sync.
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.28.0.0/24}
+
+volumes:
+  scylla-data:
+  seaweedfs-data:
+  caddy-data:
+  caddy-config:
+  livekit-rendered:
+
+configs:
+  scylla-init:
+    file: ./scylla-init.sh
+  livekit-template:
+    file: ./livekit.yaml
+  seaweedfs-s3:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "thehideout",
+            "credentials": [
+              { "accessKey": "${THEHIDEOUT_S3_ACCESS_KEY:-unset}", "secretKey": "${THEHIDEOUT_S3_SECRET_KEY:-unset}" }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }

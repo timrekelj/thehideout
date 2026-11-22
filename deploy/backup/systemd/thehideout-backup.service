@@ -1,0 +1,12 @@
+[Unit]
+Description=thehideout backup (Scylla snapshot + S3 mirror)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the install path and archive directory.
+WorkingDirectory=/opt/thehideout/deploy
+Environment=BACKUP_DIR=/var/backups/thehideout
+ExecStart=/opt/thehideout/deploy/backup/backup.sh
+Nice=10
