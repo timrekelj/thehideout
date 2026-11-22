@@ -113,19 +113,20 @@ impl Saver {
                         take(newer);
                     }
                     // A pref that can't be saved only costs the next launch's choice.
-                    let mut p = prefs.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(l) = look {
-                        p.set(KEY, &l).ok();
-                    }
-                    if let Some(c) = collapsed {
-                        p.set(COLLAPSED_KEY, &c).ok();
-                    }
-                    if let Some(r) = recents {
-                        p.set(RECENTS_KEY, &r).ok();
-                    }
-                    if let Some(e) = embeds {
-                        p.set(EMBEDS_KEY, &e).ok();
-                    }
+                    crate::real::with_prefs(&prefs, |p| {
+                        if let Some(l) = look {
+                            p.set(KEY, &l).ok();
+                        }
+                        if let Some(c) = collapsed {
+                            p.set(COLLAPSED_KEY, &c).ok();
+                        }
+                        if let Some(r) = recents {
+                            p.set(RECENTS_KEY, &r).ok();
+                        }
+                        if let Some(e) = embeds {
+                            p.set(EMBEDS_KEY, &e).ok();
+                        }
+                    });
                 }
             })
             .ok();

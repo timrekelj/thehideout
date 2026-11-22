@@ -13,6 +13,18 @@ use crate::types::{Channel, DmChannel, Event, Guild, Message, Page, User};
 
 type Result<T> = std::result::Result<T, ApiError>;
 
+/// A TLS transport for `https://` base URLs, trusting the webpki root certificates.
+fn tls_client() -> HttpClient {
+    use connectrpc::rustls;
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let tls = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    HttpClient::with_tls(Arc::new(tls))
+}
+
 /// Typed client for the thehideout server.
 ///
 /// Cheap to clone; clones share the connection pool and the session token, so
@@ -27,13 +39,23 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a client for `base_url` (e.g. `http://127.0.0.1:8080`), without a token.
+    /// Creates a client for `base_url` (e.g. `http://127.0.0.1:8080` or
+    /// `https://hideout.example.com`), without a token.
     ///
-    /// Only plaintext `http://` is supported for now.
+    /// `https://` URLs use TLS with the system webpki root certificates; `http://`
+    /// stays plaintext, which is only safe for loopback or trusted networks, so the
+    /// session token and passwords in login bodies must never cross an untrusted
+    /// network over it.
     pub fn new(base_url: impl Into<String>) -> Self {
+        let base_url = base_url.into();
+        let http = if base_url.starts_with("https://") {
+            tls_client()
+        } else {
+            HttpClient::plaintext()
+        };
         Self {
-            http: HttpClient::plaintext(),
-            base_url: base_url.into(),
+            http,
+            base_url,
             token: Arc::default(),
             max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
         }

@@ -673,7 +673,33 @@ async fn landing(Path(token): Path<String>) -> impl IntoResponse {
          <p><code style=\"word-break:break-all;font-size:14px\">{token}</code></p></body></html>"
     );
     (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+            // No scripts or remote content on this page; inline style attributes only.
+            (header::HeaderName::from_static("content-security-policy"), "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"),
+            (header::HeaderName::from_static("x-frame-options"), "DENY"),
+            (header::HeaderName::from_static("x-content-type-options"), "nosniff"),
+        ],
         html,
     )
+}
+
+#[cfg(test)]
+mod landing_tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    #[tokio::test]
+    async fn landing_page_has_security_headers_and_escapes_the_token() {
+        let resp = landing(Path("<script>alert(1)</script>".into())).await.into_response();
+        let headers = resp.headers();
+        assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
+        assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+        assert!(headers.get("content-security-policy").unwrap().to_str().unwrap().contains("frame-ancestors 'none'"));
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("&lt;script&gt;"), "token is escaped: {body}");
+        assert!(!body.contains("<script>"), "no raw injection: {body}");
+    }
 }

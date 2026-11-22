@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{HeaderName, Method};
+use axum::http::{HeaderName, HeaderValue, Method};
 use axum::routing::get;
 use connectrpc::Router as ConnectRouter;
 use scylla::client::caching_session::CachingSession;
@@ -140,8 +140,10 @@ const MEDIA_REQUEST_LIMIT: usize = MAX_INPUT_BYTES / 3 * 4 + 64 * 1024;
 
 /// Builds the HTTP app: all Connect services, `GET /health`, `GET /media/*`,
 /// `POST /attachments`, the passkey ceremony page (`/auth/passkey*`), the
-/// invite landing page (`GET /invite/{token}`), and permissive CORS.
+/// invite landing page (`GET /invite/{token}`), and CORS for the configured
+/// public origin only.
 pub fn build_app(state: AppState) -> Router {
+    let public_url = state.public_url.clone();
     let connect = ConnectRouter::new()
         .add_service(Arc::new(AuthSvc::new(state.clone())))
         .add_service(Arc::new(GuildSvc::new(state.clone())))
@@ -172,10 +174,14 @@ pub fn build_app(state: AppState) -> Router {
         .merge(crate::passkeys::routes().with_state(state.clone()))
         .merge(crate::services::invite::routes().with_state(state))
         .fallback_service(connect.into_axum_service())
-        .layer(cors())
+        .layer(cors(&public_url))
 }
 
-fn cors() -> CorsLayer {
+/// CORS for `public_url`'s origin only (the app's own pages, e.g. the passkey
+/// ceremony page, are served from it). Native clients send no `Origin` header,
+/// so this restricts browsers without affecting them; every other origin is
+/// refused instead of mirrored back.
+fn cors(public_url: &Url) -> CorsLayer {
     let headers = [
         "content-type",
         "authorization",
@@ -196,8 +202,10 @@ fn cors() -> CorsLayer {
         "connect-accept-encoding",
     ]
     .map(HeaderName::from_static);
+    let origin = HeaderValue::from_str(&public_url.origin().ascii_serialization())
+        .expect("an origin serialises to a valid header value");
     CorsLayer::new()
-        .allow_origin(AllowOrigin::mirror_request())
+        .allow_origin(AllowOrigin::exact(origin))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(headers)
         .expose_headers(exposed)

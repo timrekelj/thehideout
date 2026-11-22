@@ -132,6 +132,8 @@ impl Config {
             other => bail!("invalid THEHIDEOUT_EMAIL_FORCE_RESEND {other:?}, expected true or false"),
         };
         let non_empty = |name: &str| env::var(name).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        let s3 = S3Config::from_env()?;
+        check_s3_credentials(&s3, &public_url)?;
         Ok(Self {
             public_url,
             email_from: non_empty("THEHIDEOUT_EMAIL_FROM").unwrap_or_else(|| crate::email::DEFAULT_FROM.to_owned()),
@@ -144,7 +146,7 @@ impl Config {
             keyspace,
             worker_id,
             heartbeat_interval: Duration::from_secs(heartbeat_secs),
-            s3: S3Config::from_env()?,
+            s3,
             max_upload_bytes,
             embeds_enabled,
             embeds_contact: env::var("THEHIDEOUT_EMBEDS_CONTACT").ok().filter(|s| !s.trim().is_empty()),
@@ -156,6 +158,16 @@ impl Config {
 }
 
 impl S3Config {
+    /// The public development access key (matches `docker-compose.yml`).
+    pub const DEV_ACCESS_KEY: &str = "thehideout-dev";
+    /// The public development secret key (matches `docker-compose.yml`).
+    pub const DEV_SECRET_KEY: &str = "thehideout-dev-secret";
+
+    /// Whether the credentials are the public built-in development defaults.
+    fn uses_dev_credentials(&self) -> bool {
+        self.access_key == Self::DEV_ACCESS_KEY && self.secret_key == Self::DEV_SECRET_KEY
+    }
+
     pub fn from_env() -> Result<Self> {
         let path_style = match var("THEHIDEOUT_S3_PATH_STYLE", "true").to_lowercase().as_str() {
             "true" | "1" | "yes" => true,
@@ -166,8 +178,8 @@ impl S3Config {
             endpoint: var("THEHIDEOUT_S3_ENDPOINT", "http://127.0.0.1:8333"),
             region: var("THEHIDEOUT_S3_REGION", "us-east-1"),
             bucket: var("THEHIDEOUT_S3_BUCKET", "thehideout-media"),
-            access_key: var("THEHIDEOUT_S3_ACCESS_KEY", "thehideout-dev"),
-            secret_key: var("THEHIDEOUT_S3_SECRET_KEY", "thehideout-dev-secret"),
+            access_key: var("THEHIDEOUT_S3_ACCESS_KEY", Self::DEV_ACCESS_KEY),
+            secret_key: var("THEHIDEOUT_S3_SECRET_KEY", Self::DEV_SECRET_KEY),
             path_style,
             public_base: env::var("THEHIDEOUT_S3_PUBLIC_BASE").ok().filter(|s| !s.is_empty()),
         })
@@ -187,4 +199,48 @@ fn public_url(listen_addr: &SocketAddr) -> Result<url::Url> {
 
 fn var(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_owned())
+}
+
+/// The built-in dev credentials are public (docker-compose.yml, .env.example):
+/// refuse to run a non-local deployment with them, so a changed endpoint does not
+/// silently leave every media object guarded by a known secret.
+fn check_s3_credentials(s3: &S3Config, public_url: &url::Url) -> Result<()> {
+    if s3.uses_dev_credentials() && public_url.host().is_some_and(|h| !crate::email::is_dev_host(&h)) {
+        bail!(
+            "THEHIDEOUT_S3_ACCESS_KEY/THEHIDEOUT_S3_SECRET_KEY are the built-in development defaults, \
+             which are public; set real credentials for a non-local deployment (THEHIDEOUT_PUBLIC_URL={public_url})"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod s3_credentials_tests {
+    use super::*;
+
+    fn s3(access_key: &str, secret_key: &str) -> S3Config {
+        S3Config {
+            endpoint: "http://127.0.0.1:8333".into(),
+            region: "us-east-1".into(),
+            bucket: "thehideout-media".into(),
+            access_key: access_key.into(),
+            secret_key: secret_key.into(),
+            path_style: true,
+            public_base: None,
+        }
+    }
+
+    #[test]
+    fn dev_credentials_are_allowed_on_dev_hosts_only() {
+        let dev = s3(S3Config::DEV_ACCESS_KEY, S3Config::DEV_SECRET_KEY);
+        assert!(check_s3_credentials(&dev, &url::Url::parse("http://localhost:8080").unwrap()).is_ok());
+        assert!(check_s3_credentials(&dev, &url::Url::parse("http://127.0.0.1:8080").unwrap()).is_ok());
+        assert!(check_s3_credentials(&dev, &url::Url::parse("https://hideout.example.com").unwrap()).is_err());
+    }
+
+    #[test]
+    fn real_credentials_are_allowed_anywhere() {
+        let real = s3("AKIAEXAMPLE", "not-the-dev-secret");
+        assert!(check_s3_credentials(&real, &url::Url::parse("https://hideout.example.com").unwrap()).is_ok());
+    }
 }

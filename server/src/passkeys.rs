@@ -188,6 +188,8 @@ async fn page() -> Response {
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
             (header::HeaderName::from_static("content-security-policy"), "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'"),
+            (header::HeaderName::from_static("x-frame-options"), "DENY"),
+            (header::HeaderName::from_static("x-content-type-options"), "nosniff"),
         ],
         PAGE,
     )
