@@ -592,6 +592,9 @@ pub struct GuildAccess {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
+    /// A call of the signed-in session was refused because the account is suspended: the app
+    /// signs out to the sign-in screen's suspended card.
+    Suspended { reason: String, until: Option<std::time::SystemTime> },
     /// A sign-in finished: `Login`, `VerifyEmailCode`, `CompleteSecondFactor`, `AcceptInvite` or
     /// a passkey. Its error belongs to whatever step the form is on.
     Auth(R<Session>),

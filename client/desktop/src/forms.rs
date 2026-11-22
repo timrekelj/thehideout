@@ -73,6 +73,16 @@ pub enum AuthField {
 pub struct AuthError {
     pub field: AuthField,
     pub message: String,
+    /// Set when the account is suspended: the sign-in screen shows its own card, not a line.
+    pub suspension: Option<Suspension>,
+}
+
+/// Why and until when a suspended account is locked out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Suspension {
+    pub reason: String,
+    /// `None`: until an admin lifts it.
+    pub until: Option<std::time::SystemTime>,
 }
 
 /// Seconds before "Resend code" may be pressed again.
@@ -166,7 +176,7 @@ impl Auth {
 
     pub fn fail(&mut self, field: AuthField, message: impl Into<String>) {
         self.phase = Phase::Idle;
-        self.error = Some(AuthError { field, message: message.into() });
+        self.error = Some(AuthError { field, message: message.into(), suspension: None });
     }
 
     pub fn error_for(&self, field: AuthField) -> Option<&str> {
@@ -188,7 +198,11 @@ pub fn auth_error(e: &ApiError) -> AuthError {
         ApiError::Network(_) => (AuthField::Form, "Can't reach the server.".to_owned()),
         other => (AuthField::Form, sentence(&other.to_string())),
     };
-    AuthError { field, message }
+    let suspension = match e {
+        ApiError::Suspended { reason, until } => Some(Suspension { reason: reason.clone(), until: *until }),
+        _ => None,
+    };
+    AuthError { field, message, suspension }
 }
 
 /// "Your account is suspended. Reason: ... It ends on 2026-12-01." for the sign-in form.

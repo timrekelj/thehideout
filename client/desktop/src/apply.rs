@@ -400,6 +400,7 @@ fn apply_reply(s: &mut AppState, reply: Reply, tx: &mut Tx) {
             result,
         } => s.admin_set_replied(user, is_admin, result),
         Reply::AdminFileDeleted { key, result } => s.admin_file_deleted(&key, result),
+        Reply::Suspended { reason, until } => s.session_suspended(reason, until),
         Reply::Terms(r) => s.terms_replied(r),
         Reply::TermsAccepted { version, result } => s.terms_accepted_replied(&version, result),
         Reply::DeletionCodeSent(r) => s.deletion_code_replied(r),

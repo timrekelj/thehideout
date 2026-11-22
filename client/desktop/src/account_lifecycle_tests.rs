@@ -59,11 +59,14 @@ fn the_terms_prompt_is_due_only_after_the_server_says_so_and_accepting_clears_it
 #[test]
 fn a_stale_terms_version_looks_again() {
     let (mut app, fake) = booted(true);
+    // Signing in already asked once.
+    let at_sign_in = sent(&fake, |c| matches!(c, Command::CheckTerms));
+    assert_eq!(at_sign_in, 1);
     app.state.ui.lifecycle.terms_update = Some("1999-01-01".into());
     app.act(|s| s.accept_terms());
     app.pump();
     assert!(app.state.ui.lifecycle.terms_error.as_deref().unwrap().contains(TERMS_VERSION));
-    assert_eq!(sent(&fake, |c| matches!(c, Command::CheckTerms)), 1, "asked the server again");
+    assert_eq!(sent(&fake, |c| matches!(c, Command::CheckTerms)), at_sign_in + 1, "asked the server again");
 }
 
 fn invite_form() -> (App, FakeBackend) {
