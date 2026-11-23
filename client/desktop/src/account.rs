@@ -134,8 +134,7 @@ pub fn invite_code(raw: &str) -> String {
 pub fn link_code(url: &str) -> Option<String> {
     let url = url.trim();
     let rest = &url[url.rfind("/invite/")? + "/invite/".len()..];
-    let code = normalize_code(rest.split(['?', '#', '/']).next().unwrap_or(""));
-    (code.len() == CODE_LEN).then_some(code)
+    exact_code(rest.split(['?', '#', '/']).next().unwrap_or(""))
 }
 
 /// The code of the invite link the web client was opened at (`/app/?invite=XXXX-XXXX`; the path
@@ -147,7 +146,17 @@ pub fn invite_query_code(pathname: &str, search: &str) -> Option<String> {
     }
     let query = search.strip_prefix('?').unwrap_or(search);
     let value = query.split('&').find_map(|pair| pair.strip_prefix("invite="))?;
-    let code = normalize_code(&value.replace("%2D", "-").replace("%2d", "-"));
+    // The browser may send the dash percent-encoded.
+    exact_code(&value.replace("%2D", "-").replace("%2d", "-"))
+}
+
+/// The code characters of `segment` (as the code field reads them) when there are exactly
+/// [`CODE_LEN`] of them; a longer or shorter segment is no code, it is not cut to length.
+fn exact_code(segment: &str) -> Option<String> {
+    let code: String = segment
+        .chars()
+        .filter_map(|c| normalize_code(c.encode_utf8(&mut [0; 4])).chars().next())
+        .collect();
     (code.len() == CODE_LEN).then_some(code)
 }
 
@@ -310,7 +319,7 @@ impl AppState {
                 if code.is_empty() {
                     return self.auth_invalid(AuthField::Invite, "Enter the code from your invite email.");
                 }
-                if code.len() <= CODE_LEN {
+                if normalize_code(&code).len() != CODE_LEN {
                     return self.auth_invalid(AuthField::Invite, "Invite codes have 8 characters.");
                 }
                 self.auth.invite_tried = Some(code.clone());
@@ -581,7 +590,7 @@ impl AppState {
             return false;
         }
         let code = invite_code(&self.auth.invite.text);
-        if code.len() <= CODE_LEN {
+        if normalize_code(&code).len() != CODE_LEN {
             self.auth.invite_tried = None;
             return false;
         }
@@ -1186,6 +1195,7 @@ mod tests {
         assert_eq!(link_code("https://hideout.example/invite/wxyz-2345").as_deref(), Some("WXYZ2345"));
         assert_eq!(link_code("thehideout://invite/WXYZ2345?x=1").as_deref(), Some("WXYZ2345"));
         assert_eq!(link_code("thehideout://invite/WXYZ-23"), None);
+        assert_eq!(link_code("https://hideout.example/invite/ABCDEFGHJK"), None);
         assert_eq!(link_code("thehideout://invite/"), None);
         assert_eq!(link_code("thehideout://other"), None);
         assert_eq!(link_code("WXYZ-2345"), None);
@@ -1198,6 +1208,7 @@ mod tests {
         assert_eq!(invite_query_code("/app/", "?x=1&invite=WXYZ2345").as_deref(), Some("WXYZ2345"));
         assert_eq!(invite_query_code("/app/", "?invite=WXYZ%2D2345").as_deref(), Some("WXYZ2345"));
         assert_eq!(invite_query_code("/app/", "?invite=WXYZ-23"), None);
+        assert_eq!(invite_query_code("/app/", "?invite=ABCD-EFGH-XYZ"), None);
         assert_eq!(invite_query_code("/app/", "?invite="), None);
         assert_eq!(invite_query_code("/app/", "?x=1"), None);
         assert_eq!(invite_query_code("/app/", ""), None);

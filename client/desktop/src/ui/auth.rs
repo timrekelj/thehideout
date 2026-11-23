@@ -210,8 +210,9 @@ pub fn build(a: &App, k: &Kit) -> El {
     let suspension = auth.error.as_ref().and_then(|e| e.suspension.as_ref());
     let top_level = suspension.is_none() && matches!(auth.step, AuthStep::Password | AuthStep::InviteCode);
 
-    // The eight code boxes are about 396 wide: the invite step's card is wider than the 400 of the
-    // others so they fit inside its padding.
+    // The full-width code field needs at least 316 at 100% text, 341 at 110% and 379 at 125%
+    // (the boxes only shrink to three quarters of their size). The 400 card leaves 336 inside its
+    // padding, so the invite step's card is 480 (416 inside) to keep the field in at every text size.
     let card_w = if matches!(auth.step, AuthStep::InviteCode) && suspension.is_none() { 480.0 } else { 400.0 };
     let mut card = col()
         .key("auth-card")

@@ -154,7 +154,6 @@ async fn admin_invite_lookup_accept_and_reuse() {
             .find(|run| run.len() >= 32);
         assert!(long.is_none(), "unexpected long secret {long:?} in {part}");
     }
-    println!("{}", mail.text);
 
     // Lookup by the code in any case and without its dash; the dashed form and the link work too.
     let typed = code_shown.replace('-', "").to_lowercase();
@@ -303,5 +302,46 @@ async fn lookup_and_accept_are_rate_limited() {
         assert_eq!(code(lookup(&app, "AAAA-AAAA").await), ErrorCode::NotFound);
     }
     assert_eq!(code(lookup(&app, "AAAA-AAAA").await), ErrorCode::ResourceExhausted);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn resending_an_old_invite_drops_its_token_index_row() {
+    let app = TestApp::start().await;
+    let admin = site_admin(&app, "admin").await;
+    let invite = create(&app, &admin, create_req(&invitee(&app, "old"), None, &[], false)).await.unwrap();
+    // An invite from before the codes: its old token hash is on the row and in the index.
+    let token = "A".repeat(43);
+    let token_hash = thehideout_server::auth::hash_token(&token);
+    app.state
+        .session
+        .execute_unpaged("INSERT INTO invites_by_hash (hash, invite_id) VALUES (?, ?)", (&token_hash, id_to_db(invite.id)))
+        .await
+        .unwrap();
+    app.state
+        .session
+        .execute_unpaged("UPDATE invites SET token_hash = ? WHERE id = ?", (&token_hash, id_to_db(invite.id)))
+        .await
+        .unwrap();
+    let indexed = |app: &TestApp| {
+        let hash = token_hash.clone();
+        let session = app.state.session.clone();
+        async move {
+            session
+                .execute_unpaged("SELECT invite_id FROM invites_by_hash WHERE hash = ?", (&hash,))
+                .await
+                .unwrap()
+                .into_rows_result()
+                .unwrap()
+                .rows_num()
+        }
+    };
+    assert_eq!(code(lookup(&app, &token).await), ErrorCode::NotFound);
+    assert_eq!(indexed(&app).await, 1);
+    invites(&app, Some(&admin.token))
+        .resend_invite(ResendInviteRequest { invite_id: invite.id, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(indexed(&app).await, 0, "the old token's index row is gone");
     app.cleanup().await;
 }
