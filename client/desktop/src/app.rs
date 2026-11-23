@@ -230,7 +230,7 @@ pub fn init() -> App {
 pub fn spec() -> rune::App<App> {
     use rune::AppSpec;
     use thehideout_design::{FAMILIES, FONTS};
-    rune::App::new(AppSpec::<App> {
+    let app = rune::App::new(AppSpec::<App> {
         fonts: FONTS,
         families: FAMILIES,
         min_size: Some((800.0, 600.0)),
@@ -240,7 +240,11 @@ pub fn spec() -> rune::App<App> {
         poll: Some(poll),
         on_key: Some(on_key),
         ..AppSpec::new("thehideout", (1280.0, 800.0), init, view)
-    })
+    });
+    // Async browser work (a finished file chooser) reaches the app through this handle.
+    #[cfg(target_arch = "wasm32")]
+    crate::web::set_handle(app.handle());
+    app
 }
 
 pub fn setup(a: &mut App, waker: Waker) {

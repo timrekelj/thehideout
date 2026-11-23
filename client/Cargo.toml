@@ -1,8 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["design", "gallery", "desktop", "api", "voice", "voice-types", "web-spike"]
-# The web spike is wasm-only: leave it out of plain `cargo build`/`check` in client/.
-default-members = ["design", "gallery", "desktop", "api", "voice", "voice-types"]
+members = ["design", "gallery", "desktop", "api", "voice", "voice-types"]
 
 [workspace.package]
 version = "0.1.0"

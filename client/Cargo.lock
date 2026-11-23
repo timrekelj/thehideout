@@ -7372,19 +7372,6 @@ name = "thehideout-voice-types"
 version = "0.1.0"
 
 [[package]]
-name = "thehideout-web-spike"
-version = "0.1.0"
-dependencies = [
- "gloo-timers",
- "js-sys",
- "rune",
- "thehideout-api",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

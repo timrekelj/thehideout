@@ -25,7 +25,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, ReadableStreamDefaultReader};
 
 /// Fetch-based transport for browser environments.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FetchTransport;
 
 /// Browser failures (network down, CORS, aborted) surface as `unavailable`, like the native

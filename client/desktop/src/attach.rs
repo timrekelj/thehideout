@@ -225,7 +225,7 @@ pub fn upload_error(e: &ApiError) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn file_size(path: &Path) -> std::io::Result<Option<u64>> {
     let m = std::fs::metadata(path)?;
-    Ok(m.is_file().then(|| m.len()))
+    Ok(m.is_file().then_some(m.len()))
 }
 
 #[cfg(target_arch = "wasm32")]

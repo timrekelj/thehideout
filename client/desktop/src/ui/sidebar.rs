@@ -328,8 +328,8 @@ fn user_strip(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                 .build(k),
         )
         .child(who)
-        .child(mute)
-        .child(deafen)
+        // The web client has no voice yet: no mute and deafen buttons there.
+        .children(crate::voice::available().then_some([mute, deafen]).into_iter().flatten())
         .child(menu)
 }
 
