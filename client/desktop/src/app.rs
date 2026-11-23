@@ -219,9 +219,11 @@ pub fn init() -> App {
     );
     app.boot = 1;
     // Only the network backend gets the audio engine (built on the first join); the fake world
-    // and every scene stay silent. The browser has none yet (voice is hidden there, see `voice::available`).
+    // and every scene stay silent.
     #[cfg(not(target_arch = "wasm32"))]
     app.set_voice_sink(Box::new(crate::voice_engine::app_sink()));
+    #[cfg(target_arch = "wasm32")]
+    app.set_voice_sink(Box::new(crate::voice_web::web_sink()));
     app
 }
 

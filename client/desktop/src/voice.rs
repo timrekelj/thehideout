@@ -512,8 +512,13 @@ fn voice_error_text(e: &ApiError) -> String {
     }
 }
 
-/// Whether this build can take part in voice: the desktop app can, the web client can't yet.
+/// Whether this build can take part in voice (audio: the desktop app and the web client).
 pub const fn available() -> bool {
+    true
+}
+
+/// Whether this build can send and watch video and share the screen: desktop only for now.
+pub const fn video_available() -> bool {
     !cfg!(target_arch = "wasm32")
 }
 
@@ -662,6 +667,9 @@ impl AppState {
             return;
         }
         let guild = c.guild_id;
+        // The join click is the user gesture that lets the page play audio.
+        #[cfg(target_arch = "wasm32")]
+        crate::voice_web::unlock_audio();
         if !available() {
             self.toast(ToastKind::Info, VOICE_UNAVAILABLE);
             return;

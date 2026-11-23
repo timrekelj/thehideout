@@ -43,7 +43,7 @@ async fn index_is_served_with_security_headers() {
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' blob: data:",
             "font-src 'self'",
-            "connect-src 'self' ws://livekit.test:7880;",
+            "connect-src 'self' ws://livekit.test:7880 http://livekit.test:7880;",
             "media-src 'self' blob:",
             "frame-ancestors 'none'",
             "base-uri 'none'",

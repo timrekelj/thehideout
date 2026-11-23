@@ -23,9 +23,12 @@ How it differs from the desktop app:
   downloads and recovery codes go through `<a download>`. The picked `File` is carried through the
   path-based state as a `/web-files/<n>/<name>` path (`web.rs`).
 - Passkeys run in the page (`navigator.credentials`), no ceremony page.
-- Voice is not available yet (`voice::available()`): voice channels answer with a note, the
-  Voice & audio page and the mute/deafen buttons are hidden. The plain voice types live in
-  `thehideout-voice-types`; the engine trait is `desktop/src/voice_engine.rs::Engine`.
+- Voice (audio only) runs on the `livekit-client` SDK, behind the same `Engine` trait as the native
+  engine: `desktop/src/voice_web.rs` + `desktop/js/voice.js`. `build.sh` downloads the SDK (version and
+  integrity in `web/livekit-client.lock`, Apache-2.0) to the bundle root; it is loaded on the first join,
+  never at page load. Camera and screen share are desktop-only for now (their buttons are disabled with
+  a note). Voice activity gating, push to talk (while the tab is focused), device pickers, mic test,
+  mute for me, deafen and the cues (synthesized, played through WebAudio) are all in.
 - WebGPU, with WebGL2 as the fallback (rune's `webgl` feature).
 
 `RUSTFLAGS` must carry `--cfg getrandom_backend="wasm_js"` (see `.cargo/config.toml`; `build.sh`

@@ -83,6 +83,19 @@ for p in json.load(sys.stdin)["packages"]:
         break')
 cp "$fonts"/Inter-*.ttf "$out/"
 
+# The voice engine's SDK (loaded on the first voice join): a pinned npm tarball, integrity-checked.
+# shellcheck source=livekit-client.lock
+source web/livekit-client.lock
+lk_tgz="web/.cache/livekit-client-$version.tgz"
+lk_ok() { [[ -f $lk_tgz && "sha512-$(openssl dgst -sha512 -binary "$lk_tgz" | openssl base64 -A)" == "$integrity" ]]; }
+if ! lk_ok; then
+    mkdir -p web/.cache
+    curl -fsSL "https://registry.npmjs.org/livekit-client/-/livekit-client-$version.tgz" -o "$lk_tgz"
+    lk_ok || { echo "livekit-client $version does not match the integrity in web/livekit-client.lock" >&2; rm -f "$lk_tgz"; exit 1; }
+fi
+tar -xzOf "$lk_tgz" package/dist/livekit-client.esm.mjs > "$out/livekit-client.esm.mjs"
+tar -xzOf "$lk_tgz" package/LICENSE > "$out/livekit-client.LICENSE.txt"
+
 cat > "$out/index.html" <<'HTML'
 <!doctype html>
 <html lang="en">
