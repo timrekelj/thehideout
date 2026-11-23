@@ -1,6 +1,26 @@
 # thehideout
 A Discord-style chat app for me and my friends, built to learn handling lots of data
 
+## Install
+
+On macOS, with Homebrew:
+
+```sh
+brew install --cask timrekelj/tap/thehideout
+```
+
+Otherwise download the build for your OS from
+[GitHub Releases](https://github.com/timrekelj/thehideout/releases); see
+[docs/RELEASING.md](docs/RELEASING.md) for per-OS notes.
+
+## Deploying and releasing
+
+- [deploy/README.md](deploy/README.md): production deploy on a VPS (Docker
+  Compose, Caddy, Cloudflare R2, LiveKit).
+- [deploy/dokploy/README.md](deploy/dokploy/README.md): the same stack on Dokploy
+  (Traefik instead of Caddy).
+- [docs/RELEASING.md](docs/RELEASING.md): cutting a desktop release with a `v*` tag.
+
 The server also serves a public landing page at `GET /` (downloads, features; embedded from `server/assets/landing/`). To enable the "Open in browser" button, set `WEB_APP_URL` in `server/assets/landing/site.js`.
 
 ## Development

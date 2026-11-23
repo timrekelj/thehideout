@@ -1,0 +1,379 @@
+name: Release
+
+# A pushed `v*` tag builds the desktop app for macOS (arm64 + x86_64), Linux and Windows, attaches
+# the builds to a GitHub Release and updates the Homebrew cask. `workflow_dispatch` builds
+# everything and keeps the results as workflow artifacts only (no release, no tap changes).
+# Setup and secrets: docs/RELEASING.md
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in step with MIN_MACOS in packaging/macos/bundle.sh and `depends_on macos:` in the cask.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+  # Clang that webrtc-sys needs on Linux (it builds against libwebrtc's hermetic libc++).
+  LLVM_VERSION: "21.1.8"
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cargo_version="$(awk '/^\[/ {s = ($0 == "[workspace.package]")} s && /^version *=/ {gsub(/^[^"]*"|".*$/, ""); print; exit}' client/Cargo.toml)"
+          if [ -z "$cargo_version" ]; then
+            echo "::error::could not read the workspace version from client/Cargo.toml"
+            exit 1
+          fi
+          if [ "$REF_TYPE" = tag ]; then
+            version="${REF_NAME#v}"
+            if [ "$version" != "$cargo_version" ]; then
+              echo "::error::tag $REF_NAME does not match the version in client/Cargo.toml ($cargo_version). Bump it, then re-tag."
+              exit 1
+            fi
+          else
+            version="${cargo_version}-dev"
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Building $version (prerelease: $prerelease)"
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: version
+    runs-on: macos-latest # Apple silicon; x86_64 is cross-compiled
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
+      - name: Install Rust
+        working-directory: client
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+          key: ${{ matrix.target }}
+
+      - name: Build
+        working-directory: client
+        run: cargo build --release --locked -p thehideout-desktop --target ${{ matrix.target }}
+
+      - name: Check signing secrets
+        id: signing
+        run: |
+          set -euo pipefail
+          if [ -n "$APPLE_CERTIFICATE_P12_BASE64" ] && [ -n "$APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing secrets are not set: this build is ad-hoc signed and NOT notarized. Gatekeeper will block it on other Macs."
+          fi
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Notarization secrets (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) are not set: skipping notarization."
+          fi
+
+      - name: Import signing certificate
+        if: steps.signing.outputs.sign == 'true'
+        run: packaging/macos/import-cert.sh
+
+      - name: Bundle, sign and make the dmg
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.signing.outputs.sign }}" != true ]; then
+            unset APPLE_SIGNING_IDENTITY
+          fi
+          packaging/macos/bundle.sh \
+            --binary "client/target/${{ matrix.target }}/release/thehideout-desktop" \
+            --version "$VERSION" --arch "${{ matrix.arch }}" --out dist
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.sign == 'true' && steps.signing.outputs.notarize == 'true'
+        run: packaging/macos/notarize.sh "dist/thehideout-$VERSION-macos-${{ matrix.arch }}.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64
+    needs: version
+    # Not 22.04: webrtc-sys needs clang 21 and LiveKit's own CI builds on 24.04. So the binary needs
+    # glibc 2.39 or newer.
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
+      # The apt list is LiveKit's Linux CI (libwebrtc's desktop capturer, ALSA for cpal, VA-API)
+      # plus Rune's (libxkbcommon, wayland) and fontconfig/freetype for text.
+      - name: Install system packages
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            pkg-config lld \
+            libxkbcommon-dev libwayland-dev \
+            libasound2-dev libssl-dev \
+            libx11-dev libgl1-mesa-dev libxext-dev \
+            libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev \
+            libglib2.0-dev libva-dev \
+            libfontconfig1-dev libfreetype6-dev
+
+      - name: Cache LLVM
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/llvm-${{ env.LLVM_VERSION }}
+          key: llvm-${{ env.LLVM_VERSION }}-linux-x64
+
+      # Same as LiveKit's .github/scripts/install-clang.sh: the distro clang (18) is too old for
+      # libwebrtc's libc++.
+      - name: Install clang
+        run: |
+          set -euo pipefail
+          root="/opt/llvm-$LLVM_VERSION"
+          if [ ! -x "$root/bin/clang++" ]; then
+            sudo mkdir -p "$root"
+            curl --fail --location --silent --show-error \
+              "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-Linux-X64.tar.xz" \
+              | sudo tar -xJ --strip-components=1 -C "$root"
+          fi
+          "$root/bin/clang++" --version
+          {
+            echo "CC=$root/bin/clang"
+            echo "CXX=$root/bin/clang++"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Rust
+        working-directory: client
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+
+      # The camera backend (nokhwa) only supports AVFoundation, so Linux builds without it.
+      - name: Build
+        working-directory: client
+        run: cargo build --release --locked --no-default-features -p thehideout-desktop
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          name="thehideout-$VERSION-linux-x86_64"
+          mkdir -p "dist/$name"
+          install -m 755 client/target/release/thehideout-desktop "dist/$name/thehideout-desktop"
+          strip "dist/$name/thehideout-desktop"
+          install -m 644 packaging/linux/thehideout.desktop packaging/linux/INSTALL.txt "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows x86_64
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
+      - name: Install Rust
+        working-directory: client
+        shell: bash
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+
+      # The camera backend (nokhwa) only supports AVFoundation, so Windows builds without it.
+      - name: Build
+        working-directory: client
+        run: cargo build --release --locked --no-default-features -p thehideout-desktop
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "thehideout-$env:VERSION-windows-x86_64"
+          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
+          Copy-Item client/target/release/thehideout-desktop.exe "dist/$name/thehideout-desktop.exe"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          Remove-Item -Recurse -Force "dist/$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: github.ref_type == 'tag'
+    needs: [version, macos, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum thehideout-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber thehideout-* SHA256SUMS
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+              --generate-notes "${flags[@]}" thehideout-* SHA256SUMS
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+
+  homebrew:
+    name: Homebrew cask
+    if: github.ref_type == 'tag' && needs.version.outputs.prerelease == 'false'
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Check tap token
+        id: token
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set: skipping the Homebrew cask update."
+          fi
+
+      - name: Checkout this repo (cask template)
+        if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: packaging/homebrew
+
+      - name: Checkout the tap
+        if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: timrekelj/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Download checksums
+        if: steps.token.outputs.present == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: sums
+
+      - name: Write and push the cask
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          sha_arm64="$(awk -v f="thehideout-$VERSION-macos-arm64.dmg" '$2 == f {print $1}' sums/SHA256SUMS)"
+          sha_x86_64="$(awk -v f="thehideout-$VERSION-macos-x86_64.dmg" '$2 == f {print $1}' sums/SHA256SUMS)"
+          if [ -z "$sha_arm64" ] || [ -z "$sha_x86_64" ]; then
+            echo "::error::missing dmg checksums in SHA256SUMS"
+            exit 1
+          fi
+          mkdir -p tap/Casks
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@SHA256_ARM64@/$sha_arm64/g" \
+              -e "s/@SHA256_X86_64@/$sha_x86_64/g" \
+              src/packaging/homebrew/thehideout.rb.in > tap/Casks/thehideout.rb
+          cat tap/Casks/thehideout.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/thehideout.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date."
+          else
+            git commit -m "thehideout $VERSION"
+            git push
+          fi

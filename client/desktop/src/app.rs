@@ -12,8 +12,8 @@ use crate::backend::{Backend, Command, Reply};
 use crate::fake::{FakeBackend, now_unix};
 use crate::format::Tz;
 use crate::look::{self, Saver};
-use crate::real::{RealBackend, SharedPrefs, default_server, open_prefs};
-use crate::state::{AppState, Auth, Screen};
+use crate::real::{RealBackend, SharedPrefs, open_prefs};
+use crate::state::{AppState, Screen};
 use crate::ui;
 use crate::voice::{self, VoiceSink};
 
@@ -99,9 +99,6 @@ impl App {
             saver.save_embeds(&self.state.ui.attach.embeds_collapsed);
         }
         for cmd in std::mem::take(&mut self.state.outbox) {
-            if cmd.signed_out() {
-                self.backend.set_server(&self.state.server_url());
-            }
             self.backend.submit(cmd);
         }
     }
@@ -206,7 +203,6 @@ pub fn init() -> App {
     }
     let prefs = open_prefs();
     let mut state = AppState::new(real_now, Tz::Local);
-    state.auth = Auth::new(&default_server());
     state.screen = Screen::Loading;
     let mut app = App::start(
         Box::new(RealBackend::with_shared(prefs.clone())),
