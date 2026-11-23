@@ -49,6 +49,16 @@ fn rename_edit(a: &mut App) -> &mut TextEdit {
 }
 
 /// Opens the system's file chooser; its answer goes to `pick_emoji_file`.
+#[cfg(target_arch = "wasm32")]
+fn choose_file(_tx: &mut Tx) {
+    crate::web::pick_files(".png,.jpg,.jpeg,.webp,.gif", false, |a, paths| {
+        if let Some(path) = paths.first() {
+            a.act(|s| s.pick_emoji_file(path));
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn choose_file(tx: &mut Tx) {
     let options = rune::FileDialogOptions {
         title: "Choose an emoji image".into(),

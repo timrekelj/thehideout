@@ -110,6 +110,16 @@ pub(super) fn errors(k: &Kit, e: &Option<String>, key: &str) -> Option<El> {
 
 /// Opens the system's file chooser for a picture; its answer goes to `pick_image` (the backend
 /// reads the file off the UI thread).
+#[cfg(target_arch = "wasm32")]
+pub(super) fn choose_image(_tx: &mut Tx, purpose: ImagePurpose) {
+    crate::web::pick_files(".png,.jpg,.jpeg,.webp,.gif", false, move |a, paths| {
+        if let Some(path) = paths.first() {
+            a.act(|s| s.pick_image(purpose, path));
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn choose_image(tx: &mut Tx, purpose: ImagePurpose) {
     let options = rune::FileDialogOptions {
         title: "Choose a picture".into(),

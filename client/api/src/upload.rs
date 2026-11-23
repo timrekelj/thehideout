@@ -1,9 +1,10 @@
 //! Plain-HTTP file transfer: streaming attachment uploads and downloads.
 
-#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 
-// TODO(web Phase 1): on wasm32 uploads and downloads need browser primitives (XHR upload with
-// progress, a Blob download); the blocking `Read`/`Write` versions below are native-only.
+// Native: blocking `Read` uploads and `Write` downloads over hyper. Browser (wasm32): uploads go
+// through `XMLHttpRequest` (the only API that reports upload progress); downloads are left to the
+// page (`<a download>` on `/media/{key}`, which the server answers with Content-Disposition).
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Write};
 #[cfg(not(target_arch = "wasm32"))]
@@ -103,7 +104,6 @@ fn encode_component(s: &str) -> String {
     out
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_pending(body: &[u8]) -> Result<PendingAttachment> {
     serde_json::from_slice::<pb::PendingAttachment>(body)
         .map(Into::into)
@@ -303,5 +303,138 @@ mod tests {
         assert_eq!(err, ApiError::TooLarge);
         let err = default.upload_attachment(1, "a", "x/y", vec![1], |_, _| {}).await.unwrap_err();
         assert!(matches!(err, ApiError::Network(_)), "{err:?}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use web::*;
+
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use futures::channel::oneshot;
+    use send_wrapper::SendWrapper;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+    use web_sys::{Blob, ProgressEvent, XmlHttpRequest};
+
+    use super::*;
+
+    /// Aborts the request if the upload future is dropped (the tray's cancel) before it settles.
+    struct Xhr {
+        xhr: XmlHttpRequest,
+        done: bool,
+        _closures: Vec<Closure<dyn FnMut(ProgressEvent)>>,
+    }
+
+    impl Drop for Xhr {
+        fn drop(&mut self) {
+            if !self.done {
+                let _ = self.xhr.abort();
+            }
+        }
+    }
+
+    impl Client {
+        /// Uploads `data` as a pending attachment of `channel_id`. Same contract as the native
+        /// version: `progress(sent, total)` runs as bytes go out.
+        pub async fn upload_attachment(
+            &self,
+            channel_id: u64,
+            filename: &str,
+            content_type: &str,
+            data: Vec<u8>,
+            progress: impl Fn(u64, u64) + Send + Sync + 'static,
+        ) -> Result<PendingAttachment> {
+            if data.len() as u64 > self.max_upload_bytes {
+                return Err(ApiError::TooLarge);
+            }
+            let blob = SendWrapper::new(blob_of(&data, content_type)?);
+            self.upload_attachment_blob(channel_id, filename, content_type, blob, progress).await
+        }
+
+        /// Uploads a `Blob` (a picked `File`) without copying it into wasm memory.
+        pub async fn upload_attachment_blob(
+            &self,
+            channel_id: u64,
+            filename: &str,
+            content_type: &str,
+            blob: SendWrapper<Blob>,
+            progress: impl Fn(u64, u64) + Send + Sync + 'static,
+        ) -> Result<PendingAttachment> {
+            let size = blob.size() as u64;
+            if size > self.max_upload_bytes {
+                return Err(ApiError::TooLarge);
+            }
+            let url = self.upload_url(channel_id, filename);
+            let mut headers = vec![
+                ("content-type".to_owned(), content_type.to_owned()),
+                (crate::client::CLIENT_HEADER.to_owned(), crate::client::client_header_value()),
+            ];
+            if let Some(token) = self.token() {
+                headers.push(("authorization".to_owned(), format!("Bearer {token}")));
+            }
+            let (status, body) = SendWrapper::new(post(url, headers, blob, size, progress)).await?;
+            if !(200..300).contains(&status) {
+                return Err(ApiError::from_status(status, &body));
+            }
+            parse_pending(body.as_bytes())
+        }
+    }
+
+    fn blob_of(data: &[u8], content_type: &str) -> Result<Blob> {
+        let part = js_sys::Uint8Array::from(data);
+        let parts = js_sys::Array::of1(&part);
+        let opts = web_sys::BlobPropertyBag::new();
+        opts.set_type(content_type);
+        Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(|e| ApiError::Other(format!("{e:?}")))
+    }
+
+    /// One `POST` through `XMLHttpRequest`, resolving to the status and body text.
+    async fn post(
+        url: String,
+        headers: Vec<(String, String)>,
+        blob: SendWrapper<Blob>,
+        size: u64,
+        progress: impl Fn(u64, u64) + 'static,
+    ) -> Result<(u16, String)> {
+        let net = |e: wasm_bindgen::JsValue| ApiError::Network(format!("{e:?}"));
+        let xhr = XmlHttpRequest::new().map_err(net)?;
+        xhr.open_with_async("POST", &url, true).map_err(net)?;
+        for (name, value) in &headers {
+            xhr.set_request_header(name, value).map_err(net)?;
+        }
+        let (tx, rx) = oneshot::channel::<std::result::Result<(), &'static str>>();
+        let tx = std::rc::Rc::new(std::cell::RefCell::new(Some(tx)));
+        let settle = |outcome: std::result::Result<(), &'static str>, tx: &std::rc::Rc<std::cell::RefCell<Option<oneshot::Sender<_>>>>| {
+            if let Some(tx) = tx.borrow_mut().take() {
+                let _ = tx.send(outcome);
+            }
+        };
+        let mut closures = Vec::new();
+        let on = |f: Box<dyn FnMut(ProgressEvent)>| Closure::<dyn FnMut(ProgressEvent)>::wrap(f);
+        let on_progress = on(Box::new(move |e: ProgressEvent| {
+            let sent = if e.length_computable() { e.loaded() as u64 } else { 0 };
+            progress(sent.min(size), size);
+        }));
+        let upload = xhr.upload().map_err(net)?;
+        upload.set_onprogress(Some(on_progress.as_ref().unchecked_ref()));
+        closures.push(on_progress);
+        for (name, outcome) in [("load", Ok(())), ("error", Err("network error")), ("abort", Err("aborted")), ("timeout", Err("timed out"))] {
+            let tx = tx.clone();
+            let c = on(Box::new(move |_| settle(outcome, &tx)));
+            xhr.add_event_listener_with_callback(name, c.as_ref().unchecked_ref()).map_err(net)?;
+            closures.push(c);
+        }
+        let mut guard = Xhr { xhr: xhr.clone(), done: false, _closures: closures };
+        xhr.send_with_opt_blob(Some(&blob)).map_err(net)?;
+        let outcome = rx.await;
+        guard.done = true;
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(why)) => return Err(ApiError::Network(why.to_owned())),
+            Err(_) => return Err(ApiError::Network("upload dropped".into())),
+        }
+        let body = xhr.response_text().map_err(net)?.unwrap_or_default();
+        Ok((xhr.status().map_err(net)?, body))
     }
 }

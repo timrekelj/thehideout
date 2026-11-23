@@ -20,7 +20,7 @@ use thehideout_api::{
 use thehideout_design::components::ToastKind;
 use rune::{Key, KeyEvent, PhysicalKeyCode, Shortcut};
 use serde::{Deserialize, Serialize};
-use thehideout_voice::{AudioDevice, Quality, ScreenSource, VideoKind, VoiceEvent, VoiceMode};
+use thehideout_voice_types::{AudioDevice, Quality, ScreenSource, VideoKind, VoiceEvent, VoiceMode};
 
 use crate::backend::Command;
 use crate::server_settings::error_text;
@@ -512,6 +512,14 @@ fn voice_error_text(e: &ApiError) -> String {
     }
 }
 
+/// Whether this build can take part in voice: the desktop app can, the web client can't yet.
+pub const fn available() -> bool {
+    !cfg!(target_arch = "wasm32")
+}
+
+/// Said when a voice channel is opened where [`available`] is false.
+pub const VOICE_UNAVAILABLE: &str = "Voice is available in the desktop app for now.";
+
 impl AppState {
     // ---- queries -----------------------------------------------------------------------------
 
@@ -654,6 +662,10 @@ impl AppState {
             return;
         }
         let guild = c.guild_id;
+        if !available() {
+            self.toast(ToastKind::Info, VOICE_UNAVAILABLE);
+            return;
+        }
         if !self.perms(guild).contains(Permissions::CONNECT) {
             self.toast(ToastKind::Danger, "You can't join voice channels here.");
             return;
@@ -1654,7 +1666,7 @@ impl AppState {
         let (screens, windows): (Vec<_>, Vec<_>) = all
             .iter()
             .cloned()
-            .partition(|s| s.kind == thehideout_voice::ScreenKind::Screen);
+            .partition(|s| s.kind == thehideout_voice_types::ScreenKind::Screen);
         screens.into_iter().chain(windows).collect()
     }
 

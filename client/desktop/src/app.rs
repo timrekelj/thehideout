@@ -146,7 +146,15 @@ pub fn fake_now() -> SystemTime {
 
 /// The real wall clock, for the real backend.
 pub fn real_now() -> SystemTime {
-    SystemTime::now()
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+    }
+    // `SystemTime::now` panics on wasm32-unknown-unknown: ask the page.
+    #[cfg(target_arch = "wasm32")]
+    {
+        UNIX_EPOCH + Duration::from_millis(js_sys::Date::now() as u64)
+    }
 }
 
 /// Flags of the runs that draw without a window (scenes, snapshots, scripts).
@@ -211,9 +219,28 @@ pub fn init() -> App {
     );
     app.boot = 1;
     // Only the network backend gets the audio engine (built on the first join); the fake world
-    // and every scene stay silent.
+    // and every scene stay silent. The browser has none yet (voice is hidden there, see `voice::available`).
+    #[cfg(not(target_arch = "wasm32"))]
     app.set_voice_sink(Box::new(crate::voice_engine::app_sink()));
     app
+}
+
+/// The window: the fonts, the handlers and the first state. Desktop `main` adds its titlebar
+/// and open-URL handler; the browser entry runs it as is.
+pub fn spec() -> rune::App<App> {
+    use rune::AppSpec;
+    use thehideout_design::{FAMILIES, FONTS};
+    rune::App::new(AppSpec::<App> {
+        fonts: FONTS,
+        families: FAMILIES,
+        min_size: Some((800.0, 600.0)),
+        #[cfg(not(target_arch = "wasm32"))]
+        scenes: crate::scenes::SCENES,
+        setup: Some(setup),
+        poll: Some(poll),
+        on_key: Some(on_key),
+        ..AppSpec::new("thehideout", (1280.0, 800.0), init, view)
+    })
 }
 
 pub fn setup(a: &mut App, waker: Waker) {
@@ -278,6 +305,7 @@ pub fn poll(a: &mut App, clock: f64, tx: &mut Tx) -> bool {
 
 /// A link the system opened the app with (`thehideout://invite/<token>`, once the scheme is
 /// registered with the system): signed out, it opens that invite.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn on_open_url(a: &mut App, url: &str, _tx: &mut Tx) {
     a.act(|s| s.open_link(url));
 }
