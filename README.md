@@ -21,6 +21,8 @@ Otherwise download the build for your OS from
   (Traefik instead of Caddy).
 - [docs/RELEASING.md](docs/RELEASING.md): cutting a desktop release with a `v*` tag.
 
+The server also serves a public landing page at `GET /` (downloads, features; embedded from `server/assets/landing/`). To enable the "Open in browser" button, set `WEB_APP_URL` in `server/assets/landing/site.js`.
+
 ## Development
 
 Start ScyllaDB (single dev node), a local S3-compatible object store
