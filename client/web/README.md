@@ -26,8 +26,10 @@ How it differs from the desktop app:
 - Voice (audio only) runs on the `livekit-client` SDK, behind the same `Engine` trait as the native
   engine: `desktop/src/voice_web.rs` + `desktop/js/voice.js`. `build.sh` downloads the SDK (version and
   integrity in `web/livekit-client.lock`, Apache-2.0) to the bundle root; it is loaded on the first join,
-  never at page load. Camera and screen share are desktop-only for now (their buttons are disabled with
-  a note). Voice activity gating, push to talk (while the tab is focused), device pickers, mic test,
+  never at page load. Camera and screen share work too: the browser's own picker replaces the
+  desktop's source list, and tiles are fed by copying frames out of the decoder (`voice.js`, "the frame
+  copy": a detached <video> -> canvas scaled to what the tile count can show -> RGBA -> rune's `Pixels`), so
+  dialogs and menus composite over them like over anything else. Voice activity gating, push to talk (while the tab is focused), device pickers, mic test,
   mute for me, deafen and the cues (synthesized, played through WebAudio) are all in.
 - WebGPU, with WebGL2 as the fallback (rune's `webgl` feature).
 
