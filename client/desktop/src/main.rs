@@ -5,6 +5,7 @@
 //! Headless review: `./render.sh` writes the scenes in `scenes.rs` to `snapshots/`.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 #[cfg(test)]
 mod a11y_tests;

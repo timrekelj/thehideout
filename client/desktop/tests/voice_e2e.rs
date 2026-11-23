@@ -145,8 +145,7 @@ impl App {
             "thehideout-voice-e2e-{:016x}.json",
             rand::rng().random::<u64>()
         ));
-        let mut backend = RealBackend::with_prefs(Prefs::at(&prefs));
-        backend.set_server(url);
+        let backend = RealBackend::for_server(Prefs::at(&prefs), url);
         let cues = Cues::default();
         // A generated tone for a microphone: no hardware, no permission, nothing to the speakers.
         let mut sink = voice_engine::live_sink_with(true, Box::new(cues.clone()));

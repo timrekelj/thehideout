@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=thehideout
+Comment=Chat and voice for your hideout
+Exec=thehideout-desktop %u
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+MimeType=x-scheme-handler/thehideout;
+StartupWMClass=thehideout-desktop

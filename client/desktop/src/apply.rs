@@ -74,10 +74,7 @@ fn apply_reply(s: &mut AppState, reply: Reply, tx: &mut Tx) {
         }
         Reply::Initial(Err(e)) => auth_failed(s, &e),
         Reply::Resume(Ok(None)) | Reply::Resume(Err(ApiError::Unauthenticated)) => s.reset(None),
-        Reply::Resume(Ok(Some((server, session)))) => {
-            s.auth.server.replace_text(&server);
-            signed_in(s, session);
-        }
+        Reply::Resume(Ok(Some(session))) => signed_in(s, session),
         Reply::Resume(Err(e)) => auth_failed(s, &e),
         Reply::Refreshed(Ok(init)) => refreshed(s, init),
         // Quiet: the lists stay as they were and the next gap tries again.
@@ -1235,15 +1232,8 @@ mod tests {
             token: "t".into(),
             me: user(1, "tim"),
         };
-        apply(
-            &mut s,
-            Reply::Resume(Ok(Some(("http://example:1".into(), session)))),
-            &mut tx,
-        );
-        assert_eq!(
-            (s.screen, s.server_url().as_str()),
-            (Screen::Loading, "http://example:1")
-        );
+        apply(&mut s, Reply::Resume(Ok(Some(session))), &mut tx);
+        assert_eq!(s.screen, Screen::Loading);
         assert_eq!(s.outbox, vec![Command::LoadInitial]);
         // The token is refused when the data is fetched: back to the form, no complaint.
         apply(
