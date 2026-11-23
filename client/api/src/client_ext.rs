@@ -1,7 +1,9 @@
 //! Roles, media and site-admin calls of [`Client`].
 
 use bytes::Bytes;
-use connectrpc::client::{ClientTransport, HttpClient, full_body};
+use connectrpc::client::{ClientTransport, full_body};
+
+use crate::transport::Transport;
 use http_body_util::BodyExt;
 
 use crate::admin::{
@@ -16,15 +18,15 @@ use crate::types::{Guild, User};
 type Result<T> = std::result::Result<T, ApiError>;
 
 impl Client {
-    fn roles(&self) -> Result<pb::RoleServiceClient<HttpClient>> {
+    fn roles(&self) -> Result<pb::RoleServiceClient<Transport>> {
         Ok(pb::RoleServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    fn media(&self) -> Result<pb::MediaServiceClient<HttpClient>> {
+    fn media(&self) -> Result<pb::MediaServiceClient<Transport>> {
         Ok(pb::MediaServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    pub(crate) fn admin(&self) -> Result<pb::AdminServiceClient<HttpClient>> {
+    pub(crate) fn admin(&self) -> Result<pb::AdminServiceClient<Transport>> {
         Ok(pb::AdminServiceClient::new(self.http.clone(), self.config()?))
     }
 
@@ -128,18 +130,18 @@ impl Client {
 
     /// Downloads a stored image. [`ApiError::NotFound`] for an unknown key.
     pub async fn fetch_media(&self, key: &str) -> Result<Vec<u8>> {
-        let uri: hyper::Uri = self
+        let uri: http::Uri = self
             .media_url(key)
             .parse()
             .map_err(|e| ApiError::InvalidArgument(format!("bad media url: {e}")))?;
-        let request = hyper::Request::get(uri)
+        let request = http::Request::get(uri)
             .body(full_body(Bytes::new()))
             .map_err(|e| ApiError::Other(e.to_string()))?;
         let response = self.http.send(request).await?;
         let status = response.status();
         match status {
             s if s.is_success() => {}
-            hyper::StatusCode::NOT_FOUND => return Err(ApiError::NotFound),
+            http::StatusCode::NOT_FOUND => return Err(ApiError::NotFound),
             s => return Err(ApiError::Other(format!("media request failed: {s}"))),
         }
         let body = response.into_body().collect().await.map_err(|e| ApiError::Network(e.to_string()))?;

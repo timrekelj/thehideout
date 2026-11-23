@@ -4,7 +4,7 @@
 use std::time::SystemTime;
 
 use buffa_types::google::protobuf::Timestamp;
-use connectrpc::client::HttpClient;
+use crate::transport::Transport;
 
 use crate::client::{Client, required};
 use crate::error::ApiError;
@@ -153,7 +153,7 @@ pub struct NotificationSettingsUpdate {
 }
 
 impl Client {
-    fn notifications(&self) -> Result<pb::NotificationServiceClient<HttpClient>> {
+    fn notifications(&self) -> Result<pb::NotificationServiceClient<Transport>> {
         Ok(pb::NotificationServiceClient::new(self.http.clone(), self.config()?))
     }
 

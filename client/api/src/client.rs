@@ -2,7 +2,11 @@
 
 use std::sync::{Arc, RwLock};
 
-use connectrpc::client::{ClientConfig, HttpClient};
+use connectrpc::client::ClientConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use connectrpc::client::HttpClient;
+
+use crate::transport::Transport;
 
 use crate::account::LoginOutcome;
 use crate::error::ApiError;
@@ -16,16 +20,25 @@ type Result<T> = std::result::Result<T, ApiError>;
 /// Request header naming this app build, sent on every request.
 pub const CLIENT_HEADER: &str = "x-thehideout-client";
 
-/// `desktop/<version> (<os>)`.
+/// `desktop/<version> (<os>)`, or `web/<version>` in the browser.
 pub(crate) fn format_client_header(version: &str, os: &str) -> String {
-    format!("desktop/{version} ({os})")
+    if os == "web" {
+        format!("web/{version}")
+    } else {
+        format!("desktop/{version} ({os})")
+    }
 }
 
 /// The value of [`CLIENT_HEADER`] for this build.
 pub fn client_header_value() -> String {
-    format_client_header(env!("CARGO_PKG_VERSION"), std::env::consts::OS)
+    #[cfg(target_arch = "wasm32")]
+    let os = "web";
+    #[cfg(not(target_arch = "wasm32"))]
+    let os = std::env::consts::OS;
+    format_client_header(env!("CARGO_PKG_VERSION"), os)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A TLS transport for `https://` base URLs, trusting the webpki root certificates.
 fn tls_client() -> HttpClient {
     use connectrpc::rustls;
@@ -45,7 +58,7 @@ fn tls_client() -> HttpClient {
 /// including a running [`Gateway`](crate::Gateway).
 #[derive(Clone)]
 pub struct Client {
-    pub(crate) http: HttpClient,
+    pub(crate) http: Transport,
     pub(crate) base_url: String,
     token: Arc<RwLock<Option<String>>>,
     pub(crate) max_upload_bytes: u64,
@@ -61,11 +74,15 @@ impl Client {
     /// network over it.
     pub fn new(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into();
+        #[cfg(not(target_arch = "wasm32"))]
         let http = if base_url.starts_with("https://") {
             tls_client()
         } else {
             HttpClient::plaintext()
         };
+        // The browser handles TLS and the root store itself.
+        #[cfg(target_arch = "wasm32")]
+        let http = crate::fetch::FetchTransport;
         Self {
             http,
             base_url,
@@ -113,23 +130,23 @@ impl Client {
         Ok(config)
     }
 
-    pub(crate) fn auth(&self) -> Result<pb::AuthServiceClient<HttpClient>> {
+    pub(crate) fn auth(&self) -> Result<pb::AuthServiceClient<Transport>> {
         Ok(pb::AuthServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    pub(crate) fn guilds(&self) -> Result<pb::GuildServiceClient<HttpClient>> {
+    pub(crate) fn guilds(&self) -> Result<pb::GuildServiceClient<Transport>> {
         Ok(pb::GuildServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    pub(crate) fn messages(&self) -> Result<pb::MessageServiceClient<HttpClient>> {
+    pub(crate) fn messages(&self) -> Result<pb::MessageServiceClient<Transport>> {
         Ok(pb::MessageServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    fn emojis(&self) -> Result<pb::EmojiServiceClient<HttpClient>> {
+    fn emojis(&self) -> Result<pb::EmojiServiceClient<Transport>> {
         Ok(pb::EmojiServiceClient::new(self.http.clone(), self.config()?))
     }
 
-    fn dms(&self) -> Result<pb::DmServiceClient<HttpClient>> {
+    fn dms(&self) -> Result<pb::DmServiceClient<Transport>> {
         Ok(pb::DmServiceClient::new(self.http.clone(), self.config()?))
     }
 
@@ -608,7 +625,7 @@ pub(crate) fn required<T, U: From<T>>(value: Option<T>) -> Result<U> {
 
 /// An open `Subscribe` stream yielding domain events.
 pub(crate) struct EventStream {
-    inner: connectrpc::client::ServerStream<hyper::body::Incoming, pb::SubscribeResponseView<'static>>,
+    inner: connectrpc::client::ServerStream<<Transport as connectrpc::client::ClientTransport>::ResponseBody, pb::SubscribeResponseView<'static>>,
 }
 
 impl EventStream {

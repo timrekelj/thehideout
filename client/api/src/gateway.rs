@@ -4,11 +4,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
-
 use crate::client::{Client, EventStream};
 use crate::error::ApiError;
+use crate::runtime::{self, Task, sleep, timeout};
 use crate::state::{Action, Failure, Input, Machine};
 use crate::types::Event;
 
@@ -65,7 +63,7 @@ impl GatewayConfig {
 pub struct Gateway;
 
 impl Gateway {
-    /// Starts the gateway with default settings on the current tokio runtime.
+    /// Starts the gateway with default settings on the current tokio runtime (natively) or the browser event loop (wasm32).
     ///
     /// `on_update` is called from the gateway task; keep it quick (forward to a
     /// channel or an event-loop proxy). The token is read from `client` on every
@@ -83,14 +81,14 @@ impl Gateway {
         config: GatewayConfig,
         on_update: impl Fn(GatewayUpdate) + Send + Sync + 'static,
     ) -> GatewayHandle {
-        GatewayHandle { task: tokio::spawn(run(client, config, Arc::new(on_update))) }
+        GatewayHandle { task: runtime::spawn(run(client, config, Arc::new(on_update))) }
     }
 }
 
 /// Keeps the gateway running; stops it on [`shutdown`](Self::shutdown) or drop.
 #[must_use = "dropping the handle stops the gateway"]
 pub struct GatewayHandle {
-    task: JoinHandle<()>,
+    task: Task,
 }
 
 impl GatewayHandle {

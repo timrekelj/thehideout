@@ -108,12 +108,16 @@ mod client;
 mod content;
 mod client_ext;
 mod error;
+#[cfg(target_arch = "wasm32")]
+mod fetch;
 mod gateway;
 mod lifecycle;
 mod moderation;
 mod notifications;
+mod runtime;
 mod state;
 mod structure;
+mod transport;
 mod types;
 mod upload;
 mod voice;
@@ -136,6 +140,8 @@ pub use notifications::{
     DeviceRegistration, NotificationLevel, NotificationOverride, NotificationSettings, NotificationSettingsUpdate, PushPlatform,
 };
 pub use lifecycle::{DeleteCredentials, TermsStatus};
+#[cfg(target_arch = "wasm32")]
+pub use fetch::FetchTransport;
 pub use gateway::{Gateway, GatewayConfig, GatewayHandle, GatewayUpdate};
 pub use structure::{Ban, ChannelIcon, ChannelIconRef, GuildLayout, LayoutEntry, Member, PaletteColor, Permissions, Role, RoleList, Section};
 pub use types::{Channel, ChannelKind, DmChannel, Event, Guild, MemberRemovalReason, Message, Page, User, VoiceJoin, VoiceState};

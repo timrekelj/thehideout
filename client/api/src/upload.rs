@@ -1,14 +1,27 @@
 //! Plain-HTTP file transfer: streaming attachment uploads and downloads.
 
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
+// TODO(web Phase 1): on wasm32 uploads and downloads need browser primitives (XHR upload with
+// progress, a Blob download); the blocking `Read`/`Write` versions below are native-only.
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::pin::Pin;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
+#[cfg(not(target_arch = "wasm32"))]
 use std::task::{Context, Poll};
 
+#[cfg(not(target_arch = "wasm32"))]
 use bytes::Bytes;
+#[cfg(not(target_arch = "wasm32"))]
 use connectrpc::client::{ClientBody, ClientTransport};
+#[cfg(not(target_arch = "wasm32"))]
 use connectrpc::{ConnectError, ErrorCode};
+#[cfg(not(target_arch = "wasm32"))]
 use http_body::{Body, Frame, SizeHint};
+#[cfg(not(target_arch = "wasm32"))]
 use http_body_util::BodyExt;
 
 use crate::client::Client;
@@ -18,9 +31,11 @@ use crate::proto::thehideout::v1 as pb;
 
 type Result<T> = std::result::Result<T, ApiError>;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Bytes handed to the transport per chunk (and the granularity of upload progress).
 const CHUNK: usize = 64 * 1024;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A request body that reads `total` bytes from `reader` in [`CHUNK`]s and reports
 /// the running total as each chunk is pulled by the connection.
 struct ReaderBody {
@@ -30,6 +45,7 @@ struct ReaderBody {
     progress: Box<dyn Fn(u64, u64) + Send + Sync>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Body for ReaderBody {
     type Data = Bytes;
     type Error = ConnectError;
@@ -87,6 +103,7 @@ fn encode_component(s: &str) -> String {
     out
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_pending(body: &[u8]) -> Result<PendingAttachment> {
     serde_json::from_slice::<pb::PendingAttachment>(body)
         .map(Into::into)
@@ -103,6 +120,7 @@ impl Client {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Uploads `data` as a pending attachment of `channel_id` (plain HTTP, streamed in chunks).
     ///
     /// `progress(sent, total)` runs as chunks are handed to the connection. Link the
@@ -124,6 +142,7 @@ impl Client {
             .await
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Like [`upload_attachment`](Self::upload_attachment) but streams `size` bytes
     /// from `reader` (e.g. a `std::fs::File`) without loading them into memory. Reads
     /// are blocking, 64 KiB at a time.
@@ -166,6 +185,7 @@ impl Client {
         parse_pending(&bytes)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Streams a stored file (`GET /media/{key}`) into `out` without buffering it.
     ///
     /// `progress(received, total)` runs per chunk; `total` is the `Content-Length` if
@@ -210,6 +230,7 @@ impl Client {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
