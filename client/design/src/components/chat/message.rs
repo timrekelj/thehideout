@@ -32,9 +32,9 @@ const PENDING_OPACITY: f32 = 0.55;
 // Space above a group (`Metrics::group_gap`, 12 / 7) plus the row padding is ~16 / ~10 between
 // groups, while rows inside a group sit 2 / 1pt apart, so a run reads as one block.
 /// The hover bar: a 24pt IconButton, 2pt padding and a 1pt border around it.
+const ACTION_BAR_H: f32 = 24.0 + 2.0 * 2.0 + 2.0;
 /// Seconds a message row stays hovered after the pointer leaves it, so the action bar can be reached.
 const HOVER_GRACE: f32 = 0.25;
-const ACTION_BAR_H: f32 = 24.0 + 2.0 * 2.0 + 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum DeliveryState {
