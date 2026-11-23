@@ -205,9 +205,15 @@ jobs:
           workspaces: client
 
       # The camera backend (nokhwa) only supports AVFoundation, so Linux builds without it.
+      # libwebrtc's screencast portal code (in webrtc-sys) calls GLib/GIO/GObject, which the crate
+      # doesn't link itself, so pass them to the linker explicitly.
       - name: Build
         working-directory: client
-        run: cargo build --release --locked --no-default-features -p thehideout-desktop
+        run: |
+          set -euo pipefail
+          export RUSTFLAGS="$RUSTFLAGS -C link-arg=-Wl,--no-as-needed $(pkg-config --libs gio-2.0 gobject-2.0 glib-2.0 | sed 's/\(^\| \)\(-[^ ]*\)/\1-C link-arg=\2/g')"
+          echo "RUSTFLAGS=$RUSTFLAGS"
+          cargo build --release --locked --no-default-features -p thehideout-desktop
 
       - name: Package
         run: |
@@ -249,8 +255,12 @@ jobs:
           workspaces: client
 
       # The camera backend (nokhwa) only supports AVFoundation, so Windows builds without it.
+      # libwebrtc is built with the static CRT (/MT), so the Rust side must match (as in LiveKit's
+      # rust-sdks).
       - name: Build
         working-directory: client
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --locked --no-default-features -p thehideout-desktop
 
       - name: Package
