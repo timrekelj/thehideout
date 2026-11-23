@@ -82,6 +82,8 @@ pub struct AppState {
     pub policy: Arc<crate::policy::Policy>,
     /// Push notification dispatch (off without a transport).
     pub push: Arc<crate::push::Pusher>,
+    /// Folder of the web client bundle, served at `/app/` (`THEHIDEOUT_WEB_DIR`); `None` = not served.
+    pub web_dir: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -116,6 +118,7 @@ impl AppState {
             streams: Arc::default(),
             policy: Arc::default(),
             push: Arc::new(crate::push::Pusher::disabled()),
+            web_dir: None,
         }
         .with_legal_footer()
     }
@@ -124,6 +127,12 @@ impl AppState {
     /// without one push stays off and tokens are only stored.
     pub fn with_push(mut self, transport: Option<Arc<dyn crate::push::Transport>>, tuning: crate::push::Tuning) -> Self {
         self.push = Arc::new(crate::push::Pusher::new(transport, tuning));
+        self
+    }
+
+    /// Serves the web client bundle in `dir` at `/app/` (`THEHIDEOUT_WEB_DIR`, tests).
+    pub fn with_web_dir(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        self.web_dir = dir;
         self
     }
 
@@ -223,7 +232,7 @@ const READY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 fn request_timeout(path: &str) -> Option<Duration> {
     if path.starts_with("/thehideout.v1.GatewayService/") {
         None
-    } else if path == "/attachments" || path.starts_with("/media/") || path.starts_with("/thehideout.v1.MediaService/") {
+    } else if path == "/attachments" || path.starts_with("/app/") || path.starts_with("/media/") || path.starts_with("/thehideout.v1.MediaService/") {
         Some(TRANSFER_TIMEOUT)
     } else {
         Some(REQUEST_TIMEOUT)
@@ -272,7 +281,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 
 /// Builds the HTTP app: all Connect services, `GET /health`, `GET /ready`, `GET /media/*`,
 /// `POST /attachments`, the passkey ceremony page (`/auth/passkey*`), the
-/// invite landing page (`GET /invite/{token}`), the LiveKit webhook
+/// invite landing page (`GET /invite/{token}`), the public landing page (`GET /`), the LiveKit webhook
 /// (`POST /livekit/webhook`), and CORS for the configured public origin only.
 pub fn build_app(state: AppState) -> Router {
     crate::voice::spawn_sweeper(&state);
@@ -303,8 +312,11 @@ pub fn build_app(state: AppState) -> Router {
         .into_axum_service()
         .with_limits(media_limits);
 
+    let connect_service = connect.into_axum_service();
     let trusted = state.trusted_proxies.clone();
-    Router::new()
+    let livekit_url = state.livekit.config.as_ref().map(|c| c.url.as_str());
+    let web = state.web_dir.as_deref().and_then(|dir| crate::web::routes(dir, livekit_url));
+    let mut router = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/ready", get(ready).with_state(state.clone()))
         .route_service("/thehideout.v1.MediaService/{method}", media_connect)
@@ -313,9 +325,15 @@ pub fn build_app(state: AppState) -> Router {
         .merge(crate::passkeys::routes().with_state(state.clone()))
         .merge(crate::services::voice::routes().with_state(state.clone()))
         .merge(crate::services::invite::routes().with_state(state.clone()))
+        .route("/", crate::landing::root().fallback_service(connect_service.clone()).with_state(state.clone()))
+        .merge(crate::landing::routes().with_state(state.clone()))
         .merge(crate::legal::routes().with_state(state.clone()))
-        .merge(crate::lifecycle::routes().with_state(state.clone()))
-        .fallback_service(connect.into_axum_service())
+        .merge(crate::lifecycle::routes().with_state(state.clone()));
+    if let Some(web) = web {
+        router = router.merge(web);
+    }
+    router
+        .fallback_service(connect_service)
         .layer(middleware::from_fn_with_state(state.policy.min_client.clone(), crate::policy::client_version_middleware))
         .layer(cors(&public_url))
         .layer(middleware::from_fn(timeout_middleware))
@@ -356,6 +374,7 @@ fn cors(public_url: &Url) -> CorsLayer {
         "grpc-timeout",
         "x-grpc-web",
         "x-user-agent",
+        "x-thehideout-client",
     ]
     .map(HeaderName::from_static);
     let exposed = [
