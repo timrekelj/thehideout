@@ -13,6 +13,7 @@ pub mod email;
 pub mod embeds;
 pub mod events;
 pub mod layout;
+pub mod landing;
 pub mod legal;
 pub mod lifecycle;
 pub mod media;

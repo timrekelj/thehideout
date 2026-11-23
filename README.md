@@ -1,6 +1,8 @@
 # thehideout
 A Discord-style chat app for me and my friends, built to learn handling lots of data
 
+The server also serves a public landing page at `GET /` (downloads, features; embedded from `server/assets/landing/`). To enable the "Open in browser" button, set `WEB_APP_URL` in `server/assets/landing/site.js`.
+
 ## Development
 
 Start ScyllaDB (single dev node), a local S3-compatible object store

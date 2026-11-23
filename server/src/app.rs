@@ -272,7 +272,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 
 /// Builds the HTTP app: all Connect services, `GET /health`, `GET /ready`, `GET /media/*`,
 /// `POST /attachments`, the passkey ceremony page (`/auth/passkey*`), the
-/// invite landing page (`GET /invite/{token}`), the LiveKit webhook
+/// invite landing page (`GET /invite/{token}`), the public landing page (`GET /`), the LiveKit webhook
 /// (`POST /livekit/webhook`), and CORS for the configured public origin only.
 pub fn build_app(state: AppState) -> Router {
     crate::voice::spawn_sweeper(&state);
@@ -313,6 +313,7 @@ pub fn build_app(state: AppState) -> Router {
         .merge(crate::passkeys::routes().with_state(state.clone()))
         .merge(crate::services::voice::routes().with_state(state.clone()))
         .merge(crate::services::invite::routes().with_state(state.clone()))
+        .merge(crate::landing::routes().with_state(state.clone()))
         .merge(crate::legal::routes().with_state(state.clone()))
         .merge(crate::lifecycle::routes().with_state(state.clone()))
         .fallback_service(connect.into_axum_service())
