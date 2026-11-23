@@ -170,6 +170,14 @@ async fn unindex_hashes(state: &AppState, invite: &InviteRow) -> Result<(), Conn
         .execute_unpaged("DELETE FROM invites_by_hash WHERE hash = ?", (&invite.code_hash,))
         .await
         .map_err(internal)?;
+    // Invites from before the codes also have a row under their old token hash.
+    if !invite.token_hash.is_empty() {
+        state
+            .session
+            .execute_unpaged("DELETE FROM invites_by_hash WHERE hash = ?", (&invite.token_hash,))
+            .await
+            .map_err(internal)?;
+    }
     Ok(())
 }
 
