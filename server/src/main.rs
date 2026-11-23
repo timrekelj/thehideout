@@ -136,6 +136,7 @@ async fn main() -> Result<()> {
     .with_admins(config.admins.clone())
     .with_public_url(config.public_url.clone())
     .with_policy(config.policy.clone())
+    .with_web_dir(config.web_dir.clone(), config.livekit.as_ref().map(|l| l.url.clone()))
     .with_mailer(mailer(&config)?)
     .with_storage(storage)
     .with_push(
