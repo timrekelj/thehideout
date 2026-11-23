@@ -120,6 +120,10 @@ services:
       THEHIDEOUT_MIN_CLIENT_VERSION_DESKTOP: ${THEHIDEOUT_MIN_CLIENT_VERSION_DESKTOP:-}
       THEHIDEOUT_MIN_CLIENT_VERSION_IOS: ${THEHIDEOUT_MIN_CLIENT_VERSION_IOS:-}
       THEHIDEOUT_MIN_CLIENT_VERSION_ANDROID: ${THEHIDEOUT_MIN_CLIENT_VERSION_ANDROID:-}
+      # Web client: unset = no gate (the bundle ships with the server).
+      THEHIDEOUT_MIN_CLIENT_VERSION_WEB: ${THEHIDEOUT_MIN_CLIENT_VERSION_WEB:-}
+      # Folder of the web client bundle served at /app/; unset = not served.
+      THEHIDEOUT_WEB_DIR: ${THEHIDEOUT_WEB_DIR:-}
       THEHIDEOUT_S3_PUBLIC_BASE: ${THEHIDEOUT_S3_PUBLIC_BASE:-}
       # Push notifications; empty = that provider is off.
       THEHIDEOUT_APNS_KEY: ${THEHIDEOUT_APNS_KEY:-}
