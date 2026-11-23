@@ -14,7 +14,7 @@
 
 use std::rc::Rc;
 
-use rune::{col, el, row, text, El, SpringPair, Transition};
+use rune::{col, el, row, text, Anim, AnimExt, Curve, El, SpringPair, Transition};
 use rune_kit::{Kit, RollingText};
 
 use super::body;
@@ -32,6 +32,8 @@ const PENDING_OPACITY: f32 = 0.55;
 // Space above a group (`Metrics::group_gap`, 12 / 7) plus the row padding is ~16 / ~10 between
 // groups, while rows inside a group sit 2 / 1pt apart, so a run reads as one block.
 /// The hover bar: a 24pt IconButton, 2pt padding and a 1pt border around it.
+/// Seconds a message row stays hovered after the pointer leaves it, so the action bar can be reached.
+const HOVER_GRACE: f32 = 0.25;
 const ACTION_BAR_H: f32 = 24.0 + 2.0 * 2.0 + 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -432,6 +434,10 @@ impl MessageGroup {
             .gap(12.0)
             .items_start()
             .hover_group()
+            // The action bar floats over the row's top edge, and a pointer heading for it from the
+            // row's text leaves the row first. A short grace before the hover lets go keeps the
+            // bar up (and so hittable) until the pointer lands on it, which holds the group.
+            .hover_motion(Anim::INSTANT, Anim::new(Curve::linear(0.1)).delay(HOVER_GRACE))
             .transition(Transition::asymmetric(enter, Transition::none()))
             .token_motion(motion::CONTROL);
         if m.mentions_me {
