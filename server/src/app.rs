@@ -281,7 +281,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 
 /// Builds the HTTP app: all Connect services, `GET /health`, `GET /ready`, `GET /media/*`,
 /// `POST /attachments`, the passkey ceremony page (`/auth/passkey*`), the
-/// invite landing page (`GET /invite/{token}`), the public landing page (`GET /`), the LiveKit webhook
+/// invite landing page (`GET /invite/{code}`), the public landing page (`GET /`), the LiveKit webhook
 /// (`POST /livekit/webhook`), and CORS for the configured public origin only.
 pub fn build_app(state: AppState) -> Router {
     crate::voice::spawn_sweeper(&state);

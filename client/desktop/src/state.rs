@@ -424,6 +424,9 @@ impl Ui {
 
 pub struct AppState {
     pub screen: Screen,
+    /// An invite link the page was opened at (web), applied once the saved session has been
+    /// checked and the sign-in form is up.
+    pub pending_link: Option<String>,
     pub auth: Auth,
     pub session: Option<Session>,
     pub data: Data,
@@ -445,6 +448,7 @@ impl AppState {
     pub fn new(now: fn() -> SystemTime, tz: Tz) -> AppState {
         AppState {
             screen: Screen::Auth,
+            pending_link: None,
             auth: Auth::new(),
             session: None,
             data: Data::default(),
@@ -485,6 +489,8 @@ impl AppState {
         let recents = std::mem::take(&mut self.ui.recents);
         let folded = std::mem::take(&mut self.ui.attach.embeds_collapsed);
         let waker = self.ui.attach.waker.take();
+        // The link the page was opened at waits for the sign-in screen this leads to.
+        let link = self.pending_link.take();
         let was_in_voice = self.voice.session != crate::voice::VoiceSession::None;
         // The picture cache keeps its decoder (and the waker it was given); the pictures go.
         let mut media = std::mem::take(&mut self.data.media);
@@ -495,6 +501,7 @@ impl AppState {
         self.ui.recents = recents;
         self.ui.attach.embeds_collapsed = folded;
         self.ui.attach.waker = waker;
+        self.pending_link = link;
         self.today = today;
         self.auth = Auth::new();
         self.auth.error = error;

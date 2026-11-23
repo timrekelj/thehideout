@@ -29,6 +29,13 @@ pub fn invite_code() -> String {
     crockford(8)
 }
 
+/// The stored form of a typed invite code (`abcd-efgh`, `ABCDEFGH`, ...), or `None` when it is
+/// not exactly 8 Crockford characters.
+pub fn parse_invite_code(raw: &str) -> Option<String> {
+    let code = normalize_crockford(raw.trim());
+    (code.len() == 8 && code.bytes().all(|b| CROCKFORD.contains(&b))).then_some(code)
+}
+
 /// `ABCDEFGH` -> `ABCD-EFGH`.
 pub fn format_invite_code(code: &str) -> String {
     format!("{}-{}", &code[..4], &code[4..])
@@ -153,6 +160,12 @@ mod tests {
     #[test]
     fn codes_have_their_shapes() {
         assert_eq!(six_digits().len(), 6);
+        assert_eq!(parse_invite_code("abcd-efgh").as_deref(), Some("ABCDEFGH"));
+        assert_eq!(parse_invite_code(" ab cd_ef-gh ").as_deref(), Some("ABCDEFGH"));
+        assert_eq!(parse_invite_code("oiLo-0110").as_deref(), Some("01100110"));
+        for bad in ["", "ABCD-EFG", "ABCD-EFGHJ", "ABCD-EFGU", &"A".repeat(43)] {
+            assert_eq!(parse_invite_code(bad), None, "{bad}");
+        }
         let invite = invite_code();
         assert_eq!(invite.len(), 8);
         assert_eq!(

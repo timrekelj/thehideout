@@ -25,7 +25,7 @@ public  final class LookupInviteRequest extends
   private java.lang.String tokenOrCode_;
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -37,7 +37,7 @@ public  final class LookupInviteRequest extends
   }
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -50,7 +50,7 @@ public  final class LookupInviteRequest extends
   }
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -64,7 +64,7 @@ public  final class LookupInviteRequest extends
   }
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -75,7 +75,7 @@ public  final class LookupInviteRequest extends
   }
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -191,7 +191,7 @@ public  final class LookupInviteRequest extends
 
     /**
      * <pre>
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * </pre>
      *
      * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -203,7 +203,7 @@ public  final class LookupInviteRequest extends
     }
     /**
      * <pre>
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * </pre>
      *
      * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -216,7 +216,7 @@ public  final class LookupInviteRequest extends
     }
     /**
      * <pre>
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * </pre>
      *
      * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -231,7 +231,7 @@ public  final class LookupInviteRequest extends
     }
     /**
      * <pre>
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * </pre>
      *
      * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -244,7 +244,7 @@ public  final class LookupInviteRequest extends
     }
     /**
      * <pre>
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * </pre>
      *
      * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>

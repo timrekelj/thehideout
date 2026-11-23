@@ -9,6 +9,19 @@ export function origin() {
     return location.origin;
 }
 
+export function pathname() {
+    return location.pathname;
+}
+
+export function search() {
+    return location.search;
+}
+
+/** Replaces the address-bar path without a reload or a history entry. */
+export function replacePath(path) {
+    try { history.replaceState(null, "", path); } catch { /* the address bar just keeps the old path */ }
+}
+
 export function storageGet(key) {
     try { return localStorage.getItem(key) ?? undefined; } catch { return undefined; }
 }

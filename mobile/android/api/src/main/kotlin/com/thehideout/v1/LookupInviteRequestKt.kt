@@ -35,7 +35,7 @@ public object LookupInviteRequestKt {
 
     /**
      * ```
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * ```
      *
      * `string token_or_code = 1 [json_name = "tokenOrCode"];`
@@ -49,7 +49,7 @@ public object LookupInviteRequestKt {
       }
     /**
      * ```
-     * The link token or the short code (dashes and case ignored).
+     * The short code (dashes and case ignored).
      * ```
      *
      * `string token_or_code = 1 [json_name = "tokenOrCode"];`
