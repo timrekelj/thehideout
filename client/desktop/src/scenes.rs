@@ -824,8 +824,8 @@ fn voice_participant_menu(a: &mut App, dark: bool) {
 
 /// Tim is connected to the lounge with a fake engine in which `remote` people have video, and
 /// the server's camera / LIVE flags of Ana and Bruno say the same (as the gateway would).
-fn voice_video_screen(dark: bool, remote: &[(u64, thehideout_voice::VideoKind)]) -> App {
-    use thehideout_voice::VideoKind;
+fn voice_video_screen(dark: bool, remote: &[(u64, thehideout_voice_types::VideoKind)]) -> App {
+    use thehideout_voice_types::VideoKind;
     let mut app = voice_screen(dark);
     app.set_voice_sink(Box::new(crate::fake::FakeAudio::with_remote(remote.to_vec())));
     app.act(|s| s.join_voice(LOUNGE));
@@ -846,7 +846,7 @@ fn voice_video_screen(dark: bool, remote: &[(u64, thehideout_voice::VideoKind)])
 
 /// The stage with Tim's camera on, Ana's camera on and Bruno (muted) with none: a grid of three.
 fn voice_stage(a: &mut App, dark: bool) {
-    use thehideout_voice::VideoKind;
+    use thehideout_voice_types::VideoKind;
     let mut app = voice_video_screen(dark, &[(ANA, VideoKind::Camera)]);
     app.act(|s| s.toggle_camera());
     app.pump();
@@ -860,7 +860,7 @@ fn voice_stage(a: &mut App, dark: bool) {
 
 /// Ana shares her screen: it is the big tile, and Tim's camera and Bruno's avatar sit in the strip.
 fn voice_stage_screen(a: &mut App, dark: bool) {
-    use thehideout_voice::VideoKind;
+    use thehideout_voice_types::VideoKind;
     let mut app = voice_video_screen(dark, &[(ANA, VideoKind::Screen)]);
     app.act(|s| s.toggle_camera());
     app.pump();
@@ -882,7 +882,7 @@ fn voice_screen_picker(a: &mut App, dark: bool) {
 
 /// The sidebar with Ana's camera on and Bruno live, Tim connected (the chat stays open).
 fn voice_sidebar_live(a: &mut App, dark: bool) {
-    use thehideout_voice::VideoKind;
+    use thehideout_voice_types::VideoKind;
     *a = voice_video_screen(dark, &[(ANA, VideoKind::Camera), (BRUNO, VideoKind::Screen)]);
 }
 

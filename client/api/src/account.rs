@@ -2,7 +2,7 @@
 
 use std::time::SystemTime;
 
-use connectrpc::client::HttpClient;
+use crate::transport::Transport;
 
 use crate::admin::{Paged, next_token};
 use crate::client::{Client, required};
@@ -238,7 +238,7 @@ impl From<pb::Session> for DeviceSession {
 }
 
 impl Client {
-    fn invites(&self) -> Result<pb::InviteServiceClient<HttpClient>> {
+    fn invites(&self) -> Result<pb::InviteServiceClient<Transport>> {
         Ok(pb::InviteServiceClient::new(self.http.clone(), self.config()?))
     }
 

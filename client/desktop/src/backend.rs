@@ -532,6 +532,14 @@ type R<T> = Result<T, ApiError>;
 /// What this device is called in the account's session list (and a new passkey's default name):
 /// the computer's name, else "thehideout desktop on <OS>".
 pub fn device_label() -> String {
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::device_label();
+    #[cfg(not(target_arch = "wasm32"))]
+    native_device_label()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_device_label() -> String {
     let host = gethostname::gethostname()
         .to_string_lossy()
         .trim()

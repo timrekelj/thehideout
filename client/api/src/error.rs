@@ -102,6 +102,7 @@ impl std::error::Error for ApiError {}
 
 impl ApiError {
     /// Maps the HTTP status of a plain (non-Connect) request, e.g. `POST /attachments`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // used by native uploads; web Phase 1 will use it
     pub(crate) fn from_status(status: u16, body: &str) -> Self {
         let msg = body.trim().to_owned();
         match status {

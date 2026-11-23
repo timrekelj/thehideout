@@ -3,7 +3,7 @@
 
   // Set this to the web app's URL to turn the "Coming soon" card into an
   // "Open in browser" button. Leave it empty while there is no web app.
-  var WEB_APP_URL = '';
+  var WEB_APP_URL = '/app/';
 
   var API = 'https://api.github.com/repos/timrekelj/thehideout/releases/latest';
 

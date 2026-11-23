@@ -1,0 +1,8 @@
+[package]
+name = "thehideout-voice-types"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Plain voice/video types shared by the UI and the engines; compiles for wasm32."
+
+[dependencies]

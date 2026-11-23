@@ -18,7 +18,7 @@ use thehideout_design::{icon as size, metrics_of, radius, theme_of, type_};
 
 use crate::app::App;
 use crate::voice::VoiceStatus;
-use thehideout_voice::Quality;
+use thehideout_voice_types::Quality;
 
 /// The bar, or nothing while we are not in voice.
 pub fn build(a: &App, k: &Kit) -> Option<El> {

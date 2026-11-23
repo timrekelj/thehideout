@@ -1,0 +1,5 @@
+# getrandom 0.3 (via rand) has no default browser backend: select `wasm_js` (enabled by the
+# `wasm_js` feature in client/api). Note a RUSTFLAGS env var replaces this setting, so when
+# using one (rune's web-build.sh appends to it) include the flag there too.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

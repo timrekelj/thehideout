@@ -455,7 +455,10 @@ impl AppState {
             today: crate::format::day_of(tz, unix(now())),
             tz,
             now,
-            nonce: 0,
+            // Starts at the launch time, not 0: a nonce names a message in the transcript
+            // (`chat_id_of`) and the server treats a repeated one as a resend, and every launch
+            // (on the web, every page load) would otherwise reuse the last one's `<id>-1`.
+            nonce: now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
         }
     }
 

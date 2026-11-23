@@ -38,16 +38,34 @@ pub fn image_type(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// The content type of `path` if it names an image the server takes and `len` bytes fit.
+fn check_image(path: &Path, len: u64) -> Result<&'static str, ApiError> {
+    let kind = image_type(path)
+        .ok_or_else(|| ApiError::InvalidArgument("choose a PNG, JPEG, WebP or GIF image".into()))?;
+    if len > MAX_MEDIA_BYTES as u64 {
+        return Err(ApiError::InvalidArgument("that image is over 8 MiB".into()));
+    }
+    Ok(kind)
+}
+
+/// The browser's [`read_image`]: the picked file behind `path`, read asynchronously.
+#[cfg(target_arch = "wasm32")]
+pub async fn read_web_image(path: &Path) -> Result<(Vec<u8>, String), ApiError> {
+    let unreadable = || ApiError::InvalidArgument("can't read that file".into());
+    let blob = crate::web::file_blob(path).ok_or_else(unreadable)?;
+    let kind = check_image(path, crate::web::file_size(path).ok_or_else(unreadable)?)?;
+    let bytes = crate::web::read_blob(&blob).await.map_err(|_| unreadable())?;
+    Ok((bytes, kind.to_owned()))
+}
+
 /// Reads a picked image: its bytes and content type. Blocking, so the backend runs it off the
 /// frame loop. Refuses other file types and anything over [`MAX_MEDIA_BYTES`] without reading it.
 pub fn read_image(path: &Path) -> Result<(Vec<u8>, String), ApiError> {
-    let kind = image_type(path)
-        .ok_or_else(|| ApiError::InvalidArgument("choose a PNG, JPEG, WebP or GIF image".into()))?;
+    // The type is refused before the file is touched.
+    check_image(path, 0)?;
     let meta = std::fs::metadata(path)
         .map_err(|e| ApiError::InvalidArgument(format!("can't read that file: {e}")))?;
-    if meta.len() > MAX_MEDIA_BYTES as u64 {
-        return Err(ApiError::InvalidArgument("that image is over 8 MiB".into()));
-    }
+    let kind = check_image(path, meta.len())?;
     let bytes = std::fs::read(path)
         .map_err(|e| ApiError::InvalidArgument(format!("can't read that file: {e}")))?;
     Ok((bytes, kind.to_owned()))

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use rune::prefs::Prefs;
 use rune::{Key, KeyEvent, Mods, Runtime};
-use thehideout_voice::{AudioDevice, VoiceEvent, VoiceMode};
+use thehideout_voice_types::{AudioDevice, VoiceEvent, VoiceMode};
 
 use crate::app::{fake_now, App};
 use crate::fake::{LOUNGE, TIM};

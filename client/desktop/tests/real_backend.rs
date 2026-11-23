@@ -39,6 +39,8 @@ mod moderation_ui;
 mod perms;
 #[path = "../src/real.rs"]
 mod real;
+#[path = "../src/rt.rs"]
+mod rt;
 #[path = "../src/server_settings.rs"]
 mod server_settings;
 #[path = "../src/state.rs"]

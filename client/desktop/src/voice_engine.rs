@@ -12,16 +12,14 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::Receiver;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rune::{Pixels, Waker};
-use thehideout_voice::{
-    AudioInput, ConnectOptions, ScreenSource, SyntheticPicture, VideoFrame, VideoInput, VideoSink, VoiceEngine,
-    VoiceEvent, VoiceMode,
-};
+use thehideout_voice_types::{ScreenSource, VideoFrame, VideoSink, VoiceEvent, VoiceMode};
 
 use crate::voice::{Sound, VoiceIntent, VoiceSink};
 
@@ -373,6 +371,17 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
     }
 }
 
+// The native engine (LiveKit, cpal): not built for the browser, where Phase 2 adds an `Engine` of
+// its own behind the same trait.
+#[cfg(not(target_arch = "wasm32"))]
+pub use live::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod live {
+use super::*;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use thehideout_voice::{AudioInput, ConnectOptions, SyntheticPicture, VideoInput, VoiceEngine};
+
 // ---- the real engine -----------------------------------------------------------------------
 
 /// A `VoiceEngine` with the runtime it runs on.
@@ -671,4 +680,6 @@ fn play_blocking(sound: Sound) -> Result<(), String> {
     std::thread::sleep(std::time::Duration::from_secs_f32(secs + 0.25));
     drop(stream);
     Ok(())
+}
+
 }

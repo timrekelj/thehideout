@@ -11,7 +11,7 @@ use rune::Runtime;
 use serde_json::Value;
 use thehideout_api::VoiceState;
 use thehideout_design::components::ToastKind;
-use thehideout_voice::{ScreenKind, ScreenSource, VideoKind, VoiceEvent};
+use thehideout_voice_types::{ScreenKind, ScreenSource, VideoKind, VoiceEvent};
 
 use crate::app::App;
 use crate::backend::{Backend, Command};
@@ -636,7 +636,7 @@ impl Engine for Fake {
     fn list_screen_sources(&self) {
         self.0.borrow_mut().push(Call::List);
     }
-    fn video_frames(&self, track: &str) -> Option<thehideout_voice::VideoSink> {
+    fn video_frames(&self, track: &str) -> Option<thehideout_voice_types::VideoSink> {
         self.0.borrow_mut().push(Call::Subscribe(track.into()));
         None
     }
@@ -757,7 +757,7 @@ fn mirroring_flips_every_row() {
     let rgba: Vec<u8> = (0..2u8)
         .flat_map(|row| (0..3u8).flat_map(move |x| [row, x, 0, 255]))
         .collect();
-    let frame = thehideout_voice::VideoFrame {
+    let frame = thehideout_voice_types::VideoFrame {
         width: 3,
         height: 2,
         rgba: rgba.clone().into(),

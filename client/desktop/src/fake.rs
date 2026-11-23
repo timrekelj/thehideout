@@ -31,6 +31,7 @@ mod voice;
 
 #[path = "fake_moderation.rs"]
 mod moderation;
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 pub use voice::{FAKE_MIC_LEVEL, FakeAudio, fake_devices_event};
 
 /// The bytes of a generated file (tests compare downloads with them).

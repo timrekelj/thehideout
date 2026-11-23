@@ -498,7 +498,11 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             out.push(heading(
                 k,
                 "Sign in with a passkey",
-                "Your browser opens to confirm it with your fingerprint, face or security key.",
+                if cfg!(target_arch = "wasm32") {
+                    "Follow your browser's prompt to confirm it with your fingerprint, face or security key."
+                } else {
+                    "Your browser opens to confirm it with your fingerprint, face or security key."
+                },
             ));
             let username = TextInput::new(&auth.username)
                 .on_edit(username_edit)
