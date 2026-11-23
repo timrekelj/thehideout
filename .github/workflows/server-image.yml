@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "server/**"
+      - "client/**"
       - "proto/**"
       - "buf.yaml"
       - ".dockerignore"

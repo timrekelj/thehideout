@@ -98,6 +98,44 @@ jobs:
           diff -q "$RUNNER_TEMP/tokens.json" ../mobile/tokens/tokens.json || {
             echo "::error::mobile/tokens/tokens.json is stale: cd client && cargo run -p thehideout-design --example export_tokens -- ../mobile/tokens/tokens.json && python3 -I ../mobile/tokens/generate.py"; exit 1; }
 
+  web:
+    name: web client (wasm clippy + bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+      # build.sh wants wasm-bindgen-cli at the version in Cargo.lock.
+      - name: wasm-bindgen-cli version
+        id: bindgen
+        run: echo "version=$(awk '/^name = "wasm-bindgen"$/ {getline; gsub(/[^0-9.]/, ""); print; exit}' Cargo.lock)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: bindgen-cache
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ steps.bindgen.outputs.version }}
+      - name: install wasm-bindgen-cli
+        if: steps.bindgen-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --locked --version ${{ steps.bindgen.outputs.version }}
+      - name: clippy (wasm32)
+        run: cargo clippy --locked --target wasm32-unknown-unknown -p thehideout-api -p thehideout-desktop --lib -- -D warnings
+      # A debug bundle: the release one is built (and shipped) by the Docker image, which the `docker` job builds.
+      - name: build the web bundle
+        run: web/build.sh --dev --locked --out "$RUNNER_TEMP/web"
+
   mobile:
     name: mobile (tokens, API clients, HideoutAPI)
     runs-on: macos-latest

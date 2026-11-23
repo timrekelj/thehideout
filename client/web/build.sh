@@ -3,7 +3,9 @@
 # serves it at /app/): index.html, boot.js, app.js, app_bg.wasm, the Inter fonts and wasm-bindgen's
 # snippets. No inline scripts, so a strict CSP (script-src 'self' 'wasm-unsafe-eval') is enough.
 #
-#   client/web/build.sh [--dev] [--out DIR]
+#   client/web/build.sh [--dev] [--locked] [--out DIR]
+#   client/web/build.sh [--dev] [--locked] --cook RECIPE   (Docker: build only the dependencies of a
+#                                                           `cargo chef prepare` recipe, same flags)
 #
 # Needs: the wasm32-unknown-unknown target, wasm-bindgen-cli at the version in Cargo.lock
 # (cargo install wasm-bindgen-cli --version <v> --locked), `buf` (the API crate's codegen) and,
@@ -15,11 +17,15 @@ cd "$(dirname "$0")/.."
 
 out=web/dist
 profile=release
+locked=()
+cook=
 while (($#)); do
     case "$1" in
         --dev) profile=debug; shift ;;
+        --locked) locked=(--locked); shift ;;
+        --cook) cook=${2:?--cook needs a recipe}; shift 2 ;;
         --out) out=${2:?--out needs a directory}; shift 2 ;;
-        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -37,13 +43,18 @@ if [[ $profile == release ]]; then
     export RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$HOME=/home --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
 fi
 
+if [[ -n $cook ]]; then
+    exec cargo chef cook --target wasm32-unknown-unknown -p thehideout-desktop --recipe-path "$cook" \
+        ${build[@]+"${build[@]}"} ${locked[@]+"${locked[@]}"}
+fi
+
 want=$(awk '/^name = "wasm-bindgen"$/ {getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)
 if ! command -v wasm-bindgen >/dev/null || [[ $(wasm-bindgen --version) != "wasm-bindgen $want" ]]; then
     echo "Install the matching CLI: cargo install wasm-bindgen-cli --version $want --locked" >&2
     exit 2
 fi
 
-cargo build -p thehideout-desktop --lib --target wasm32-unknown-unknown ${build[@]+"${build[@]}"}
+cargo build -p thehideout-desktop --lib --target wasm32-unknown-unknown ${build[@]+"${build[@]}"} ${locked[@]+"${locked[@]}"}
 target=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
 artifact="$target/wasm32-unknown-unknown/$profile/thehideout_desktop.wasm"
 
@@ -52,6 +63,7 @@ mkdir -p "$out"
 bindgen=(--target web --out-dir "$out" --out-name app)
 [[ $profile == release ]] && bindgen+=(--remove-name-section)
 wasm-bindgen "${bindgen[@]}" "$artifact"
+rm -f "$out"/*.d.ts
 
 if [[ $profile == release ]] && command -v wasm-opt >/dev/null; then
     wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-reference-types \

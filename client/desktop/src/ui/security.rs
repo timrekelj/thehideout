@@ -818,8 +818,12 @@ pub fn dialogs(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
                 .children(error(k, d));
             (
                 "Add a passkey".into(),
-                "Your browser opens to make it with your fingerprint, face or a security key."
-                    .into(),
+                if cfg!(target_arch = "wasm32") {
+                    "Follow your browser's prompt to make it with your fingerprint, face or a security key."
+                } else {
+                    "Your browser opens to make it with your fingerprint, face or a security key."
+                }
+                .into(),
                 body,
                 vec![
                     cancel(
