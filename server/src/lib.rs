@@ -12,6 +12,7 @@ pub mod convert;
 pub mod email;
 pub mod embeds;
 pub mod events;
+pub mod landing;
 pub mod layout;
 pub mod legal;
 pub mod lifecycle;

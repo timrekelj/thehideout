@@ -260,7 +260,7 @@ impl TestApp {
         let state = state
             .with_public_url(format!("http://localhost:{}", addr.port()).parse().unwrap())
             .with_policy(options.policy.clone())
-            .with_web_dir(options.web_dir.clone(), None);
+            .with_web_dir(options.web_dir.clone());
         let state = match options.push.clone() {
             Some((transport, tuning)) => state.with_push(Some(transport), tuning),
             None => state,
