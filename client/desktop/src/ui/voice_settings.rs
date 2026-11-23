@@ -36,6 +36,8 @@ pub fn page(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
 
     let input = device_select(a, k, layer, VoiceMenu::Input);
     let output = device_select(a, k, layer, VoiceMenu::Output);
+    // The camera is picked here on the web only (the desktop uses the system's).
+    let camera = (!crate::voice::app_screen_picker()).then(|| device_select(a, k, layer, VoiceMenu::Camera));
 
     let page = col()
         .key("page-voice")
@@ -58,6 +60,9 @@ pub fn page(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             "Where you hear other people. Join, leave and mute sounds play on the system default.",
             col().key("set-output").w(CONTROL_W).child(output),
         ))
+        .children(camera.map(|c| {
+            setting(k, "Camera", "The camera people see when you turn it on.", col().key("set-camera").w(CONTROL_W).child(c))
+        }))
         .child(setting(
             k,
             "Test your microphone",
@@ -151,10 +156,17 @@ pub fn page(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
 fn device_select(a: &App, k: &Kit, layer: &mut Vec<El>, which: VoiceMenu) -> El {
     let s = &a.state;
     let input = which == VoiceMenu::Input;
+    let camera = which == VoiceMenu::Camera;
     let (list, default, saved) = {
         let p = &s.voice.prefs;
         let d = s.voice.devices.as_ref();
-        if input {
+        if camera {
+            (
+                d.map(|d| d.cameras.as_slice()),
+                d.and_then(|d| d.default_camera.as_deref()),
+                p.camera.as_deref().map(|c| (c, p.camera_name.as_deref())),
+            )
+        } else if input {
             (
                 d.map(|d| d.inputs.as_slice()),
                 d.and_then(|d| d.default_input.as_deref()),
@@ -171,7 +183,9 @@ fn device_select(a: &App, k: &Kit, layer: &mut Vec<El>, which: VoiceMenu) -> El 
     let (options, selected) = device_options(list, default, saved);
     let labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
     let current = labels[selected].clone();
-    let (key, name) = if input {
+    let (key, name) = if camera {
+        ("voice-camera-select", "Camera")
+    } else if input {
         ("voice-input-select", "Input device")
     } else {
         ("voice-output-select", "Output device")
@@ -196,7 +210,9 @@ fn device_select(a: &App, k: &Kit, layer: &mut Vec<El>, which: VoiceMenu) -> El 
                 .find(|o| o.label == label)
                 .and_then(|o| o.id.clone());
             a.act(|s| {
-                if input {
+                if camera {
+                    s.voice_set_camera(chosen)
+                } else if input {
                     s.voice_set_input(chosen)
                 } else {
                     s.voice_set_output(chosen)

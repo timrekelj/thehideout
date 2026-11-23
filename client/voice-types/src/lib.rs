@@ -86,6 +86,8 @@ pub enum VoiceEvent {
         default_output: Option<String>,
     },
     ScreenSources(Vec<ScreenSource>),
+    /// The cameras the browser lists (the web engine only; the desktop engine has no picker).
+    Cameras { cameras: Vec<AudioDevice>, default: Option<String> },
     /// A camera or screen track is available. `track_id` goes to
     /// [`VoiceEngine::subscribe_video`]. The local user's own camera and screen are reported
     /// too, for a preview.

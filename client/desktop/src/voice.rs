@@ -83,6 +83,8 @@ pub enum VoiceIntent {
     /// exists (it is built by the first connect, a mic test or a device refresh).
     SetInputDevice(Option<String>),
     SetOutputDevice(Option<String>),
+    /// The camera to publish (`None`: the default). The web engine only.
+    SetCameraDevice(Option<String>),
     SetMode(VoiceMode),
     /// The push-to-talk key went down or up.
     SetPtt(bool),
@@ -345,6 +347,9 @@ pub struct VoicePrefs {
     pub input_name: Option<String>,
     pub output: Option<String>,
     pub output_name: Option<String>,
+    /// The camera (web only), like the devices above.
+    pub camera: Option<String>,
+    pub camera_name: Option<String>,
     pub mode: InputMode,
     /// The voice-activity gate, 0..1 on the meter's scale.
     pub threshold: f32,
@@ -363,6 +368,8 @@ impl Default for VoicePrefs {
             input_name: None,
             output: None,
             output_name: None,
+            camera: None,
+            camera_name: None,
             mode: InputMode::VoiceActivity,
             threshold: DEFAULT_THRESHOLD,
             ptt_key: None,
@@ -380,9 +387,12 @@ impl Default for VoicePrefs {
 pub struct VoiceDevices {
     pub inputs: Vec<(String, String)>,
     pub outputs: Vec<(String, String)>,
+    /// The cameras the browser lists (web only).
+    pub cameras: Vec<(String, String)>,
     /// The names of the system defaults, for "System default (name)".
     pub default_input: Option<String>,
     pub default_output: Option<String>,
+    pub default_camera: Option<String>,
 }
 
 fn pairs(list: Vec<AudioDevice>) -> Vec<(String, String)> {
@@ -517,8 +527,14 @@ pub const fn available() -> bool {
     true
 }
 
-/// Whether this build can send and watch video and share the screen: desktop only for now.
+/// Whether this build can send and watch video and share the screen.
 pub const fn video_available() -> bool {
+    true
+}
+
+/// Whether sharing asks which screen or window in the app's own picker (the desktop); the browser
+/// has its own, opened by the share request itself.
+pub const fn app_screen_picker() -> bool {
     !cfg!(target_arch = "wasm32")
 }
 
@@ -1074,6 +1090,10 @@ impl AppState {
                 self.devices_listed(inputs, outputs, default_input, default_output);
                 true
             }
+            VoiceEvent::Cameras { cameras, default } => {
+                self.cameras_listed(cameras, default);
+                true
+            }
             VoiceEvent::Levels(batch) => self.mic_levels(batch),
             VoiceEvent::VideoTrack {
                 identity,
@@ -1184,6 +1204,7 @@ pub enum VoiceMenu {
     None,
     Input,
     Output,
+    Camera,
 }
 
 /// The first option of both device lists.
@@ -1260,6 +1281,10 @@ impl AppState {
         let output = self.effective_output();
         self.push_intent(VoiceIntent::SetInputDevice(input));
         self.push_intent(VoiceIntent::SetOutputDevice(output));
+        if p.camera.is_some() {
+            let camera = self.effective_camera();
+            self.push_intent(VoiceIntent::SetCameraDevice(camera));
+        }
         self.push_intent(VoiceIntent::SetMode(mode_of(&p)));
         self.push_intent(VoiceIntent::SetNoiseSuppression(p.noise_suppression));
         self.push_intent(VoiceIntent::SetEchoCancellation(p.echo_cancellation));
@@ -1280,6 +1305,47 @@ impl AppState {
         match &self.voice.devices {
             Some(d) if !d.has_output(id) => None,
             _ => Some(id.clone()),
+        }
+    }
+
+    /// The camera the engine should use: the saved one, or the default when the browser listed
+    /// cameras and the saved one is not there.
+    pub fn effective_camera(&self) -> Option<String> {
+        let id = self.voice.prefs.camera.as_ref()?;
+        match &self.voice.devices {
+            Some(d) if !d.cameras.is_empty() && !d.cameras.iter().any(|(i, _)| i == id) => None,
+            _ => Some(id.clone()),
+        }
+    }
+
+    fn cameras_listed(&mut self, cameras: Vec<AudioDevice>, default: Option<String>) {
+        let cameras = pairs(cameras);
+        let default_camera = default.and_then(|id| cameras.iter().find(|(i, _)| *i == id).map(|(_, n)| n.clone()));
+        let saved = self.voice.prefs.camera.clone().and_then(|id| cameras.iter().find(|(i, _)| *i == id).map(|(_, n)| n.clone()));
+        let devices = self.voice.devices.get_or_insert_with(VoiceDevices::default);
+        devices.cameras = cameras;
+        devices.default_camera = default_camera;
+        if saved.is_some() {
+            self.edit_voice_prefs(|p| p.camera_name = saved);
+        }
+        let camera = self.effective_camera();
+        self.push_intent(VoiceIntent::SetCameraDevice(camera));
+    }
+
+    /// Chooses the camera (`None`: the browser's default).
+    pub fn voice_set_camera(&mut self, id: Option<String>) {
+        let name = id.as_ref().and_then(|i| {
+            let d = self.voice.devices.as_ref()?;
+            d.cameras.iter().find(|(x, _)| x == i).map(|(_, n)| n.clone())
+        });
+        let name = name.or_else(|| id.as_ref().and(self.voice.prefs.camera_name.clone()));
+        let changed = self.edit_voice_prefs(|p| {
+            p.camera = id;
+            p.camera_name = name;
+        });
+        if changed {
+            let camera = self.effective_camera();
+            self.push_intent(VoiceIntent::SetCameraDevice(camera));
         }
     }
 
@@ -1311,6 +1377,8 @@ impl AppState {
             default_output: name_of(&outputs, default_output),
             inputs,
             outputs,
+            // The cameras come in their own report.
+            ..self.voice.devices.clone().unwrap_or_default()
         };
         // A saved device that is here again is named as it is called now.
         let name = |list: &[(String, String)], id: &Option<String>| {
@@ -1633,8 +1701,15 @@ impl AppState {
         }
         if self.voice.sharing.is_some() {
             self.stop_screen_share();
-        } else {
+        } else if app_screen_picker() {
             self.open_screen_picker();
+        } else {
+            // The browser asks what to share when the engine starts it, from this click.
+            self.start_screen_share(ScreenSource {
+                id: 0,
+                title: "Your screen".into(),
+                kind: thehideout_voice_types::ScreenKind::Screen,
+            });
         }
     }
 

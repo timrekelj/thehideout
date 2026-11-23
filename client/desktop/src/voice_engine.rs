@@ -47,6 +47,8 @@ pub trait Engine {
     fn start_mic_test(&self) {}
     fn stop_mic_test(&self) {}
     fn set_camera(&self, _on: bool) {}
+    /// The camera to publish (`None`: the default). The web engine only.
+    fn set_camera_device(&self, _id: Option<String>) {}
     fn set_screen_share(&self, _source: Option<ScreenSource>) {}
     fn list_screen_sources(&self) {}
     /// The newest-frame handle of a video track, `None` when the engine has no pictures (a test
@@ -85,6 +87,7 @@ pub fn mirrored(f: &VideoFrame) -> Vec<u8> {
     out
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
     let spawned = std::thread::Builder::new().name("thehideout-video".into()).spawn(move || {
         let mut seen = 0;
@@ -104,6 +107,24 @@ fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
     }
 }
 
+/// The browser has no threads: the same poll runs on the event loop, every 16 ms.
+#[cfg(target_arch = "wasm32")]
+fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut seen = 0;
+        while !stop.load(Ordering::Relaxed) {
+            if let Some(f) = sink.latest_frame()
+                && f.seq != seen
+            {
+                seen = f.seq;
+                let rgba = if mirror { mirrored(&f) } else { f.rgba.to_vec() };
+                pixels.set(f.width, f.height, rgba);
+            }
+            gloo_timers::future::sleep(Duration::from_millis(16)).await;
+        }
+    });
+}
+
 /// The settings the engine is told about, kept so a connect, a mic test or a device refresh that
 /// builds the engine starts it with them. A field is `None` until the app has said it, so an engine
 /// the app never configured keeps its own defaults.
@@ -111,6 +132,7 @@ fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
 struct Config {
     input: Option<Option<String>>,
     output: Option<Option<String>>,
+    camera: Option<Option<String>>,
     mode: Option<VoiceMode>,
     ns: Option<bool>,
     ec: Option<bool>,
@@ -124,6 +146,9 @@ impl Config {
         }
         if let Some(o) = &self.output {
             engine.set_output_device(o.clone());
+        }
+        if let Some(c) = &self.camera {
+            engine.set_camera_device(c.clone());
         }
         if let Some(m) = self.mode {
             engine.set_mode(m);
@@ -257,6 +282,10 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
             VoiceIntent::SetInputDevice(id) => {
                 self.config.input = Some(id.clone());
                 self.with_engine(|e| e.set_input_device(id));
+            }
+            VoiceIntent::SetCameraDevice(id) => {
+                self.config.camera = Some(id.clone());
+                self.with_engine(|e| e.set_camera_device(id));
             }
             VoiceIntent::SetOutputDevice(id) => {
                 self.config.output = Some(id.clone());

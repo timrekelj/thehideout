@@ -24,6 +24,11 @@ const toLevel = (amplitude) => {
     return Math.min(1, Math.max(0, (20 * Math.log10(amplitude) - LEVEL_FLOOR_DB) / -LEVEL_FLOOR_DB));
 };
 
+// Counters of the video frame copy, for measuring (read from the page: `__thVideoStats`).
+const videoStats = (globalThis.__thVideoStats = { frames: 0, copyMs: 0, bytes: 0 });
+// `?nocopy` plays the tracks but copies nothing: the decode-only floor any rendering must pay.
+const NOCOPY = new URLSearchParams(globalThis.location?.search ?? "").has("nocopy");
+
 let audioContext;
 /** The page's one AudioContext (cues and meters). Resumed from user gestures. */
 function context() {
@@ -84,8 +89,13 @@ class Meter {
 }
 
 export class VoiceClient {
-    /** `emit(json)` receives every event as a JSON string. */
-    constructor(emit) {
+    /** `emit(json)` receives every event as a JSON string; `onFrame(trackId, w, h, rgba)` every copied video frame. */
+    constructor(emit, onFrame) {
+        this.onFrame = onFrame;
+        this.camera = undefined; // camera device id, or undefined for the default
+        this.wanted = new Map(); // video track sid -> { mirror }: the tiles on screen
+        this.frames = new Map(); // video track sid -> the loop copying its frames
+        this.owners = new Map(); // video track sid -> identity, kept for the 'ended' report
         this.lastError = { message: "", at: 0 };
         this.emit = (event) => {
             if (event.t === "error") {
@@ -144,7 +154,8 @@ export class VoiceClient {
         this.wire(room, lk);
         this.emit({ t: "connecting" });
         try {
-            await room.connect(url, token, { autoSubscribe: true });
+            // Audio is subscribed as it appears; a video track only while a tile shows it.
+            await room.connect(url, token, { autoSubscribe: false });
         } catch (error) {
             if (this.room === room) this.room = undefined;
             this.emit({ t: "disconnected", reason: describe(error) });
@@ -155,6 +166,7 @@ export class VoiceClient {
         for (const p of room.remoteParticipants.values()) {
             this.watch(p, lk);
             this.applyVolume(p);
+            for (const pub of p.trackPublications.values()) this.published(pub, p, lk);
         }
         this.watch(room.localParticipant, lk);
         this.startLevels();
@@ -174,10 +186,16 @@ export class VoiceClient {
             .on(RoomEvent.ParticipantDisconnected, (p) => {
                 this.emit({ t: "participantLeft", identity: p.identity });
             })
-            .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+            .on(RoomEvent.TrackPublished, (pub, p) => this.published(pub, p, lk))
+            .on(RoomEvent.TrackUnpublished, (pub) => this.unpublished(pub, lk))
+            .on(RoomEvent.LocalTrackPublished, (pub) => this.published(pub, room.localParticipant, lk))
+            .on(RoomEvent.LocalTrackUnpublished, (pub) => this.unpublished(pub, lk))
+            .on(RoomEvent.TrackSubscribed, (track, pub, p) => {
                 if (track.kind === lk.Track.Kind.Audio) {
                     this.applyVolume(p);
                     track.attach(); // an <audio> element playing it, held by the track
+                } else if (this.wanted.has(pub.trackSid)) {
+                    this.startFrames(pub.trackSid, track.mediaStreamTrack);
                 }
             })
             .on(RoomEvent.TrackMuted, (pub, p) => this.trackMuted(pub, p, true, lk))
@@ -217,6 +235,8 @@ export class VoiceClient {
     async teardown() {
         const room = this.room;
         this.room = undefined;
+        for (const sid of [...this.frames.keys()]) this.stopFrames(sid);
+        this.wanted.clear();
         this.stopRoomAudio();
         if (room) await room.disconnect(true);
     }
@@ -336,7 +356,10 @@ export class VoiceClient {
 
     applyVolume(p) {
         const v = this.deaf ? 0 : (this.volumes.get(p.identity) ?? 1);
-        try { p.setVolume(v); } catch { /* not subscribed yet: TrackSubscribed applies it */ }
+        try {
+            p.setVolume(v);
+            p.setVolume(v, sdk.Track.Source.ScreenShareAudio);
+        } catch { /* not subscribed yet: TrackSubscribed applies it */ }
     }
 
     setMode(vad, threshold) {
@@ -388,6 +411,187 @@ export class VoiceClient {
         }
     }
 
+
+    // ---- video: camera, screen share, tiles --------------------------------------------------
+
+    /** A track appeared in the room (ours or theirs): audio is subscribed, video is announced. */
+    published(pub, p, lk) {
+        const isLocal = p === this.room?.localParticipant;
+        if (pub.kind === lk.Track.Kind.Audio) {
+            if (!isLocal) pub.setSubscribed(true); // the microphone and a share's sound
+            return;
+        }
+        const source = pub.source === lk.Track.Source.ScreenShare ? "screen" : "camera";
+        this.owners.set(pub.trackSid, p.identity);
+        this.emit({ t: "videoTrack", identity: p.identity, source, trackId: pub.trackSid });
+    }
+
+    unpublished(pub, lk) {
+        if (pub.kind !== lk.Track.Kind.Video) return;
+        this.stopFrames(pub.trackSid);
+        this.wanted.delete(pub.trackSid);
+        this.emit({ t: "videoEnded", identity: this.ownerOf(pub), trackId: pub.trackSid });
+    }
+
+    ownerOf(pub) {
+        return this.owners.get(pub.trackSid) ?? "";
+    }
+
+    findPub(sid) {
+        const room = this.room;
+        if (!room) return undefined;
+        for (const p of [room.localParticipant, ...room.remoteParticipants.values()]) {
+            const pub = p.trackPublications.get(sid);
+            if (pub) return { pub, local: p === room.localParticipant };
+        }
+        return undefined;
+    }
+
+    async setCamera(on) {
+        const lp = this.room?.localParticipant;
+        if (!lp) return;
+        const lk = sdk;
+        try {
+            if (on) {
+                const preset = lk.VideoPresets.h720;
+                await lp.setCameraEnabled(true, { deviceId: this.camera, resolution: preset.resolution }, {
+                    simulcast: true,
+                    videoEncoding: preset.encoding,
+                    videoSimulcastLayers: [lk.VideoPresets.h180, lk.VideoPresets.h360],
+                });
+            } else {
+                await this.unpublishSource(lk.Track.Source.Camera);
+            }
+        } catch (error) {
+            this.emit({ t: "error", message: cameraMessage(error) });
+        }
+    }
+
+    async setCameraDevice(id) {
+        console.debug("voice-cmd", "camera", id ?? "default");
+        const next = id ?? undefined;
+        if (next === this.camera) return; // the engine re-sends the setting after every device listing
+        this.camera = next;
+        const track = this.room?.localParticipant.getTrackPublication(sdk.Track.Source.Camera)?.videoTrack;
+        if (!track) return;
+        try {
+            // No id is "the default": there is no "default" video device id to switch to.
+            if (next) await this.room.switchActiveDevice("videoinput", next);
+            else await track.restartTrack({});
+        } catch (error) {
+            this.emit({ t: "error", message: cameraMessage(error) });
+        }
+    }
+
+    /** Called from the share button's click: `getDisplayMedia` needs the user gesture. */
+    async setScreenShare(on) {
+        const lp = this.room?.localParticipant;
+        if (!lp) return;
+        const lk = sdk;
+        try {
+            if (on) {
+                await lp.setScreenShareEnabled(true, {
+                    audio: true, // where the browser offers the tab's or system's sound
+                    contentHint: "detail",
+                    resolution: lk.VideoPresets.h1080.resolution,
+                }, {
+                    screenShareEncoding: lk.ScreenSharePresets.h1080fps30.encoding,
+                    screenShareSimulcastLayers: [],
+                });
+            } else {
+                await this.unpublishSource(lk.Track.Source.ScreenShare);
+                await this.unpublishSource(lk.Track.Source.ScreenShareAudio);
+            }
+        } catch (error) {
+            this.emit({ t: "error", message: screenMessage(error) });
+        }
+    }
+
+    async unpublishSource(source) {
+        const lp = this.room?.localParticipant;
+        const pub = lp?.getTrackPublication(source);
+        if (pub?.track) await lp.unpublishTrack(pub.track, true);
+    }
+
+    /** A tile shows `sid`: subscribe to it (or start on our own track) and copy its frames. */
+    watchVideo(sid) {
+        this.wanted.set(sid, true);
+        const found = this.findPub(sid);
+        if (!found) return;
+        if (found.local) {
+            const track = found.pub.track?.mediaStreamTrack;
+            if (track) this.startFrames(sid, track);
+        } else if (found.pub.isSubscribed && found.pub.track) {
+            this.startFrames(sid, found.pub.track.mediaStreamTrack);
+        } else {
+            found.pub.setSubscribed(true);
+        }
+    }
+
+    /** No tile shows `sid` any more: stop copying, and let the SFU stop sending it. */
+    unwatchVideo(sid) {
+        this.wanted.delete(sid);
+        this.stopFrames(sid);
+        const found = this.findPub(sid);
+        if (found && !found.local) found.pub.setSubscribed(false);
+    }
+
+    /**
+     * The frame copy: a detached <video> plays the track and `requestVideoFrameCallback` hands each
+     * new picture to a canvas that scales it down (to what the number of tiles can show) and reads
+     * the RGBA back for Rust, which gives it to rune as a `Pixels`. Capped in size and rate.
+     */
+    startFrames(sid, mediaTrack) {
+        if (this.frames.has(sid)) return;
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = new MediaStream([mediaTrack]);
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        const entry = { video, stopped: false, last: 0 };
+        this.frames.set(sid, entry);
+        const tick = (now) => {
+            if (entry.stopped) return;
+            const n = this.frames.size;
+            // One tile is the whole stage: full size. Several share it: a tile is a few hundred px wide.
+            const [maxW, minGap] = n <= 1 ? [1280, 33] : n <= 3 ? [640, 33] : n <= 6 ? [640, 66] : [480, 66];
+            const w0 = video.videoWidth, h0 = video.videoHeight;
+            if (w0 && h0 && now - entry.last >= minGap && !NOCOPY) {
+                entry.last = now;
+                const k = Math.min(1, maxW / w0);
+                const w = Math.max(2, Math.round(w0 * k)), h = Math.max(2, Math.round(h0 * k));
+                if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+                if (entry.asked !== maxW) {
+                    // Ask the SFU for a layer about as big as we copy: a small tile need not decode 720p.
+                    // (From the target, not the size received: that would never ask for more.)
+                    entry.asked = maxW;
+                    const found = this.findPub(sid);
+                    if (found && !found.local) found.pub.setVideoDimensions({ width: maxW, height: Math.round((maxW * 9) / 16) });
+                }
+                const t0 = performance.now();
+                ctx.drawImage(video, 0, 0, w, h);
+                const data = ctx.getImageData(0, 0, w, h).data;
+                videoStats.copyMs += performance.now() - t0;
+                videoStats.frames += 1;
+                videoStats.bytes += data.length;
+                this.onFrame(sid, w, h, data);
+            }
+            video.requestVideoFrameCallback(tick);
+        };
+        video.requestVideoFrameCallback(tick);
+        video.play().catch(() => {});
+    }
+
+    stopFrames(sid) {
+        const entry = this.frames.get(sid);
+        if (!entry) return;
+        entry.stopped = true;
+        entry.video.pause();
+        entry.video.srcObject = null;
+        this.frames.delete(sid);
+    }
+
     // ---- devices and the mic test ---------------------------------------------------------
 
     async listDevices() {
@@ -404,6 +608,10 @@ export class VoiceClient {
                 const alias = list.find((d) => d.deviceId === "default");
                 return list.filter(real).find((d) => alias && d.groupId === alias.groupId)?.deviceId;
             };
+            try {
+                const cams = await lk.Room.getLocalDevices("videoinput", false);
+                this.emit({ t: "cameras", cameras: cams.filter(real).map(map), defaultCamera: defaultOf(cams) });
+            } catch { /* no camera list: the picker stays default-only */ }
             this.emit({
                 t: "devices",
                 inputs: inputs.filter(real).map(map),
@@ -483,6 +691,23 @@ function micMessage(error) {
     if (name === "NotFoundError" || name === "OverconstrainedError") return "No microphone was found.";
     if (name === "NotReadableError") return "The microphone is in use by another app.";
     return `Microphone problem: ${describe(error)}`;
+}
+
+function cameraMessage(error) {
+    const name = error?.name ?? "";
+    if (name === "NotAllowedError" || name === "SecurityError" || /permission|denied|not allowed/i.test(describe(error))) {
+        return "Camera access was denied. Allow it for this site in your browser's address bar, then try again.";
+    }
+    if (name === "NotFoundError" || name === "OverconstrainedError") return "No camera was found.";
+    if (name === "NotReadableError") return "The camera is in use by another app.";
+    return `Camera problem: ${describe(error)}`;
+}
+
+function screenMessage(error) {
+    const name = error?.name ?? "";
+    if (name === "NotAllowedError" || name === "AbortError") return "Screen sharing was cancelled.";
+    if (name === "NotSupportedError") return "This browser can't share the screen.";
+    return `Screen sharing problem: ${describe(error)}`;
 }
 
 function reasonText(lk, reason) {
