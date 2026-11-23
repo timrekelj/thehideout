@@ -12,6 +12,8 @@
     var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
     var s = p + ' ' + ua;
     if (/iPhone|iPad|iPod|Android/i.test(s)) return 'mobile';
+    // iPadOS 13+ reports a Macintosh UA; it is the only one with a touch screen.
+    if (/Macintosh|MacIntel/i.test(s) && navigator.maxTouchPoints > 1) return 'mobile';
     if (/Mac/i.test(s)) return 'macos';
     if (/Win/i.test(s)) return 'windows';
     if (/Linux|X11|CrOS/i.test(s)) return 'linux';

@@ -29,6 +29,16 @@ async fn landing_page_is_served_with_a_tight_csp() {
     );
     let body = r.text();
     assert!(body.contains("thehideout") && body.contains("/privacy") && body.contains("/terms"));
+    for prefix in ["/landing/site.css?v=", "/landing/site.js?v="] {
+        let at = body.find(prefix).unwrap_or_else(|| panic!("{prefix} not referenced"));
+        let version: String = body[at + prefix.len()..].chars().take_while(char::is_ascii_hexdigit).collect();
+        assert_eq!(version.len(), 16, "{prefix}");
+        // The versioned URL resolves and is cached long-term.
+        let asset = http::get(&app, &format!("{}{version}", &prefix[..prefix.len()])).await;
+        assert_eq!(asset.status, 200);
+        assert!(asset.header("cache-control").contains("immutable"));
+    }
+    assert!(!body.contains("@CSS_VERSION@") && !body.contains("@JS_VERSION@"));
     assert!(body.contains("brew install --cask timrekelj/tap/thehideout"));
     assert!(
         !body.contains("<script>") && !body.contains("style=\""),
@@ -65,5 +75,17 @@ async fn landing_assets_are_served_with_the_right_types() {
     assert_eq!(http::get(&app, "/health").await.status, 200);
     assert_eq!(http::get(&app, "/privacy").await.status, 200);
     assert_eq!(http::get(&app, "/nope").await.status, 404);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn non_get_methods_on_root_keep_reaching_the_connect_fallback() {
+    let app = TestApp::start().await;
+    // `POST /` must behave like any other unmatched path (the Connect service),
+    // not like a 405 from the landing route.
+    let root = http::request(&app, "POST", "/", &[], b"").await;
+    let other = http::request(&app, "POST", "/no-such-route", &[], b"").await;
+    assert_ne!(root.status, 405);
+    assert_eq!(root.status, other.status);
     app.cleanup().await;
 }
