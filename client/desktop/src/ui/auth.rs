@@ -3,13 +3,12 @@
 //! top-level steps end with one quiet line to the other ("Have an invite? Join with a code" /
 //! "Already have an account? Sign in"); a second step (the code, the second factor, the invite's
 //! account) has a way back instead. Errors land under the field they belong to, a form-wide one
-//! right above the button, and neither says whether an account exists. The server line sits small
-//! under the card. The button says what it is doing while it waits (no spinner).
+//! right above the button, and neither says whether an account exists. The button says what it is doing while it waits (no spinner).
 
-use rune::{col, el, icon, row, text, El, TextEdit};
+use rune::{col, icon, row, text, El, TextEdit};
 use rune_kit::Kit;
 use thehideout_design::components::{Button, Checkbox, CodeInput, TextInput, Variant};
-use thehideout_design::icons::{ARROW_LEFT};
+use thehideout_design::icons::ARROW_LEFT;
 use thehideout_design::{radius, theme_of, type_};
 
 use crate::app::App;
@@ -33,9 +32,6 @@ fn recovery_edit(a: &mut App) -> &mut TextEdit {
 }
 fn invite_edit(a: &mut App) -> &mut TextEdit {
     &mut a.state.auth.invite
-}
-fn server_edit(a: &mut App) -> &mut TextEdit {
-    &mut a.state.auth.server
 }
 
 fn submit(a: &mut App, _tx: &mut rune::Tx) {
@@ -262,7 +258,12 @@ pub fn build(a: &App, k: &Kit) -> El {
         .gap(16.0)
         .fill(t.bg.color())
         .child(card)
-        .child(server_line(a, k))
+        .child(
+            row()
+                .w(400.0)
+                .center()
+                .child(super::account::legal_links(k, "auth")),
+        )
 }
 
 /// The form-wide error, which sits right above the step's button.
@@ -583,7 +584,10 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             );
         }
         AuthStep::SecondFactor {
-            recovery, locked, methods, ..
+            recovery,
+            locked,
+            methods,
+            ..
         } => {
             out.push(back(
                 k,
@@ -662,9 +666,12 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
                                 .font(type_::at(k, type_::CONTROL))
                                 .color(t.text_faint.color()),
                         )
-                        .child(quiet_link(k, "auth-2fa-passkey", "Use a passkey", |a: &mut App| {
-                            a.act(|s| s.second_factor_passkey())
-                        }));
+                        .child(quiet_link(
+                            k,
+                            "auth-2fa-passkey",
+                            "Use a passkey",
+                            |a: &mut App| a.act(|s| s.second_factor_passkey()),
+                        ));
                 }
                 out.push(links);
             }
@@ -886,50 +893,4 @@ fn age_row(a: &App, k: &Kit, minimum_age: u32) -> El {
         |a: &mut App| a.state.auth.confirm_age = !a.state.auth.confirm_age,
         label,
     )
-}
-
-/// "Server: http://127.0.0.1:8080 · Change", which opens a field for another URL.
-fn server_line(a: &App, k: &Kit) -> El {
-    let t = theme_of(k);
-    let auth = &a.state.auth;
-    let faint = |s: String| {
-        text(s)
-            .font(type_::at(k, type_::CAPTION))
-            .color(t.text_muted.color())
-    };
-    let toggle = text(if auth.server_open { "Done" } else { "Change" })
-        .font(type_::at(k, type_::CAPTION))
-        .color(t.accent_text.color())
-        .key("auth-server-toggle")
-        .role("button")
-        .label("Change server")
-        .focusable(true)
-        .hover(t.hover.color())
-        .on_press(|a: &mut App| a.state.auth.server_open = !a.state.auth.server_open);
-    let mut c = col().w(400.0).gap(8.0).child(
-        row()
-            .w_full()
-            .gap(4.0)
-            .center()
-            .child(faint(format!("Server: {}", a.state.server_url())))
-            .child(faint("\u{00b7}".into()))
-            .child(toggle),
-    );
-    if auth.server_open {
-        let input = TextInput::new(&auth.server)
-            .placeholder("http://127.0.0.1:8080")
-            .width(None)
-            .large()
-            .label("Server URL")
-            .on_edit(server_edit)
-            .on_submit(|a: &mut App, _| a.state.auth.server_open = false);
-        c = c.child(col().key("auth-server").w_full().child(input.build(k)));
-    }
-    c = c.child(
-        row()
-            .w_full()
-            .center()
-            .child(super::account::legal_links(k, "auth")),
-    );
-    c.child(el().h(0.0))
 }

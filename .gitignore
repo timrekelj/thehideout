@@ -6,3 +6,7 @@ mobile/android/.gradle/
 mobile/android/.kotlin/
 mobile/android/**/build/
 mobile/android/local.properties
+
+# Generated UI render output
+client/desktop/snapshots/
+client/gallery/snapshots/

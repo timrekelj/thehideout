@@ -207,13 +207,11 @@ impl Peer {
             "thehideout-test-{:016x}.json",
             rand::rng().random::<u64>()
         ));
-        let mut peer = Peer::with_prefs(prefs);
-        peer.backend.set_server(url);
-        peer
+        Peer::with_prefs(prefs, url)
     }
 
-    fn with_prefs(prefs: std::path::PathBuf) -> Peer {
-        let mut backend = RealBackend::with_prefs(Prefs::at(&prefs));
+    fn with_prefs(prefs: std::path::PathBuf, url: &str) -> Peer {
+        let mut backend = RealBackend::for_server(Prefs::at(&prefs), url);
         let wakes = Arc::new(AtomicUsize::new(0));
         let w = Arc::clone(&wakes);
         backend.set_waker(Arc::new(move || {
@@ -486,16 +484,13 @@ fn drives_the_real_server() {
     assert_eq!(denied.unwrap_err(), ApiError::PermissionDenied);
 
     // Launch again with the saved session: it is validated and the app is signed in as alice.
-    let mut again = Peer::with_prefs(alice.prefs.clone());
+    let mut again = Peer::with_prefs(alice.prefs.clone(), &server.url);
     let resumed = again.ask(Command::Resume, |r| match r {
         Reply::Resume(x) => Some(x.clone()),
         _ => None,
     });
-    let (url, session) = resumed.expect("resume").expect("a saved session");
-    assert_eq!(
-        (url.as_str(), session.me.id),
-        (server.url.as_str(), a.me.id)
-    );
+    let session = resumed.expect("resume").expect("a saved session");
+    assert_eq!(session.me.id, a.me.id);
     let init = again.initial();
     assert_eq!(
         (init.guilds.len(), init.channels.len(), init.dms.len()),
@@ -507,7 +502,7 @@ fn drives_the_real_server() {
     alice.backend.submit(Command::SignOut);
     alice.wait("sign-out", |r| matches!(r, Reply::SignedOut).then_some(()));
     assert!(alice.saved().is_none(), "sign-out clears the saved session");
-    let mut fresh = Peer::with_prefs(alice.prefs.clone());
+    let mut fresh = Peer::with_prefs(alice.prefs.clone(), &server.url);
     assert_eq!(
         fresh.ask(Command::Resume, |r| match r {
             Reply::Resume(x) => Some(x.clone()),
@@ -531,7 +526,7 @@ fn drives_the_real_server() {
             ]),
         )
         .unwrap();
-    let mut old = Peer::with_prefs(stale);
+    let mut old = Peer::with_prefs(stale, &server.url);
     let refused = old.ask(Command::Resume, |r| match r {
         Reply::Resume(x) => Some(x.clone()),
         _ => None,
@@ -539,7 +534,7 @@ fn drives_the_real_server() {
     assert_eq!(refused, Err(ApiError::Unauthenticated));
     assert!(old.saved().is_none());
 
-    // The server field decides where the next sign-in goes; a dead one is a network error.
+    // A backend aimed at a dead server fails sign-in with a network error.
     let mut lost = Peer::new("http://127.0.0.1:1");
     let down = lost.ask(
         Command::Login {
@@ -553,7 +548,7 @@ fn drives_the_real_server() {
     );
     assert!(matches!(down, Err(ApiError::Network(_))), "got {down:?}");
     assert!(lost.saved().is_none());
-    lost.backend.set_server(&server.url);
+    let mut lost = Peer::with_prefs(lost.prefs.clone(), &server.url);
     let wrong = lost.ask(
         Command::Login {
             username: "alice".into(),
@@ -655,11 +650,10 @@ impl Desk {
             "thehideout-test-{:016x}.json",
             rand::rng().random::<u64>()
         ));
-        let mut ui = state::AppState::new(std::time::SystemTime::now, format::Tz::Local);
-        ui.auth.server.replace_text(url);
+        let ui = state::AppState::new(std::time::SystemTime::now, format::Tz::Local);
         Desk {
             ui,
-            backend: RealBackend::with_prefs(Prefs::at(&prefs)),
+            backend: RealBackend::for_server(Prefs::at(&prefs), url),
             gateway: Vec::new(),
             prefs,
         }
@@ -667,9 +661,6 @@ impl Desk {
 
     fn pump(&mut self) {
         for cmd in std::mem::take(&mut self.ui.outbox) {
-            if cmd.signed_out() {
-                self.backend.set_server(&self.ui.server_url());
-            }
             self.backend.submit(cmd);
         }
         for reply in self.backend.poll(0.0) {
@@ -2057,8 +2048,7 @@ fn an_invite_then_two_factor_then_a_second_device() {
     assert!(matches!(again, Err(ApiError::Precondition(_))), "a used invite: {again:?}");
 
     // Relaunched, the saved session resumes; there the authenticator is turned on.
-    let mut desk = Peer::with_prefs(desk.prefs.clone());
-    desk.backend.set_server(&server.url);
+    let mut desk = Peer::with_prefs(desk.prefs.clone(), &server.url);
     let resumed = desk.ask(Command::Resume, |r| match r {
         Reply::Resume(r) => Some(r.clone()),
         _ => None,

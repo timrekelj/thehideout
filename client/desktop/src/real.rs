@@ -30,6 +30,7 @@ use crate::backend::{
 pub const DEV_SERVER: &str = "http://127.0.0.1:8080";
 /// The server a release build talks to by default.
 pub const PRODUCTION_SERVER: &str = "https://thehideout.zabit.si";
+/// Developer and testing override of the server; not offered anywhere in the UI.
 pub const SERVER_ENV: &str = "THEHIDEOUT_SERVER_URL";
 pub const APP_ID: &str = "thehideout";
 const PAGE: u32 = 50;
@@ -42,9 +43,9 @@ const LOOPBACK_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>thehi
 <body style=\"font-family:-apple-system,Segoe UI,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px\">\
 <h2>All set</h2><p>You can close this tab and return to thehideout.</p></body>";
 
-/// The server to talk to when the auth form's field is empty: the environment, else the default.
-pub fn default_server() -> String {
-    pick_server(std::env::var(SERVER_ENV).ok().as_deref(), cfg!(debug_assertions))
+/// The one server the app talks to: the environment override, else the build's default.
+pub fn server_url() -> String {
+    normalize(&pick_server(std::env::var(SERVER_ENV).ok().as_deref(), cfg!(debug_assertions)))
 }
 
 /// The environment's value if it is non-blank, else the production server (release builds) or the
@@ -154,8 +155,8 @@ struct Shared {
     queue: Mutex<Vec<Reply>>,
     waker: Mutex<Option<Waker>>,
     client: Mutex<Client>,
-    /// The server URL the next login uses (the auth form's field).
-    server: Mutex<String>,
+    /// The server this backend talks to: fixed at construction.
+    server: String,
     /// Bumped by sign-in and sign-out: answers and gateway updates of an older session are dropped.
     generation: AtomicU64,
     gateway: Mutex<Option<(u64, GatewayHandle)>>,
@@ -209,9 +210,9 @@ impl Shared {
         self.push(Reply::Suspended { reason, until });
     }
 
-    /// The form's server, normalised, and a client for it without a token (sign-in calls).
-    fn signed_out_client(&self) -> (String, Client) {
-        let url = normalize(&self.server.lock().unwrap());
+    /// The app's server and a client for it without a token (sign-in calls).
+   fn signed_out_client(&self) -> (String, Client) {
+        let url = self.server.clone();
         (url.clone(), Client::new(url))
     }
 
@@ -298,24 +299,24 @@ impl RealBackend {
     /// Sessions are kept in `prefs`, the store the rest of the app shares.
     #[allow(dead_code)]
     pub fn with_shared(prefs: SharedPrefs) -> RealBackend {
-        RealBackend::with_store(Store(prefs))
+        RealBackend::with_store(Store(prefs), server_url())
     }
 
-    /// Sessions are kept in `prefs` (tests give it a temporary file or none).
+    /// Sessions are kept in `prefs`, talking to `url`: for tests, whose servers each run on their
+    /// own port. The app itself never calls this; it uses `with_shared` and `server_url()`.
     #[allow(dead_code)]
-    pub fn with_prefs(prefs: Prefs) -> RealBackend {
-        RealBackend::with_store(Store(Arc::new(Mutex::new(prefs))))
+    pub fn for_server(prefs: Prefs, url: &str) -> RealBackend {
+        RealBackend::with_store(Store(Arc::new(Mutex::new(prefs))), normalize(url))
     }
 
-    fn with_store(store: Store) -> RealBackend {
-        let server = default_server();
+    fn with_store(store: Store, server: String) -> RealBackend {
         RealBackend {
             runtime: None,
             shared: Arc::new(Shared {
                 queue: Mutex::new(Vec::new()),
                 waker: Mutex::new(None),
-                client: Mutex::new(Client::new(normalize(&server))),
-                server: Mutex::new(server),
+                client: Mutex::new(Client::new(server.clone())),
+                server,
                 generation: AtomicU64::new(0),
                 gateway: Mutex::new(None),
                 store,
@@ -409,7 +410,7 @@ impl RealBackend {
         self.shared.uploads.lock().unwrap().insert(id, handle.abort_handle());
     }
 
-    /// A sign-in step on a fresh client for the form's server: a session (saved, and the client
+    /// A sign-in step on a fresh client for the app's server: a session (saved, and the client
     /// becomes the session's), a second-factor challenge, or the error.
     fn sign_in<Fut>(&mut self, run: impl FnOnce(Client) -> Fut + Send + 'static)
     where
@@ -427,7 +428,7 @@ impl RealBackend {
         });
     }
 
-    /// A call that needs no session (codes, invites) on the form's server.
+    /// A call that needs no session (codes, invites) on the app's server.
     fn signed_out<T: Send + 'static, Fut>(
         &mut self,
         run: impl FnOnce(Client) -> Fut + Send + 'static,
@@ -529,15 +530,22 @@ impl RealBackend {
     fn resume(&mut self) {
         let shared = Arc::clone(&self.shared);
         self.runtime().spawn(async move {
-            let Some((url, token)) = shared.store.load() else {
+            let server = shared.server.clone();
+            // A session saved for another server is not ours: sign in again.
+            let Some(token) = shared
+                .store
+                .load()
+                .filter(|(url, _)| normalize(url) == server)
+                .map(|(_, token)| token)
+            else {
                 return shared.push(Reply::Resume(Ok(None)));
             };
-            let client = Client::new(normalize(&url)).with_token(token.clone());
+            let client = Client::new(server).with_token(token.clone());
             match client.get_me().await {
                 Ok(me) => {
                     shared.new_generation();
                     *shared.client.lock().unwrap() = client;
-                    shared.push(Reply::Resume(Ok(Some((url, Session { token, me })))));
+                    shared.push(Reply::Resume(Ok(Some(Session { token, me }))));
                 }
                 Err(e) => {
                     // Only a refused token ends the saved session; an unreachable server doesn't.
@@ -1445,15 +1453,6 @@ impl Backend for RealBackend {
 
     fn set_waker(&mut self, waker: Waker) {
         *self.shared.waker.lock().unwrap() = Some(waker);
-    }
-
-    fn set_server(&mut self, url: &str) {
-        let url = url.trim();
-        *self.shared.server.lock().unwrap() = if url.is_empty() {
-            default_server()
-        } else {
-            url.to_owned()
-        };
     }
 
     fn sent(&self) -> Vec<Command> {

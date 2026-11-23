@@ -113,8 +113,6 @@ pub struct Auth {
     /// When "Resend code" may be pressed again (the app clock); stamped by the next tick.
     pub resend_at: Option<f64>,
     pub resend_due: bool,
-    pub server: TextEdit,
-    pub server_open: bool,
 }
 
 fn focused(mut e: TextEdit) -> TextEdit {
@@ -123,7 +121,7 @@ fn focused(mut e: TextEdit) -> TextEdit {
 }
 
 impl Auth {
-    pub fn new(server: &str) -> Auth {
+    pub fn new() -> Auth {
         Auth {
             mode: AuthMode::Login,
             step: AuthStep::Password,
@@ -141,8 +139,6 @@ impl Auth {
             notice: None,
             resend_at: None,
             resend_due: false,
-            server: TextEdit::new(server),
-            server_open: false,
         }
     }
 
