@@ -4,7 +4,7 @@ use rune::{El, col, row, text};
 use rune_kit::{Kit, State};
 use thehideout_design::components::tooltip::tooltip;
 use thehideout_design::components::{
-    Avatar, Badge, BadgeVariant, Button, Checkbox, IconButton, Kbd, MentionPill, Presence, Segmented, Size,
+    Avatar, Badge, BadgeVariant, Button, Checkbox, IconButton, InviteCodeInput, Kbd, MentionPill, Presence, Segmented, Size,
     TextInput, UnreadDot, Variant, switch,
 };
 use thehideout_design::icons::{GEAR, PLUS, TRASH};
@@ -66,6 +66,7 @@ pub fn page(s: &G, k: &Kit, layer: &mut Vec<El>) -> El {
         .gap(20.0)
         .w(436.0)
         .child(section(k, "TextInput", "From rune-kit, themed through our Kit. 1px control_border ring at rest; hover washes it, focus swaps the ring for the focus colour.", inputs(s, k)))
+        .child(section(k, "InviteCodeInput", "XXXX-XXXX, one box per character over a single text field: type, Backspace and paste (a pasted invite link works) fill the boxes. Crockford letters only; the next box takes the focus ring.", invite_codes(s, k)))
         .child(section(k, "Segmented", "No border: a bg-filled container, the selected segment a filled raised tile. 32pt.", segmented(k)))
         .child(section(k, "Switch", "24x16, 4pt corners. Accent when on.", switches(k)))
         .child(section(k, "Checkbox", "16x16, radius-sm. Accent fill when on.", checkboxes(k)))
@@ -216,6 +217,26 @@ fn inputs(s: &G, k: &Kit) -> El {
             false,
             "Locked channel",
         ))
+}
+
+fn invite_codes(s: &G, k: &Kit) -> El {
+    let field = |i: usize, caption: &str, invalid: bool, disabled: bool| {
+        col().gap(6.0).child(muted(k, caption.to_owned())).child(
+            InviteCodeInput::new(&s.codes[i])
+                .key(format!("invite-code-{i}"))
+                .label(caption.to_owned())
+                .invalid(invalid)
+                .disabled(disabled)
+                .on_edit(move |g: &mut G| &mut g.codes[i])
+                .build(k),
+        )
+    };
+    col()
+        .gap(14.0)
+        .child(field(0, "Empty", false, false))
+        .child(field(1, "Partial", false, false))
+        .child(field(2, "Full", false, false))
+        .child(field(3, "Error", true, false))
 }
 
 fn segmented(k: &Kit) -> El {

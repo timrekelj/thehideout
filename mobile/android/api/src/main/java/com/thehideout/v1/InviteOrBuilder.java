@@ -205,7 +205,7 @@ public interface InviteOrBuilder extends
 
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -215,7 +215,7 @@ public interface InviteOrBuilder extends
   boolean hasLink();
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -225,7 +225,7 @@ public interface InviteOrBuilder extends
   java.lang.String getLink();
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *

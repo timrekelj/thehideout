@@ -51,7 +51,7 @@ async fn placeholder_is_marked_when_no_contact_is_configured() {
 #[tokio::test]
 async fn invite_page_and_every_mail_link_the_legal_pages() {
     let app = TestApp::start().await;
-    let landing = http::get(&app, "/invite/sometoken").await.text();
+    let landing = http::get(&app, "/invite/ABCD-EFGH").await.text();
     assert!(landing.contains("/privacy") && landing.contains("/terms"));
 
     let admin = site_admin(&app, "admin").await;

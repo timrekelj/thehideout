@@ -177,7 +177,7 @@ async fn main() -> Result<()> {
     }
     let fail = |e: connectrpc::ConnectError| anyhow::anyhow!("{}", e.message.as_deref().unwrap_or("?"));
     if let Some(Command::Invite { email, admin }) = command {
-        let (invite, token, code) = invite::create(
+        let (invite, code) = invite::create(
             &state,
             invite::NewInvite { email, inviter_id: None, guild_id: None, guild_ids: Vec::new(), make_admin: admin },
         )
@@ -186,7 +186,7 @@ async fn main() -> Result<()> {
         state.mailer.flush().await;
         println!("invite {} for {}{}", invite.id, invite.email, if admin { " (site admin)" } else { "" });
         println!("code: {}", thehideout_server::codes::format_invite_code(&code));
-        println!("link: {}", invite::invite_link(&state, &token));
+        println!("link: {}", invite::invite_link(&state, &code));
         return Ok(());
     }
     invite::bootstrap(&state, config.bootstrap_admin_email.as_deref()).await.map_err(fail)?;

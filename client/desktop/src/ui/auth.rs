@@ -7,7 +7,7 @@
 
 use rune::{col, icon, row, text, El, TextEdit};
 use rune_kit::Kit;
-use thehideout_design::components::{Button, Checkbox, CodeInput, TextInput, Variant};
+use thehideout_design::components::{Button, Checkbox, CodeInput, InviteCodeInput, TextInput, Variant};
 use thehideout_design::icons::ARROW_LEFT;
 use thehideout_design::{radius, theme_of, type_};
 
@@ -210,10 +210,14 @@ pub fn build(a: &App, k: &Kit) -> El {
     let suspension = auth.error.as_ref().and_then(|e| e.suspension.as_ref());
     let top_level = suspension.is_none() && matches!(auth.step, AuthStep::Password | AuthStep::InviteCode);
 
+    // The full-width code field needs at least 316 at 100% text, 341 at 110% and 379 at 125%
+    // (the boxes only shrink to three quarters of their size). The 400 card leaves 336 inside its
+    // padding, so the invite step's card is 480 (416 inside) to keep the field in at every text size.
+    let card_w = if matches!(auth.step, AuthStep::InviteCode) && suspension.is_none() { 480.0 } else { 400.0 };
     let mut card = col()
         .key("auth-card")
-        .w(400.0)
-        .max_w(400.0)
+        .w(card_w)
+        .max_w(card_w)
         .padding(32.0)
         .gap(16.0)
         .radius(radius::LG)
@@ -681,19 +685,19 @@ fn step(a: &App, k: &Kit) -> Vec<El> {
             }
         }
         AuthStep::InviteCode => {
-            let input = TextInput::new(&auth.invite)
-                .on_edit(invite_edit)
-                .on_submit(submit);
             let error = auth.error_for(AuthField::Invite);
             let control = col()
                 .w_full()
                 .gap(6.0)
                 .child(
-                    input
-                        .width(None)
-                        .large()
-                        .invalid(error.is_some())
+                    InviteCodeInput::new(&auth.invite)
                         .label("Invite code")
+                        .invalid(error.is_some())
+                        .disabled(busy)
+                        .full_width()
+                        .key("value")
+                        .on_edit(invite_edit)
+                        .on_submit(submit)
                         .build(k),
                 )
                 .child(

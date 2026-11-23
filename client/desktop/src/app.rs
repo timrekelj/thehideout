@@ -212,6 +212,11 @@ pub fn init() -> App {
     let prefs = open_prefs();
     let mut state = AppState::new(real_now, Tz::Local);
     state.screen = Screen::Loading;
+    // The browser opened at an invite link: applied once the saved session has been checked.
+    #[cfg(target_arch = "wasm32")]
+    {
+        state.pending_link = crate::web::take_invite_link();
+    }
     let mut app = App::start(
         Box::new(RealBackend::with_shared(prefs.clone())),
         state,
@@ -275,6 +280,12 @@ pub fn poll(a: &mut App, clock: f64, tx: &mut Tx) -> bool {
     }
     let mut changed = false;
     loop {
+        // Checked on every pass, so a reply that ends the loading screen (the saved session's
+        // check) lets the page's invite link in, and its lookup goes out in this same poll.
+        // The 8th character of an invite code starts its lookup.
+        if a.state.apply_pending_link() | a.state.auto_submit_invite() {
+            changed = true;
+        }
         a.flush();
         let replies = a.backend.poll(clock);
         let heard = voice::take_events(&mut a.state, a.voice_sink.as_deref_mut());

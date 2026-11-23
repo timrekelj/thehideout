@@ -41,8 +41,8 @@ async fn lookup(app: &TestApp, token_or_code: &str) -> Result<LookupInviteRespon
         .into_owned())
 }
 
-/// The link token in an invite email.
-fn link_token(app: &TestApp, text: &str) -> String {
+/// The code in the link of an invite email (`XXXX-XXXX`).
+fn link_code(app: &TestApp, text: &str) -> String {
     let prefix = format!("{}/invite/", app.state.public_base());
     let start = text.find(&prefix).expect("invite link") + prefix.len();
     text[start..].split_whitespace().next().unwrap().to_owned()
@@ -96,7 +96,7 @@ async fn who_may_invite() {
     assert!(link.starts_with(&format!("{}/invite/", app.state.public_base())), "{link}");
     let mail = wait_mail(&app, &invitee(&app, "b"), 0, "invited").await;
     assert!(mail.text.contains(&link), "the emailed link is the one returned");
-    assert_eq!(lookup(&app, &link_token(&app, &link)).await.unwrap().status, InviteStatus::INVITE_STATUS_PENDING);
+    assert_eq!(lookup(&app, &link_code(&app, &link)).await.unwrap().status, InviteStatus::INVITE_STATUS_PENDING);
     assert_eq!(by_inviter.status, InviteStatus::INVITE_STATUS_PENDING);
     assert_eq!(by_inviter.inviter.as_option().unwrap().id, inviter.id);
     create(&app, &owner, create_req(&invitee(&app, "c"), Some(g.id), &[], false)).await.unwrap();
@@ -140,15 +140,24 @@ async fn admin_invite_lookup_accept_and_reuse() {
     assert_eq!(invite.email, email);
 
     let mail = wait_mail(&app, &email, 0, "invited").await;
-    let token = link_token(&app, &mail.text);
-    assert!(mail.html.contains(&format!("{}/invite/{token}", app.state.public_base())));
+    let token = link_code(&app, &mail.text);
     let code_shown = invite.code.clone().unwrap();
-    assert!(mail.text.contains(&code_shown) && mail.html.contains(&code_shown));
-    assert!(!mail.text.contains(&format!("{}/invite/{}", app.state.public_base(), code_shown)));
+    assert_eq!(token, code_shown, "the link carries the code");
+    let link = format!("{}/invite/{code_shown}", app.state.public_base());
+    assert!(mail.text.contains(&format!("Your invite code: {code_shown}")), "{}", mail.text);
+    assert!(mail.text.contains(&link) && mail.html.contains(&link) && mail.html.contains(&code_shown));
+    assert_eq!(invite.link.as_deref(), Some(link.as_str()));
+    // No long token anywhere in the email.
+    for part in [&mail.text, &mail.html] {
+        let long = part
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .find(|run| run.len() >= 32);
+        assert!(long.is_none(), "unexpected long secret {long:?} in {part}");
+    }
 
-    // Lookup by link token, or by the code in any case and without its dash.
+    // Lookup by the code in any case and without its dash; the dashed form and the link work too.
     let typed = code_shown.replace('-', "").to_lowercase();
-    for key in [token.as_str(), typed.as_str()] {
+    for key in [typed.as_str(), code_shown.as_str(), &code_shown.to_lowercase()] {
         let preview = lookup(&app, key).await.unwrap();
         assert_eq!(preview.masked_email, format!("{}***@invitee.test", &email[..1]));
         assert_eq!(preview.guild_names, vec![g.name.clone()]);
@@ -157,10 +166,18 @@ async fn admin_invite_lookup_accept_and_reuse() {
         assert_eq!(preview.status, InviteStatus::INVITE_STATUS_PENDING);
     }
     assert_eq!(code(lookup(&app, "ZZZZ-ZZZZ").await), ErrorCode::NotFound);
+    // Anything but exactly 8 Crockford characters is not found: long tokens, wrong lengths, bad letters.
+    let long = "A".repeat(43);
+    for bad in [long.as_str(), "ABCD-EFG", "ABCD-EFGHJ", "ABCD-EFGU", "", &format!("{typed}x"), &format!("https://x/invite/{code_shown}")] {
+        assert_eq!(code(lookup(&app, bad).await), ErrorCode::NotFound, "{bad}");
+        assert_eq!(code(accept(&app, bad, &app.name("neo9")).await), ErrorCode::NotFound, "{bad}");
+    }
 
-    // The landing page of the link answers.
+    // The landing page of the link answers (no web client here: a static page with the code).
     let page = reqwest::get(format!("{}/invite/{token}", app.base_url)).await.unwrap();
     assert_eq!(page.status(), 200);
+    let page = page.text().await.unwrap();
+    assert!(page.contains(&code_shown) && page.contains("Join with a code"), "{page}");
 
     let accepted = accept(&app, &typed, &app.name("neo")).await.unwrap();
     let user = accepted.user.unwrap();
@@ -219,7 +236,7 @@ async fn accept_rejects_taken_names_expired_and_revoked_invites() {
     assert_ne!(new_code, ec);
     let new_link = resent.link.expect("a resend returns the new link");
     assert_ne!(Some(new_link.clone()), expired.link);
-    assert_eq!(lookup(&app, &link_token(&app, &new_link)).await.unwrap().status, InviteStatus::INVITE_STATUS_PENDING);
+    assert_eq!(lookup(&app, &link_code(&app, &new_link)).await.unwrap().status, InviteStatus::INVITE_STATUS_PENDING);
     assert_eq!(code(lookup(&app, &ec).await), ErrorCode::NotFound);
     wait_mail(&app, &invitee(&app, "y"), 1, "invited").await;
 
@@ -241,7 +258,7 @@ async fn member_invites_auto_join_their_guild() {
     let invite = create(&app, &owner, create_req(&invitee(&app, "friend"), Some(g.id), &[], false)).await.unwrap();
     let mail = wait_mail(&app, &invitee(&app, "friend"), 0, "invited").await;
     assert!(mail.text.contains(&app.name("owner")) && mail.text.contains(&g.name));
-    let token = link_token(&app, &mail.text);
+    let token = link_code(&app, &mail.text);
     // Passwordless accounts are allowed.
     let accepted = invites(&app, None).accept_invite(accept_req(&token, &app.name("friend"), None)).await.unwrap().into_owned();
     let guilds = my_guilds(&app, &accepted.token).await;
@@ -285,5 +302,46 @@ async fn lookup_and_accept_are_rate_limited() {
         assert_eq!(code(lookup(&app, "AAAA-AAAA").await), ErrorCode::NotFound);
     }
     assert_eq!(code(lookup(&app, "AAAA-AAAA").await), ErrorCode::ResourceExhausted);
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn resending_an_old_invite_drops_its_token_index_row() {
+    let app = TestApp::start().await;
+    let admin = site_admin(&app, "admin").await;
+    let invite = create(&app, &admin, create_req(&invitee(&app, "old"), None, &[], false)).await.unwrap();
+    // An invite from before the codes: its old token hash is on the row and in the index.
+    let token = "A".repeat(43);
+    let token_hash = thehideout_server::auth::hash_token(&token);
+    app.state
+        .session
+        .execute_unpaged("INSERT INTO invites_by_hash (hash, invite_id) VALUES (?, ?)", (&token_hash, id_to_db(invite.id)))
+        .await
+        .unwrap();
+    app.state
+        .session
+        .execute_unpaged("UPDATE invites SET token_hash = ? WHERE id = ?", (&token_hash, id_to_db(invite.id)))
+        .await
+        .unwrap();
+    let indexed = |app: &TestApp| {
+        let hash = token_hash.clone();
+        let session = app.state.session.clone();
+        async move {
+            session
+                .execute_unpaged("SELECT invite_id FROM invites_by_hash WHERE hash = ?", (&hash,))
+                .await
+                .unwrap()
+                .into_rows_result()
+                .unwrap()
+                .rows_num()
+        }
+    };
+    assert_eq!(code(lookup(&app, &token).await), ErrorCode::NotFound);
+    assert_eq!(indexed(&app).await, 1);
+    invites(&app, Some(&admin.token))
+        .resend_invite(ResendInviteRequest { invite_id: invite.id, ..Default::default() })
+        .await
+        .unwrap();
+    assert_eq!(indexed(&app).await, 0, "the old token's index row is gone");
     app.cleanup().await;
 }

@@ -664,7 +664,7 @@ public  final class Invite extends
   private java.lang.String link_;
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -677,7 +677,7 @@ public  final class Invite extends
   }
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -690,7 +690,7 @@ public  final class Invite extends
   }
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -704,7 +704,7 @@ public  final class Invite extends
   }
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -719,7 +719,7 @@ public  final class Invite extends
   }
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -731,7 +731,7 @@ public  final class Invite extends
   }
   /**
    * <pre>
-   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+   * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
    * only returned by CreateInvite and ResendInvite.
    * </pre>
    *
@@ -1507,7 +1507,7 @@ public  final class Invite extends
 
     /**
      * <pre>
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * </pre>
      *
@@ -1520,7 +1520,7 @@ public  final class Invite extends
     }
     /**
      * <pre>
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * </pre>
      *
@@ -1533,7 +1533,7 @@ public  final class Invite extends
     }
     /**
      * <pre>
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * </pre>
      *
@@ -1547,7 +1547,7 @@ public  final class Invite extends
     }
     /**
      * <pre>
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * </pre>
      *
@@ -1563,7 +1563,7 @@ public  final class Invite extends
     }
     /**
      * <pre>
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * </pre>
      *
@@ -1577,7 +1577,7 @@ public  final class Invite extends
     }
     /**
      * <pre>
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * </pre>
      *

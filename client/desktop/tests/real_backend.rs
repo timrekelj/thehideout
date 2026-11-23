@@ -1992,7 +1992,7 @@ fn an_invite_then_two_factor_then_a_second_device() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let server = rt.block_on(Server::start());
-    let (_, _token, code) = rt
+    let (_, code) = rt
         .block_on(create(
             &server.state,
             NewInvite {

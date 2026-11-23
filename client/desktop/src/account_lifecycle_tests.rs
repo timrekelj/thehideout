@@ -83,6 +83,21 @@ fn invite_form() -> (App, FakeBackend) {
 }
 
 #[test]
+fn an_invite_link_is_looked_up_by_the_poll_that_ends_the_loading_screen() {
+    let fake = FakeBackend::new();
+    let mut app = App::new(Box::new(fake.clone()), AppState::new(fake_now, Tz::Fixed(0)));
+    app.state.screen = Screen::Loading;
+    app.state.pending_link = Some(format!("/invite/{INVITE_PENDING}"));
+    app.state.outbox.push(Command::Resume);
+    // One poll, no input event in between: the resume reply, the link and the lookup all happen in it.
+    let changed = crate::app::poll(&mut app, 0.0, &mut rune::Tx::default());
+    assert!(changed);
+    assert_eq!(sent(&fake, |c| matches!(c, Command::LookupInvite { .. })), 1);
+    assert!(matches!(app.state.auth.step, AuthStep::InviteAccept { .. }));
+    assert!(app.state.pending_link.is_none());
+}
+
+#[test]
 fn accepting_an_invite_sends_the_terms_version_and_the_age_confirmation() {
     let (mut app, fake) = invite_form();
     let AuthStep::InviteAccept { preview, .. } = &app.state.auth.step else { unreachable!() };
@@ -300,7 +315,7 @@ fn an_admin_deletes_a_user_and_everyone_sees_deleted_user() {
     app.pump();
     let r = row(&app, TIM);
     assert!(r.deleted && r.user.deleted && r.user.username == DELETED_USER);
-    assert!(app.state.admin().unwrap().user_errors.get(&TIM).is_none());
+    assert!(!app.state.admin().unwrap().user_errors.contains_key(&TIM));
     assert!(fake.admin_audit().iter().any(|(a, t, reason)| a == "account.delete" && *t == format!("user:{TIM}") && reason == "abuse"));
     // The gateway event reached the rest of the app.
     assert_eq!(app.state.user_name(TIM), DELETED_USER);

@@ -9,8 +9,8 @@ import "thehideout/v1/types.proto";
 //
 // Site admins invite anyone (optionally pre-joining guilds and granting site
 // admin). Guild members with PERMISSION_INVITE_PEOPLE invite people into that
-// guild. The invitee gets an email with a link (token) and a short code;
-// either can be passed to LookupInvite / AcceptInvite. Invites expire after 7
+// guild. The invitee gets an email with a short code (8 characters, `ABCD-EFGH`) and a link containing
+// it; the code is passed to LookupInvite / AcceptInvite. Invites expire after 7
 // days. Guild invite codes (`Guild.invite_code`) only let existing accounts
 // join more guilds.
 service InviteService {
@@ -66,7 +66,7 @@ message Invite {
   optional uint64 accepted_user_id = 9;
   // Whether the new account becomes a site admin.
   bool make_admin = 10;
-  // The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+  // The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
   // only returned by CreateInvite and ResendInvite.
   optional string link = 11;
 }
@@ -135,7 +135,7 @@ message ResendInviteResponse {
 
 // Request to look up an invite.
 message LookupInviteRequest {
-  // The link token or the short code (dashes and case ignored).
+  // The short code (dashes and case ignored).
   string token_or_code = 1;
 }
 
@@ -160,7 +160,7 @@ message LookupInviteResponse {
 
 // Request to accept an invite.
 message AcceptInviteRequest {
-  // The link token or the short code.
+  // The short code (dashes and case ignored).
   string token_or_code = 1;
   // Desired username (`^[a-z0-9_.]{2,32}$`, case-insensitive); ALREADY_EXISTS if taken.
   string username = 2;
