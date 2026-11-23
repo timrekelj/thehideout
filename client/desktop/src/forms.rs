@@ -113,6 +113,8 @@ pub struct Auth {
     /// When "Resend code" may be pressed again (the app clock); stamped by the next tick.
     pub resend_at: Option<f64>,
     pub resend_due: bool,
+    /// Invite: the code last sent for lookup, so a code that failed isn't sent again until it is edited.
+    pub invite_tried: Option<String>,
 }
 
 fn focused(mut e: TextEdit) -> TextEdit {
@@ -139,6 +141,7 @@ impl Auth {
             notice: None,
             resend_at: None,
             resend_due: false,
+            invite_tried: None,
         }
     }
 

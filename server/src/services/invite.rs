@@ -1,12 +1,12 @@
 //! InviteService: email invites, the only way to create an account; plus the
-//! empty-install bootstrap invite and the `/invite/{token}` landing page.
+//! empty-install bootstrap invite and the `/invite/{code}` redirect into the web client.
 
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::Path;
+use axum::extract::{Path, State};
 use axum::http::header;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect, Response as HttpResponse};
 use axum::routing::get;
 use chrono::{DateTime, Utc};
 use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
@@ -14,7 +14,7 @@ use html_escape::encode_text;
 
 use crate::AppState;
 use crate::accounts::{self, NewUser};
-use crate::auth::{authenticate, create_session, generate_token, hash_token, internal, lwt_applied, peer_key};
+use crate::auth::{authenticate, create_session, hash_token, internal, lwt_applied, peer_key};
 use crate::codes;
 use crate::convert::{datetime_to_proto, id_from_db, id_to_db};
 use crate::email::templates;
@@ -115,79 +115,67 @@ pub async fn load(state: &AppState, id: u64) -> Result<Option<InviteRow>, Connec
     }))
 }
 
-/// The invite a link token or short code refers to.
-pub async fn find(state: &AppState, token_or_code: &str) -> Result<Option<InviteRow>, ConnectError> {
-    let raw = token_or_code.trim();
-    if raw.is_empty() || raw.len() > 128 {
+/// The invite a short code refers to. Anything that is not exactly 8 Crockford characters
+/// (dashes, spaces and case ignored) finds nothing.
+pub async fn find(state: &AppState, code: &str) -> Result<Option<InviteRow>, ConnectError> {
+    let Some(code) = codes::parse_invite_code(code) else {
         return Ok(None);
-    }
-    let code = codes::normalize_crockford(raw);
-    let mut hashes = vec![hash_token(raw)];
-    if code.len() == 8 {
-        hashes.push(hash_token(&code));
-    }
-    for hash in hashes {
-        let id = state
-            .session
-            .execute_unpaged("SELECT invite_id FROM invites_by_hash WHERE hash = ?", (&hash,))
-            .await
-            .map_err(internal)?
-            .into_rows_result()
-            .map_err(internal)?
-            .maybe_first_row::<(i64,)>()
-            .map_err(internal)?;
-        if let Some((id,)) = id
-            && let Some(invite) = load(state, id_from_db(id)).await?
-            && (invite.token_hash == hash || invite.code_hash == hash)
-        {
-            return Ok(Some(invite));
-        }
+    };
+    let hash = hash_token(&code);
+    let id = state
+        .session
+        .execute_unpaged("SELECT invite_id FROM invites_by_hash WHERE hash = ?", (&hash,))
+        .await
+        .map_err(internal)?
+        .into_rows_result()
+        .map_err(internal)?
+        .maybe_first_row::<(i64,)>()
+        .map_err(internal)?;
+    if let Some((id,)) = id
+        && let Some(invite) = load(state, id_from_db(id)).await?
+        && invite.code_hash == hash
+    {
+        return Ok(Some(invite));
     }
     Ok(None)
 }
 
-/// Fresh link token and code, and their hashes.
+/// A fresh invite code.
 struct Secrets {
-    token: String,
     code: String,
 }
 
 impl Secrets {
     fn new() -> Self {
-        Self { token: generate_token(), code: codes::invite_code() }
+        Self { code: codes::invite_code() }
     }
 
-    fn hashes(&self) -> (String, String) {
-        (hash_token(&self.token), hash_token(&self.code))
+    fn code_hash(&self) -> String {
+        hash_token(&self.code)
     }
 }
 
 async fn index_hashes(state: &AppState, id: u64, secrets: &Secrets) -> Result<(), ConnectError> {
-    let (token_hash, code_hash) = secrets.hashes();
-    for hash in [token_hash, code_hash] {
-        state
-            .session
-            .execute_unpaged("INSERT INTO invites_by_hash (hash, invite_id) VALUES (?, ?)", (hash, id_to_db(id)))
-            .await
-            .map_err(internal)?;
-    }
+    state
+        .session
+        .execute_unpaged("INSERT INTO invites_by_hash (hash, invite_id) VALUES (?, ?)", (secrets.code_hash(), id_to_db(id)))
+        .await
+        .map_err(internal)?;
     Ok(())
 }
 
 async fn unindex_hashes(state: &AppState, invite: &InviteRow) -> Result<(), ConnectError> {
-    for hash in [&invite.token_hash, &invite.code_hash] {
-        state
-            .session
-            .execute_unpaged("DELETE FROM invites_by_hash WHERE hash = ?", (hash,))
-            .await
-            .map_err(internal)?;
-    }
+    state
+        .session
+        .execute_unpaged("DELETE FROM invites_by_hash WHERE hash = ?", (&invite.code_hash,))
+        .await
+        .map_err(internal)?;
     Ok(())
 }
 
-/// `{PUBLIC_URL}/invite/{token}`.
-pub fn invite_link(state: &AppState, token: &str) -> String {
-    format!("{}/invite/{token}", state.public_base())
+/// `{PUBLIC_URL}/invite/{XXXX-XXXX}`.
+pub fn invite_link(state: &AppState, code: &str) -> String {
+    format!("{}/invite/{}", state.public_base(), codes::format_invite_code(code))
 }
 
 async fn guild_names(state: &AppState, ids: &[u64]) -> Result<Vec<String>, ConnectError> {
@@ -213,10 +201,10 @@ async fn send_invite(state: &AppState, invite: &InviteRow, secrets: &Secrets) ->
     let guilds = guild_names(state, &invite.guild_ids).await?;
     let email = templates::invite(
         &invite.email,
-        format!("invite-{}-{}", invite.id, &secrets.hashes().1[..16]),
+        format!("invite-{}-{}", invite.id, &secrets.code_hash()[..16]),
         inviter.as_ref().map(|u| u.username.as_str()),
         &guilds,
-        &invite_link(state, &secrets.token),
+        &invite_link(state, &secrets.code),
         &codes::format_invite_code(&secrets.code),
     );
     state.mailer.send(email);
@@ -230,7 +218,7 @@ async fn to_proto(state: &AppState, invite: &InviteRow, secrets: Option<&Secrets
         id: invite.id,
         email: invite.email.clone(),
         code: secrets.map(|s| codes::format_invite_code(&s.code)),
-        link: secrets.map(|s| invite_link(state, &s.token)),
+        link: secrets.map(|s| invite_link(state, &s.code)),
         status: invite.status().into(),
         inviter: inviter_user(state, invite.inviter_id).await?.into(),
         guild_ids: invite.guild_ids.clone(),
@@ -254,9 +242,8 @@ pub struct NewInvite {
     pub make_admin: bool,
 }
 
-/// Validates, stores and emails an invite. Returns it with its plaintext link
-/// token and code.
-pub async fn create(state: &AppState, new: NewInvite) -> Result<(InviteRow, String, String), ConnectError> {
+/// Validates, stores and emails an invite. Returns it with its plaintext code.
+pub async fn create(state: &AppState, new: NewInvite) -> Result<(InviteRow, String), ConnectError> {
     let email = accounts::normalize_email(&new.email);
     accounts::check_email(&email)?;
     if accounts::id_by_email(state, &email).await?.is_some() {
@@ -264,12 +251,12 @@ pub async fn create(state: &AppState, new: NewInvite) -> Result<(InviteRow, Stri
     }
     let id = state.snowflake.next_id();
     let secrets = Secrets::new();
-    let (token_hash, code_hash) = secrets.hashes();
+    let code_hash = secrets.code_hash();
     let expires_at = Utc::now() + chrono::Duration::days(INVITE_TTL_DAYS);
     let invite = InviteRow {
         id,
         email,
-        token_hash,
+        token_hash: String::new(),
         code_hash,
         inviter_id: new.inviter_id,
         guild_id: new.guild_id,
@@ -282,12 +269,11 @@ pub async fn create(state: &AppState, new: NewInvite) -> Result<(InviteRow, Stri
     state
         .session
         .execute_unpaged(
-            "INSERT INTO invites (id, email, token_hash, code_hash, inviter_id, guild_id, guild_ids, make_admin, status, expires_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO invites (id, email, code_hash, inviter_id, guild_id, guild_ids, make_admin, status, expires_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 id_to_db(id),
                 &invite.email,
-                &invite.token_hash,
                 &invite.code_hash,
                 invite.inviter_id.map(id_to_db),
                 invite.guild_id.map(id_to_db),
@@ -312,7 +298,7 @@ pub async fn create(state: &AppState, new: NewInvite) -> Result<(InviteRow, Stri
     send_invite(state, &invite, &secrets).await?;
     crate::admin::audit(state, invite.inviter_id.unwrap_or(0), "invite.create", &format!("invite:{id}"), &invite.email).await?;
     tracing::info!(invite_id = id, "invite created");
-    Ok((invite, secrets.token, secrets.code))
+    Ok((invite, secrets.code))
 }
 
 /// On an install without accounts, creates a site-admin invite for
@@ -341,7 +327,7 @@ pub async fn bootstrap(state: &AppState, email: Option<&str>) -> Result<(), Conn
             return Ok(());
         }
     }
-    let (invite, token, code) = create(
+    let (invite, code) = create(
         state,
         NewInvite { email: email.to_owned(), inviter_id: None, guild_id: None, guild_ids: Vec::new(), make_admin: true },
     )
@@ -349,7 +335,7 @@ pub async fn bootstrap(state: &AppState, email: Option<&str>) -> Result<(), Conn
     tracing::info!(
         invite_id = invite.id,
         code = %codes::format_invite_code(&code),
-        link = %invite_link(state, &token),
+        link = %invite_link(state, &code),
         "created bootstrap admin invite"
     );
     Ok(())
@@ -476,7 +462,7 @@ impl InviteService for InviteSvc {
                 return Err(ConnectError::not_found("guild not found"));
             }
         }
-        let (invite, token, code) = create(
+        let (invite, code) = create(
             &self.state,
             NewInvite {
                 email: req.email.to_owned(),
@@ -487,7 +473,7 @@ impl InviteService for InviteSvc {
             },
         )
         .await?;
-        let invite = to_proto(&self.state, &invite, Some(&Secrets { token, code })).await?;
+        let invite = to_proto(&self.state, &invite, Some(&Secrets { code })).await?;
         Response::ok(CreateInviteResponse { invite: invite.into(), ..Default::default() })
     }
 
@@ -565,14 +551,14 @@ impl InviteService for InviteSvc {
             return Err(not_pending(invite.status()));
         }
         let secrets = Secrets::new();
-        let (token_hash, code_hash) = secrets.hashes();
+        let code_hash = secrets.code_hash();
         let expires_at = Utc::now() + chrono::Duration::days(INVITE_TTL_DAYS);
         let applied = lwt_applied(
             self.state
                 .session
                 .execute_unpaged(
-                    "UPDATE invites SET token_hash = ?, code_hash = ?, expires_at = ? WHERE id = ? IF status = 'pending'",
-                    (&token_hash, &code_hash, expires_at, id_to_db(invite.id)),
+                    "UPDATE invites SET code_hash = ?, expires_at = ? WHERE id = ? IF status = 'pending'",
+                    (&code_hash, expires_at, id_to_db(invite.id)),
                 )
                 .await
                 .map_err(internal)?,
@@ -706,20 +692,35 @@ impl InviteService for InviteSvc {
     }
 }
 
-/// `GET /invite/{token}`: a landing page for the emailed link.
+/// `GET /invite/{code}`: into the web client's join flow, or a static page without it.
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/invite/{token}", get(landing))
+    Router::new().route("/invite/{code}", get(landing))
 }
 
-async fn landing(Path(token): Path<String>) -> impl IntoResponse {
-    let token = encode_text(&token);
+async fn landing(State(state): State<AppState>, Path(code): Path<String>) -> HttpResponse {
+    landing_response(state.web_dir.as_deref().is_some_and(std::path::Path::is_dir), &code)
+}
+
+fn landing_response(web_enabled: bool, raw: &str) -> HttpResponse {
+    let code = codes::parse_invite_code(raw).map(|c| codes::format_invite_code(&c));
+    if web_enabled {
+        let to = match code {
+            Some(code) => format!("/app/?invite={code}"),
+            None => "/app/".to_owned(),
+        };
+        return Redirect::to(&to).into_response();
+    }
+    let code = match code {
+        Some(code) => format!("<p><code style=\"font-size:24px;letter-spacing:2px\">{}</code></p>", encode_text(&code)),
+        None => String::new(),
+    };
     let html = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">\
          <title>thehideout invite</title></head>\
          <body style=\"font-family:-apple-system,Segoe UI,sans-serif;max-width:480px;margin:15vh auto;padding:0 16px;color:#1b1b1f\">\
          <h2>You're invited to thehideout</h2>\
-         <p>Open the thehideout app, choose <b>Accept an invite</b> and paste this invite (or the code from your email):</p>\
-         <p><code style=\"word-break:break-all;font-size:14px\">{token}</code></p>\
+         <p>Open the thehideout app, choose <b>Join with a code</b> and enter this invite code:</p>\
+         {code}\
          <p style=\"font-size:13px;color:#6b6b76\">By creating an account you agree to the <a href=\"/terms\">terms</a> and the <a href=\"/privacy\">privacy notice</a>; you must be at least 16.</p></body></html>"
     );
     (
@@ -733,23 +734,43 @@ async fn landing(Path(token): Path<String>) -> impl IntoResponse {
         ],
         html,
     )
+        .into_response()
 }
 
 #[cfg(test)]
 mod landing_tests {
     use super::*;
-    use axum::response::IntoResponse;
+
+    async fn body(resp: HttpResponse) -> String {
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        String::from_utf8_lossy(&body).into_owned()
+    }
 
     #[tokio::test]
-    async fn landing_page_has_security_headers_and_escapes_the_token() {
-        let resp = landing(Path("<script>alert(1)</script>".into())).await.into_response();
+    async fn landing_page_has_security_headers_and_shows_the_formatted_code() {
+        let resp = landing_response(false, "abcd efgh");
         let headers = resp.headers();
         assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
         assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
         assert!(headers.get("content-security-policy").unwrap().to_str().unwrap().contains("frame-ancestors 'none'"));
-        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
-        let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("&lt;script&gt;"), "token is escaped: {body}");
-        assert!(!body.contains("<script>"), "no raw injection: {body}");
+        let body = body(resp).await;
+        assert!(body.contains("ABCD-EFGH"), "{body}");
+        assert!(body.contains("Join with a code"), "{body}");
+    }
+
+    #[test]
+    fn landing_redirects_into_the_web_client() {
+        let resp = landing_response(true, "abcdefgh");
+        assert!(resp.status().is_redirection());
+        assert_eq!(resp.headers().get("location").unwrap(), "/app/?invite=ABCD-EFGH");
+        let resp = landing_response(true, "not-a-code-at-all");
+        assert_eq!(resp.headers().get("location").unwrap(), "/app/");
+    }
+
+    #[tokio::test]
+    async fn landing_page_never_echoes_an_invalid_code() {
+        let resp = landing_response(false, "<script>alert(1)</script>");
+        let body = body(resp).await;
+        assert!(!body.contains("script>alert"), "{body}");
     }
 }

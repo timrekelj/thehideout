@@ -107,6 +107,20 @@ async fn unknown_routes_fall_back_to_index_but_missing_files_are_404() {
 }
 
 #[tokio::test]
+async fn invite_links_redirect_into_the_web_client() {
+    let app = web_app("invite").await;
+    for (path, to) in [("/invite/abcdefgh", "/app/?invite=ABCD-EFGH"), ("/invite/abcd-efgh", "/app/?invite=ABCD-EFGH"), ("/invite/nonsense-x", "/app/")] {
+        let r = http::get(&app, path).await;
+        assert!(matches!(r.status, 302 | 303), "{path}: {}", r.status);
+        assert_eq!(r.header("location"), to, "{path}");
+        // The target is the app shell, served from the directory the relative assets resolve in.
+        let shell = http::get(&app, to).await;
+        assert_eq!(shell.status, 200, "{to}");
+        assert!(shell.text().contains("app shell"), "{to}");
+    }
+}
+
+#[tokio::test]
 async fn without_a_web_dir_app_is_not_served() {
     let app = TestApp::start().await;
     let r = http::get(&app, "/app/").await;

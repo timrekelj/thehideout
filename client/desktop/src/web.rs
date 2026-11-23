@@ -23,6 +23,12 @@ use thehideout_design::components::ToastKind;
 extern "C" {
     #[wasm_bindgen(js_name = origin)]
     fn js_origin() -> String;
+    #[wasm_bindgen(js_name = pathname)]
+    fn js_pathname() -> String;
+    #[wasm_bindgen(js_name = search)]
+    fn js_search() -> String;
+    #[wasm_bindgen(js_name = replacePath)]
+    fn js_replace_path(path: &str);
     #[wasm_bindgen(js_name = storageGet)]
     fn storage_get(key: &str) -> Option<String>;
     #[wasm_bindgen(js_name = storageSet)]
@@ -59,6 +65,14 @@ fn describe(e: JsValue) -> String {
 /// The page's origin: the server this client talks to.
 pub fn origin() -> String {
     js_origin()
+}
+
+/// The invite link the page was opened at (`/app/?invite=XXXX-XXXX`), as an `/invite/<code>`
+/// link for `open_link`. The address bar goes back to `/app/` so a reload doesn't repeat it.
+pub fn take_invite_link() -> Option<String> {
+    let code = crate::account::invite_query_code(&js_pathname(), &js_search())?;
+    js_replace_path("/app/");
+    Some(format!("/invite/{code}"))
 }
 
 // ---- the app handle ------------------------------------------------------------------------
