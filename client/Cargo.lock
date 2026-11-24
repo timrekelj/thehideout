@@ -7243,7 +7243,7 @@ dependencies = [
 
 [[package]]
 name = "thehideout-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -7276,7 +7276,7 @@ dependencies = [
 
 [[package]]
 name = "thehideout-design"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "emojis",
  "qrcode",
@@ -7288,7 +7288,7 @@ dependencies = [
 
 [[package]]
 name = "thehideout-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "chrono",
@@ -7320,7 +7320,7 @@ dependencies = [
 
 [[package]]
 name = "thehideout-gallery"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rune",
  "rune-kit",
@@ -7374,7 +7374,7 @@ dependencies = [
 
 [[package]]
 name = "thehideout-voice"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cpal",
  "futures-util",
@@ -7387,7 +7387,7 @@ dependencies = [
 
 [[package]]
 name = "thehideout-voice-types"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "thiserror"

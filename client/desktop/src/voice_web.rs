@@ -1,7 +1,7 @@
 //! The browser's voice engine: [`Engine`] over `js/voice.js`, which drives the `livekit-client`
-//! SDK (the same LiveKit server and join token as the native engine). Audio and video; the
-//! screen share included: tiles are fed by copying frames out of the browser's decoder (see
-//! `voice.js`, "the frame copy") into the same `VideoSink`/`VideoFrame` path the native engine uses.
+//! SDK (the same LiveKit server and join token as the native engine). Audio and video: tiles are
+//! fed by copying frames out of the browser's decoder (see `voice.js`, "the frame copy") into the
+//! same `VideoSink`/`VideoFrame` path the native engine uses.
 //!
 //! The JS side reports events as JSON strings; they are parsed here into [`VoiceEvent`]s and queued
 //! for the sink, which drains them from `poll` like the native engine's. Cues (join, leave, mute
@@ -11,10 +11,11 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-use thehideout_voice_types::{AudioDevice, MediaKind, Quality, ScreenSource, VideoFrame, VideoKind, VideoSink, VoiceEvent, VoiceMode};
+use thehideout_voice_types::{ScreenSource, VideoFrame, VideoSink, VoiceEvent, VoiceMode};
 use wasm_bindgen::prelude::*;
 
 use crate::voice::Sound;
+use crate::voice_web_events::parse;
 use crate::voice_engine::{Engine, EngineSink, SoundOut, WakerCell, synth};
 
 #[wasm_bindgen(module = "/js/voice.js")]
@@ -72,61 +73,12 @@ pub fn unlock_audio() {
     unlock_audio_js();
 }
 
-/// One event as the JS side reports it.
-fn parse(json: &str) -> Option<VoiceEvent> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let text = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_owned);
-    let devices = |k: &str| -> Vec<AudioDevice> {
-        v.get(k)
-            .and_then(|x| x.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|d| Some(AudioDevice { id: d.get("id")?.as_str()?.to_owned(), name: d.get("name")?.as_str()?.to_owned() }))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    Some(match v.get("t")?.as_str()? {
-        "connecting" => VoiceEvent::Connecting,
-        "connected" => VoiceEvent::Connected,
-        "reconnecting" => VoiceEvent::Reconnecting,
-        "disconnected" => VoiceEvent::Disconnected { reason: text("reason").unwrap_or_default() },
-        "participantJoined" => VoiceEvent::ParticipantJoined { identity: text("identity")? },
-        "participantLeft" => VoiceEvent::ParticipantLeft { identity: text("identity")? },
-        "speaking" => VoiceEvent::Speaking { identity: text("identity")?, speaking: v.get("speaking")?.as_bool()? },
-        "trackMuted" => VoiceEvent::TrackMuted { identity: text("identity")?, kind: MediaKind::Audio, muted: v.get("muted")?.as_bool()? },
-        "quality" => VoiceEvent::ConnectionQuality {
-            identity: text("identity")?,
-            quality: match text("quality")?.as_str() {
-                "excellent" => Quality::Excellent,
-                "good" => Quality::Good,
-                "poor" => Quality::Poor,
-                _ => Quality::Lost,
-            },
-        },
-        "levels" => VoiceEvent::Levels(
-            v.get("levels")?
-                .as_array()?
-                .iter()
-                .filter_map(|p| Some((p.get(0)?.as_str()?.to_owned(), p.get(1)?.as_f64()? as f32)))
-                .collect(),
-        ),
-        "devices" => VoiceEvent::Devices {
-            inputs: devices("inputs"),
-            outputs: devices("outputs"),
-            default_input: text("defaultInput"),
-            default_output: text("defaultOutput"),
-        },
-        "videoTrack" => VoiceEvent::VideoTrack {
-            identity: text("identity")?,
-            source: if text("source")? == "screen" { VideoKind::Screen } else { VideoKind::Camera },
-            track_id: text("trackId")?,
-        },
-        "videoEnded" => VoiceEvent::VideoTrackEnded { identity: text("identity")?, track_id: text("trackId")? },
-        "cameras" => VoiceEvent::Cameras { cameras: devices("cameras"), default: text("defaultCamera") },
-        "error" => VoiceEvent::Error(text("message")?),
-        _ => return None,
-    })
+/// Queues an event for the sink and wakes the app to drain it.
+fn send(events: &Sender<VoiceEvent>, waker: &WakerCell, event: VoiceEvent) {
+    let _ = events.send(event);
+    if let Some(wake) = waker.lock().unwrap().as_ref() {
+        wake();
+    }
 }
 
 /// The newest frame of each watched track, written by the JS frame copy, read through a `VideoSink`.
@@ -135,6 +87,7 @@ type Cells = Arc<Mutex<HashMap<String, Arc<Mutex<Option<VideoFrame>>>>>>;
 pub struct WebEngine {
     client: VoiceClient,
     tx: Sender<VoiceEvent>,
+    waker: WakerCell,
     frames: Cells,
     // Held for as long as the engine: the JS client calls them.
     _emit: Closure<dyn FnMut(String)>,
@@ -146,12 +99,10 @@ impl WebEngine {
         let (tx, rx) = channel();
         let waker = Arc::clone(waker);
         let events = tx.clone();
+        let wake = Arc::clone(&waker);
         let emit = Closure::<dyn FnMut(String)>::new(move |json: String| {
             if let Some(event) = parse(&json) {
-                let _ = events.send(event);
-                if let Some(wake) = waker.lock().unwrap().as_ref() {
-                    wake();
-                }
+                send(&events, &wake, event);
             }
         });
         let frames: Cells = Arc::default();
@@ -165,16 +116,17 @@ impl WebEngine {
             },
         );
         let client = VoiceClient::new(&emit, &on_frame);
-        (WebEngine { client, tx, frames, _emit: emit, _on_frame: on_frame }, rx)
+        (WebEngine { client, tx, waker, frames, _emit: emit, _on_frame: on_frame }, rx)
     }
 
     /// Runs a JS promise to its end; a rejection becomes an `Error` event.
     fn run(&self, promise: js_sys::Promise) {
         let tx = self.tx.clone();
+        let waker = Arc::clone(&self.waker);
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = wasm_bindgen_futures::JsFuture::from(promise).await {
                 let why = e.as_string().or_else(|| e.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message()))).unwrap_or_default();
-                let _ = tx.send(VoiceEvent::Error(why));
+                send(&tx, &waker, VoiceEvent::Error(why));
             }
         });
     }
@@ -262,4 +214,3 @@ impl SoundOut for Cues {
 pub fn web_sink() -> EngineSink<WebEngine> {
     EngineSink::new(Box::new(WebEngine::start), Box::new(Cues))
 }
-

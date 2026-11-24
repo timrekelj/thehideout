@@ -538,9 +538,6 @@ pub const fn app_screen_picker() -> bool {
     !cfg!(target_arch = "wasm32")
 }
 
-/// Said when a voice channel is opened where [`available`] is false.
-pub const VOICE_UNAVAILABLE: &str = "Voice is available in the desktop app for now.";
-
 impl AppState {
     // ---- queries -----------------------------------------------------------------------------
 
@@ -686,10 +683,6 @@ impl AppState {
         // The join click is the user gesture that lets the page play audio.
         #[cfg(target_arch = "wasm32")]
         crate::voice_web::unlock_audio();
-        if !available() {
-            self.toast(ToastKind::Info, VOICE_UNAVAILABLE);
-            return;
-        }
         if !self.perms(guild).contains(Permissions::CONNECT) {
             self.toast(ToastKind::Danger, "You can't join voice channels here.");
             return;

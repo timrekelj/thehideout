@@ -27,14 +27,21 @@ struct Web {
 pub fn content_security_policy(livekit: Option<&str>) -> String {
     let mut connect = "'self'".to_owned();
     if let Some(origin) = livekit.and_then(|u| Url::parse(u).ok()).map(|u| u.origin()).filter(|o| o.is_tuple()) {
-        let ws = origin.ascii_serialization();
-        connect.push(' ');
-        connect.push_str(&ws);
-        // livekit-client probes `http(s)://<host>/validate` to classify a failed connection.
-        let http = ws.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
-        if http != ws {
-            connect.push(' ');
-            connect.push_str(&http);
+        // The SDK connects with `ws(s)://` and probes `http(s)://<host>/validate` to classify a
+        // failed connection: allow both, whichever of the two the configured URL is.
+        let given = origin.ascii_serialization();
+        let (ws, http) = match given.split_once("://") {
+            Some(("http", rest)) => (format!("ws://{rest}"), given.clone()),
+            Some(("https", rest)) => (format!("wss://{rest}"), given.clone()),
+            Some(("ws", rest)) => (given.clone(), format!("http://{rest}")),
+            Some(("wss", rest)) => (given.clone(), format!("https://{rest}")),
+            _ => (given.clone(), given.clone()),
+        };
+        for origin in [ws, http] {
+            if !connect.split(' ').any(|o| o == origin) {
+                connect.push(' ');
+                connect.push_str(&origin);
+            }
         }
     }
     format!(
@@ -106,6 +113,9 @@ mod tests {
     #[test]
     fn csp_includes_the_livekit_origin_only_when_configured() {
         assert!(content_security_policy(Some("wss://voice.example.com/path")).contains("connect-src 'self' wss://voice.example.com https://voice.example.com;"));
+        // http(s) as given: the matching ws(s) origin is allowed too.
+        assert!(content_security_policy(Some("https://voice.example.com")).contains("connect-src 'self' wss://voice.example.com https://voice.example.com;"));
+        assert!(content_security_policy(Some("http://localhost:7880/")).contains("connect-src 'self' ws://localhost:7880 http://localhost:7880;"));
         assert!(content_security_policy(None).contains("connect-src 'self';"));
         assert!(content_security_policy(Some("not a url")).contains("connect-src 'self';"));
     }
