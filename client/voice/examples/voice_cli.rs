@@ -1,7 +1,7 @@
 //! Manual test with the real microphone and speakers.
 //!
 //! ```text
-//! cargo run -p thehideout-voice --example voice_cli -- <ws-url> <token> [--ptt] [--muted]
+//! cargo run -p thehideout-voice --example voice_cli -- <ws-url> <token> [--ptt] [--muted] [--synthetic]
 //! ```
 //!
 //! Prints every event. Type `m` + Enter to toggle mute, `d` deafen, `p` to hold/release
@@ -17,7 +17,7 @@ use thehideout_voice::{ConnectOptions, VoiceEngine, VoiceEvent, VoiceMode};
 fn main() {
     let mut args = std::env::args().skip(1);
     let (Some(url), Some(token)) = (args.next(), args.next()) else {
-        eprintln!("usage: voice_cli <ws-url> <token> [--ptt] [--muted]");
+        eprintln!("usage: voice_cli <ws-url> <token> [--ptt] [--muted] [--synthetic]");
         std::process::exit(2);
     };
     let flags: Vec<String> = args.collect();
@@ -27,7 +27,16 @@ fn main() {
         engine.set_mode(VoiceMode::PushToTalk);
     }
     engine.list_devices();
-    engine.connect(url, token, ConnectOptions { start_muted: flags.iter().any(|f| f == "--muted"), ..Default::default() });
+    engine.connect(url, token, ConnectOptions {
+        start_muted: flags.iter().any(|f| f == "--muted"),
+        // A generated tone instead of the microphone (no hardware or permission needed).
+        audio_input: if flags.iter().any(|f| f == "--synthetic") {
+            thehideout_voice::AudioInput::Synthetic(Default::default())
+        } else {
+            Default::default()
+        },
+        ..Default::default()
+    });
 
     let (line_tx, lines) = mpsc::channel();
     std::thread::spawn(move || {

@@ -512,13 +512,15 @@ fn voice_error_text(e: &ApiError) -> String {
     }
 }
 
-/// Whether this build can take part in voice: the desktop app can, the web client can't yet.
+/// Whether this build can take part in voice (audio: the desktop app and the web client).
 pub const fn available() -> bool {
-    !cfg!(target_arch = "wasm32")
+    true
 }
 
-/// Said when a voice channel is opened where [`available`] is false.
-pub const VOICE_UNAVAILABLE: &str = "Voice is available in the desktop app for now.";
+/// Whether this build can send and watch video and share the screen: desktop only for now.
+pub const fn video_available() -> bool {
+    !cfg!(target_arch = "wasm32")
+}
 
 impl AppState {
     // ---- queries -----------------------------------------------------------------------------
@@ -662,10 +664,9 @@ impl AppState {
             return;
         }
         let guild = c.guild_id;
-        if !available() {
-            self.toast(ToastKind::Info, VOICE_UNAVAILABLE);
-            return;
-        }
+        // The join click is the user gesture that lets the page play audio.
+        #[cfg(target_arch = "wasm32")]
+        crate::voice_web::unlock_audio();
         if !self.perms(guild).contains(Permissions::CONNECT) {
             self.toast(ToastKind::Danger, "You can't join voice channels here.");
             return;

@@ -1,0 +1,6 @@
+# The livekit-client SDK the web voice engine loads (desktop/js/voice.js). build.sh downloads
+# this exact npm tarball, checks its integrity and ships dist/livekit-client.esm.mjs (Apache-2.0)
+# and its LICENSE at the bundle's root. To upgrade: pick a version, then
+#   npm view livekit-client@<version> dist.integrity
+version=2.25.0
+integrity=sha512-QrXeBqrTCPujCu7uMmT9DXOIYTCGz0Ig90EGJx4B05fhQX3BLZJzAbEpRqvFwhQZyQV5uf2KeYsjeVo6as1kZw==

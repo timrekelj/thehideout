@@ -5,6 +5,7 @@
 # the other apps' build output and snapshots.
 client/target/
 client/web/dist*/
+client/web/.cache/
 client/**/snapshots/
 **/snapshots/
 .env

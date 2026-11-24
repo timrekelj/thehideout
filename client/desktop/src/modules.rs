@@ -57,6 +57,10 @@ mod tests;
 mod ui;
 mod voice;
 mod voice_engine;
+#[cfg(target_arch = "wasm32")]
+mod voice_web;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod voice_web_events;
 #[cfg(test)]
 mod voice_engine_tests;
 #[cfg(test)]

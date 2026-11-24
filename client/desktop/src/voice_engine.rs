@@ -371,8 +371,53 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
     }
 }
 
-// The native engine (LiveKit, cpal): not built for the browser, where Phase 2 adds an `Engine` of
-// its own behind the same trait.
+// ---- sounds ----------------------------------------------------------------------------------
+
+/// One note of a cue: frequency in Hz and length in seconds.
+type Note = (f32, f32);
+
+/// The cue's notes. All short and soft, two-note blips going up for "something arrived" and down
+/// for "something left", single or paired lower tones for the mute and deafen clicks.
+fn notes(sound: Sound) -> &'static [Note] {
+    match sound {
+        Sound::Join => &[(523.25, 0.09), (783.99, 0.15)],
+        Sound::PeerJoin => &[(659.25, 0.07), (880.0, 0.11)],
+        Sound::PeerLeave => &[(880.0, 0.07), (659.25, 0.11)],
+        Sound::MuteOn => &[(329.63, 0.08)],
+        Sound::MuteOff => &[(440.0, 0.08)],
+        Sound::DeafOn => &[(440.0, 0.06), (293.66, 0.09)],
+        Sound::DeafOff => &[(293.66, 0.06), (440.0, 0.09)],
+        Sound::Disconnect => &[(587.33, 0.08), (392.0, 0.16)],
+    }
+}
+
+/// How loud a cue is at its peak (of full scale): present, never startling.
+const CUE_GAIN: f32 = 0.16;
+
+/// The cue as mono samples at `rate` Hz: each note a sine with a hint of its octave, a 6 ms
+/// fade in and a smooth fade out, so notes start and end at zero and never click.
+pub fn synth(sound: Sound, rate: u32) -> Vec<f32> {
+    let rate_f = rate as f32;
+    let mut out = Vec::new();
+    for &(hz, secs) in notes(sound) {
+        let n = (secs * rate_f) as usize;
+        let attack = (0.006 * rate_f) as usize;
+        for i in 0..n {
+            let t = i as f32 / rate_f;
+            let phase = std::f32::consts::TAU * hz * t;
+            let tone = phase.sin() + 0.2 * (2.0 * phase).sin();
+            let fade_in = (i as f32 / attack.max(1) as f32).min(1.0);
+            let left = (n - i) as f32 / n as f32;
+            // Raised cosine over the whole note: loudest at the start, zero at the end.
+            let fade_out = 0.5 * (1.0 + (std::f32::consts::PI * (1.0 - left)).cos());
+            out.push(CUE_GAIN * tone / 1.2 * fade_in * fade_out.powf(0.8));
+        }
+    }
+    out.extend(std::iter::repeat_n(0.0, (0.01 * rate_f) as usize));
+    out
+}
+
+// The native engine (LiveKit, cpal): not built for the browser, whose engine is `voice_web.rs`.
 #[cfg(not(target_arch = "wasm32"))]
 pub use live::*;
 
@@ -551,52 +596,6 @@ pub fn live_sink_with(synthetic: bool, out: Box<dyn SoundOut>) -> EngineSink<Liv
 /// [`live_sink`] as the app uses it: synthetic when [`SYNTHETIC_ENV`] is set.
 pub fn app_sink() -> EngineSink<LiveEngine> {
     live_sink(std::env::var_os(SYNTHETIC_ENV).is_some())
-}
-
-// ---- sounds ----------------------------------------------------------------------------------
-
-/// One note of a cue: frequency in Hz and length in seconds.
-type Note = (f32, f32);
-
-/// The cue's notes. All short and soft, two-note blips going up for "something arrived" and down
-/// for "something left", single or paired lower tones for the mute and deafen clicks.
-fn notes(sound: Sound) -> &'static [Note] {
-    match sound {
-        Sound::Join => &[(523.25, 0.09), (783.99, 0.15)],
-        Sound::PeerJoin => &[(659.25, 0.07), (880.0, 0.11)],
-        Sound::PeerLeave => &[(880.0, 0.07), (659.25, 0.11)],
-        Sound::MuteOn => &[(329.63, 0.08)],
-        Sound::MuteOff => &[(440.0, 0.08)],
-        Sound::DeafOn => &[(440.0, 0.06), (293.66, 0.09)],
-        Sound::DeafOff => &[(293.66, 0.06), (440.0, 0.09)],
-        Sound::Disconnect => &[(587.33, 0.08), (392.0, 0.16)],
-    }
-}
-
-/// How loud a cue is at its peak (of full scale): present, never startling.
-const CUE_GAIN: f32 = 0.16;
-
-/// The cue as mono samples at `rate` Hz: each note a sine with a hint of its octave, a 6 ms
-/// fade in and a smooth fade out, so notes start and end at zero and never click.
-pub fn synth(sound: Sound, rate: u32) -> Vec<f32> {
-    let rate_f = rate as f32;
-    let mut out = Vec::new();
-    for &(hz, secs) in notes(sound) {
-        let n = (secs * rate_f) as usize;
-        let attack = (0.006 * rate_f) as usize;
-        for i in 0..n {
-            let t = i as f32 / rate_f;
-            let phase = std::f32::consts::TAU * hz * t;
-            let tone = phase.sin() + 0.2 * (2.0 * phase).sin();
-            let fade_in = (i as f32 / attack.max(1) as f32).min(1.0);
-            let left = (n - i) as f32 / n as f32;
-            // Raised cosine over the whole note: loudest at the start, zero at the end.
-            let fade_out = 0.5 * (1.0 + (std::f32::consts::PI * (1.0 - left)).cos());
-            out.push(CUE_GAIN * tone / 1.2 * fade_in * fade_out.powf(0.8));
-        }
-    }
-    out.extend(std::iter::repeat_n(0.0, (0.01 * rate_f) as usize));
-    out
 }
 
 /// Plays cues through the default output device with `cpal`. Each cue opens a short stream on a
