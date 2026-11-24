@@ -25,10 +25,20 @@ const toLevel = (amplitude) => {
 };
 
 let audioContext;
+let cueSink = ""; // the output device the cues play on ("" = the default)
 /** The page's one AudioContext (cues and meters). Resumed from user gestures. */
 function context() {
-    audioContext ??= new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        routeCues();
+    }
     return audioContext;
+}
+
+/** Plays the cues on the chosen output where the browser can (AudioContext.setSinkId); else the default. */
+function routeCues() {
+    if (typeof audioContext?.setSinkId !== "function") return;
+    audioContext.setSinkId(cueSink).catch(() => { /* a vanished device: keep the current one */ });
 }
 
 /** Call from a user gesture (the join click): lets the page play audio from then on. */
@@ -114,10 +124,15 @@ export class VoiceClient {
         this.meter = undefined; // our microphone, in a room
         this.testMeter = undefined; // the settings page's mic test, no room
         this.testStream = undefined;
+        this.micStale = false;
         this.vadOpenUntil = 0;
         this.lastLevelsLoud = false;
         this.timer = undefined;
         this.banner = undefined;
+        window.addEventListener("blur", () => this.releasePtt());
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden") this.releasePtt();
+        });
         if (navigator.mediaDevices?.addEventListener) {
             navigator.mediaDevices.addEventListener("devicechange", () => {
                 if (this.wantDevices) void this.listDevices();
@@ -127,43 +142,87 @@ export class VoiceClient {
 
     // ---- the room ----------------------------------------------------------------------------
 
+    /**
+     * A connect is a session: `{ room, reported }`. The Rust sink counts exactly one `disconnected`
+     * per teardown it asks for (a `disconnect`, or a `connect` while one is active), whatever state
+     * the session was in (loading the SDK, connecting, joined). So a session's end is reported once:
+     * by `end` (asked for), by livekit's `Disconnected` (dropped), or by a failed connect, and
+     * `reported` makes sure the later ones stay quiet.
+     */
     async connect(url, token, startMuted, startDeaf) {
-        const lk = await loadSdk();
-        lk.setLogLevel("warn");
-        await this.teardown();
-        this.muted = startMuted || startDeaf;
-        this.deaf = startDeaf;
-        const room = new lk.Room({
-            adaptiveStream: false,
-            dynacast: false,
-            audioCaptureDefaults: this.captureOptions(),
-            audioOutput: this.output ? { deviceId: this.output } : undefined,
-            stopLocalTrackOnUnpublish: true,
-        });
-        this.room = room;
-        this.wire(room, lk);
-        this.emit({ t: "connecting" });
+        const previous = this.session;
+        const session = { room: undefined, reported: false };
+        this.session = session;
+        const current = () => this.session === session;
         try {
+            if (previous) await this.end(previous);
+            if (!current()) return; // left (or replaced) meanwhile: `end` has reported it
+            const lk = await loadSdk();
+            if (!current()) return; // the user left while the SDK loaded: never join
+            lk.setLogLevel("warn");
+            this.muted = startMuted || startDeaf;
+            this.deaf = startDeaf;
+            const room = new lk.Room({
+                adaptiveStream: false,
+                dynacast: false,
+                audioCaptureDefaults: this.captureOptions(),
+                // The mic is released while muted (the browser's recording indicator goes off).
+                publishDefaults: { stopMicTrackOnMute: true },
+                audioOutput: this.output ? { deviceId: this.output } : undefined,
+                stopLocalTrackOnUnpublish: true,
+            });
+            session.room = room;
+            this.room = room;
+            this.wire(room, lk, session);
+            this.emit({ t: "connecting" });
             await room.connect(url, token, { autoSubscribe: true });
+            if (!current()) {
+                await room.disconnect(true).catch(() => {});
+                return;
+            }
+            this.emit({ t: "connected" });
+            for (const p of room.remoteParticipants.values()) {
+                this.watch(p, lk);
+                this.applyVolume(p);
+                this.emit({ t: "participantJoined", identity: p.identity });
+            }
+            this.watch(room.localParticipant, lk);
+            this.startLevels();
+            // The user's click that started the join lets the page play from here on.
+            try { await room.startAudio(); } catch { /* the banner offers it */ }
+            if (!current()) return;
+            await this.applyMute(true);
         } catch (error) {
-            if (this.room === room) this.room = undefined;
-            this.emit({ t: "disconnected", reason: describe(error) });
-            return;
+            // A failure before or during the join (SDK load, CSP, a refused token). When livekit
+            // already reported the end (it does for a failed connect), or the user left, say nothing.
+            if (!current() || session.reported) return;
+            this.finish(session, describe(error));
+            await session.room?.disconnect(true).catch(() => {});
         }
-        if (this.room !== room) return; // replaced or left while connecting
-        this.emit({ t: "connected" });
-        for (const p of room.remoteParticipants.values()) {
-            this.watch(p, lk);
-            this.applyVolume(p);
-        }
-        this.watch(room.localParticipant, lk);
-        this.startLevels();
-        // The user's click that started the join lets the page play from here on.
-        try { await room.startAudio(); } catch { /* the banner offers it */ }
-        await this.applyMute(true);
     }
 
-    wire(room, lk) {
+    /** Reports a session's end once and drops what it owned. Returns whether it was the one to say so. */
+    finish(session, reason) {
+        const first = !session.reported;
+        session.reported = true;
+        if (this.session === session) this.session = undefined;
+        if (this.room === session.room) {
+            this.room = undefined;
+            this.stopRoomAudio();
+        }
+        this.hideBanner();
+        if (first) this.emit({ t: "disconnected", reason });
+        return first;
+    }
+
+    /** Ends a session on request: reports it, then leaves its room (if it got that far). */
+    async end(session) {
+        const room = session.room;
+        this.finish(session, "left");
+        if (room) await room.disconnect(true).catch(() => {});
+    }
+
+    wire(room, lk, session) {
         const { RoomEvent } = lk;
         room
             .on(RoomEvent.ParticipantConnected, (p) => {
@@ -189,17 +248,9 @@ export class VoiceClient {
             .on(RoomEvent.Reconnecting, () => this.emit({ t: "reconnecting" }))
             .on(RoomEvent.Reconnected, () => this.emit({ t: "connected" }))
             .on(RoomEvent.AudioPlaybackStatusChanged, () => this.audioBanner(room));
-        room.on(RoomEvent.Disconnected, (reason) => {
-            if (this.room === room) {
-                this.room = undefined;
-                this.stopRoomAudio();
-            }
-            this.hideBanner();
-            this.emit({ t: "disconnected", reason: reasonText(lk, reason) });
-        });
+        room.on(RoomEvent.Disconnected, (reason) => this.finish(session, reasonText(lk, reason)));
         // A device unplugged or a permission revoked while in the room.
         room.on(RoomEvent.MediaDevicesError, (error) => this.emit({ t: "error", message: micMessage(error) }));
-        room.on(RoomEvent.ActiveDeviceChanged, () => {});
     }
 
     watch(p, lk) {
@@ -214,15 +265,9 @@ export class VoiceClient {
         if (pub.kind === lk.Track.Kind.Audio) this.emit({ t: "trackMuted", identity: p.identity, muted });
     }
 
-    async teardown() {
-        const room = this.room;
-        this.room = undefined;
-        this.stopRoomAudio();
-        if (room) await room.disconnect(true);
-    }
-
     disconnect() {
-        void this.teardown();
+        const session = this.session;
+        if (session) void this.end(session);
     }
 
     stopRoomAudio() {
@@ -282,11 +327,19 @@ export class VoiceClient {
         if (!lp) return;
         try {
             if (this.muted || this.deaf) {
+                // Muted: nothing listens, so the meter's clone goes too (it would keep the mic,
+                // and the browser's recording indicator, on).
+                this.meter?.close();
+                this.meter = undefined;
                 if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);
             } else if (!lp.isMicrophoneEnabled) {
                 await lp.setMicrophoneEnabled(true, this.captureOptions());
                 const track = this.micTrack()?.mediaStreamTrack;
-                if (track) {
+                if (this.micStale) {
+                    // Settings changed while muted (the mic was released): reopen with them.
+                    this.micStale = false;
+                    await this.restartMic();
+                } else if (track) {
                     this.meter?.close();
                     this.meter = new Meter(track);
                 }
@@ -306,6 +359,10 @@ export class VoiceClient {
     async restartMic() {
         const track = this.micTrack();
         if (!track) return;
+        if (this.muted || this.deaf) {
+            this.micStale = true; // the mic is off: do not open it just to apply a setting
+            return;
+        }
         try {
             await track.restartTrack(this.captureOptions());
             this.meter?.close();
@@ -351,6 +408,13 @@ export class VoiceClient {
         this.applyGate();
     }
 
+    /** A key-up lost to a focus change never arrives: close the gate (as the desktop app does). */
+    releasePtt() {
+        if (!this.ptt) return;
+        console.debug("voice-cmd", "ptt-release");
+        this.setPtt(false);
+    }
+
     setNoiseSuppression(on) {
         this.ns = on;
         void this.restartMic();
@@ -364,9 +428,12 @@ export class VoiceClient {
     async setInputDevice(id) {
         console.debug("voice-cmd", "input", id ?? "default");
         this.input = id ?? undefined;
-        if (this.room && this.micTrack()) {
+        if (this.room && this.micTrack() && (this.muted || this.deaf)) {
+            this.micStale = true;
+        } else if (this.room && this.micTrack()) {
             try {
-                await this.room.switchActiveDevice("audioinput", id ?? "default");
+                const device = await this.deviceFor("audioinput", id);
+                if (device) await this.room.switchActiveDevice("audioinput", device);
                 const track = this.micTrack();
                 if (track) {
                     this.meter?.close();
@@ -379,12 +446,26 @@ export class VoiceClient {
         if (this.testMeter) await this.startMicTest();
     }
 
+    /**
+     * The device id to switch to: the chosen one, or for "Default" the browser's "default" alias
+     * (Chromium) or else the first device (other browsers have no alias); undefined to leave it be.
+     */
+    async deviceFor(kind, id) {
+        if (id) return id;
+        const list = await sdk.Room.getLocalDevices(kind, false);
+        return list.find((d) => d.deviceId === "default")?.deviceId ?? list[0]?.deviceId;
+    }
+
     async setOutputDevice(id) {
         console.debug("voice-cmd", "output", id ?? "default");
         this.output = id ?? undefined;
+        cueSink = id ?? "";
+        routeCues();
         if (this.room) {
-            try { await this.room.switchActiveDevice("audiooutput", id ?? "default"); }
-            catch (error) { this.emit({ t: "error", message: `Couldn't switch the speakers: ${describe(error)}` }); }
+            try {
+                const device = await this.deviceFor("audiooutput", id);
+                if (device) await this.room.switchActiveDevice("audiooutput", device);
+            } catch (error) { this.emit({ t: "error", message: `Couldn't switch the speakers: ${describe(error)}` }); }
         }
     }
 

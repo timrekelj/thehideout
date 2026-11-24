@@ -28,15 +28,15 @@ fn main() {
     }
     engine.list_devices();
     engine.connect(url, token, ConnectOptions {
-            start_muted: flags.iter().any(|f| f == "--muted"),
-            // A generated tone instead of the microphone (no hardware or permission needed).
-            audio_input: if flags.iter().any(|f| f == "--synthetic") {
-                thehideout_voice::AudioInput::Synthetic(Default::default())
-            } else {
-                Default::default()
-            },
-            ..Default::default()
-        });
+        start_muted: flags.iter().any(|f| f == "--muted"),
+        // A generated tone instead of the microphone (no hardware or permission needed).
+        audio_input: if flags.iter().any(|f| f == "--synthetic") {
+            thehideout_voice::AudioInput::Synthetic(Default::default())
+        } else {
+            Default::default()
+        },
+        ..Default::default()
+    });
 
     let (line_tx, lines) = mpsc::channel();
     std::thread::spawn(move || {
