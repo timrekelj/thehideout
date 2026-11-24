@@ -185,8 +185,9 @@ export class VoiceClient {
             this.room = room;
             this.wire(room, lk, session);
             this.emit({ t: "connecting" });
-            // Audio is subscribed as it appears; a video track only while a tile shows it.
-            await room.connect(url, token, { autoSubscribe: false });
+            // Everything is subscribed at first (the SFU only reports speakers for subscribed rooms);
+            // a video track is dropped again at once and re-subscribed while a tile shows it.
+            await room.connect(url, token, { autoSubscribe: true });
             if (!current()) {
                 await room.disconnect(true).catch(() => {});
                 return;
@@ -250,6 +251,10 @@ export class VoiceClient {
             .on(RoomEvent.TrackUnpublished, (pub) => this.unpublished(pub, lk, session))
             .on(RoomEvent.LocalTrackPublished, (pub) => this.published(pub, room.localParticipant, lk, session))
             .on(RoomEvent.LocalTrackUnpublished, (pub) => this.unpublished(pub, lk, session))
+            .on(RoomEvent.TrackUnsubscribed, (track, pub) => {
+                // Unsubscribed (ours, right after it was announced): its copy stops; a tile re-subscribes.
+                if (track.kind === lk.Track.Kind.Video) this.stopFrames(pub.trackSid);
+            })
             .on(RoomEvent.TrackSubscribed, (track, pub, p) => {
                 if (track.kind === lk.Track.Kind.Audio) {
                     this.applyVolume(p);
@@ -498,9 +503,9 @@ export class VoiceClient {
         if (this.session !== session) return; // a leftover event of a session that has ended
         const isLocal = p === this.room?.localParticipant;
         if (pub.kind === lk.Track.Kind.Audio) {
-            if (!isLocal) pub.setSubscribed(true); // the microphone and a share's sound
-            return;
+            return; // the microphone and a share's sound stay subscribed
         }
+        if (!isLocal && !this.wanted.has(pub.trackSid)) pub.setSubscribed(false);
         const source = pub.source === lk.Track.Source.ScreenShare ? "screen" : "camera";
         this.owners.set(pub.trackSid, p.identity);
         this.emit({ t: "videoTrack", identity: p.identity, source, trackId: pub.trackSid });
@@ -601,10 +606,10 @@ export class VoiceClient {
         if (found.local) {
             const track = found.pub.track?.mediaStreamTrack;
             if (track) this.startFrames(sid, track);
-        } else if (found.pub.isSubscribed && found.pub.track) {
-            this.startFrames(sid, found.pub.track.mediaStreamTrack);
         } else {
+            // Always (re)subscribe: right after a track is announced we may still be unsubscribing it.
             found.pub.setSubscribed(true);
+            if (found.pub.isSubscribed && found.pub.track) this.startFrames(sid, found.pub.track.mediaStreamTrack);
         }
     }
 
