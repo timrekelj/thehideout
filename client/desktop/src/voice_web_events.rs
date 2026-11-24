@@ -1,7 +1,7 @@
 //! The JS voice engine's events (JSON strings, see `js/voice.js`) as [`VoiceEvent`]s. Apart from
 //! `voice_web.rs` so they can be tested natively.
 
-use thehideout_voice_types::{AudioDevice, MediaKind, Quality, VoiceEvent};
+use thehideout_voice_types::{AudioDevice, MediaKind, Quality, VideoKind, VoiceEvent};
 
 /// One event as the JS side reports it.
 pub fn parse(json: &str) -> Option<VoiceEvent> {
@@ -13,6 +13,8 @@ pub fn parse(json: &str) -> Option<VoiceEvent> {
             .map(|a| {
                 a.iter()
                     .filter_map(|d| Some(AudioDevice { id: d.get("id")?.as_str()?.to_owned(), name: d.get("name")?.as_str()?.to_owned() }))
+                    // A browser without permission lists placeholders with no id: not devices.
+                    .filter(|d| !d.id.is_empty())
                     .collect()
             })
             .unwrap_or_default()
@@ -48,6 +50,13 @@ pub fn parse(json: &str) -> Option<VoiceEvent> {
             default_input: text("defaultInput"),
             default_output: text("defaultOutput"),
         },
+        "videoTrack" => VoiceEvent::VideoTrack {
+            identity: text("identity")?,
+            source: if text("source")? == "screen" { VideoKind::Screen } else { VideoKind::Camera },
+            track_id: text("trackId")?,
+        },
+        "videoEnded" => VoiceEvent::VideoTrackEnded { identity: text("identity")?, track_id: text("trackId")? },
+        "cameras" => VoiceEvent::Cameras { cameras: devices("cameras"), default: text("defaultCamera") },
         "error" => VoiceEvent::Error(text("message")?),
         _ => return None,
     })
@@ -68,6 +77,32 @@ mod tests {
         assert_eq!(parse(r#"{"t":"reconnecting"}"#), Some(VoiceEvent::Reconnecting));
         assert_eq!(parse(r#"{"t":"disconnected","reason":"left"}"#), Some(VoiceEvent::Disconnected { reason: id("left") }));
         assert_eq!(parse(r#"{"t":"disconnected"}"#), Some(VoiceEvent::Disconnected { reason: String::new() }));
+    }
+
+    #[test]
+    fn video() {
+        assert_eq!(
+            parse(r#"{"t":"videoTrack","identity":"7","source":"screen","trackId":"TR_1"}"#),
+            Some(VoiceEvent::VideoTrack { identity: id("7"), source: VideoKind::Screen, track_id: id("TR_1") })
+        );
+        assert_eq!(
+            parse(r#"{"t":"videoTrack","identity":"7","source":"camera","trackId":"TR_2"}"#),
+            Some(VoiceEvent::VideoTrack { identity: id("7"), source: VideoKind::Camera, track_id: id("TR_2") })
+        );
+        assert_eq!(parse(r#"{"t":"videoEnded","identity":"7","trackId":"TR_2"}"#), Some(VoiceEvent::VideoTrackEnded { identity: id("7"), track_id: id("TR_2") }));
+        assert_eq!(
+            parse(r#"{"t":"cameras","cameras":[{"id":"c1","name":"Cam"}],"defaultCamera":"c1"}"#),
+            Some(VoiceEvent::Cameras { cameras: vec![AudioDevice { id: id("c1"), name: id("Cam") }], default: Some(id("c1")) })
+        );
+    }
+
+    #[test]
+    fn placeholder_devices_without_an_id_are_dropped() {
+        assert_eq!(
+            parse(r#"{"t":"cameras","cameras":[{"id":"","name":""},{"id":"c1","name":"Cam"}],"defaultCamera":null}"#),
+            Some(VoiceEvent::Cameras { cameras: vec![AudioDevice { id: id("c1"), name: id("Cam") }], default: None })
+        );
+        assert_eq!(parse(r#"{"t":"error","message":""}"#), Some(VoiceEvent::Error(String::new())));
     }
 
     #[test]

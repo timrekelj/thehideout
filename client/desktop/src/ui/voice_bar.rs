@@ -147,13 +147,6 @@ fn media_buttons(a: &App, k: &Kit) -> Vec<El> {
         return Vec::new();
     }
     let v = &a.state.voice;
-    // Video and screen share are desktop-only for now: shown disabled, saying so.
-    if !crate::voice::video_available() {
-        let off = |g: &'static rune::Icon, name: &'static str, key: &'static str| {
-            IconButton::new(g, format!("{name}: available in the desktop app for now")).disabled(true).build(k).key(key)
-        };
-        return vec![off(&VIDEO_CAMERA_SLASH, "Camera", "voice-camera"), off(&MONITOR_ARROW_UP, "Share screen", "voice-share")];
-    }
     let camera = IconButton::new(
         if v.camera { &VIDEO_CAMERA } else { &VIDEO_CAMERA_SLASH },
         if v.camera { "Turn off camera" } else { "Turn on camera" },

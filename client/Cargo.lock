@@ -7295,6 +7295,7 @@ dependencies = [
  "cpal",
  "futures",
  "gethostname",
+ "gloo-timers",
  "image",
  "js-sys",
  "rand 0.9.5",

@@ -51,7 +51,7 @@ export function unlockAudio() {
 
 /** Plays mono float samples once (the join, leave and mute cues). */
 export function playPcm(samples, rate) {
-    console.debug("voice-cmd", "cue", samples.length);
+    console.debug("voice-cmd", "cue", samples.length); // @hook
     try {
         const ctx = context();
         if (ctx.state === "suspended") void ctx.resume();
@@ -94,8 +94,13 @@ class Meter {
 }
 
 export class VoiceClient {
-    /** `emit(json)` receives every event as a JSON string. */
-    constructor(emit) {
+    /** `emit(json)` receives every event as a JSON string; `onFrame(trackId, w, h, rgba)` every copied video frame. */
+    constructor(emit, onFrame) {
+        this.onFrame = onFrame;
+        this.camera = undefined; // camera device id, or undefined for the default
+        this.wanted = new Map(); // video track sid -> true: the tiles on screen
+        this.frames = new Map(); // video track sid -> the loop copying its frames
+        this.owners = new Map(); // video track sid -> identity, kept for the 'ended' report
         this.lastError = { message: "", at: 0 };
         this.emit = (event) => {
             if (event.t === "error") {
@@ -105,9 +110,10 @@ export class VoiceClient {
                 this.lastError = { message: event.message, at: now };
             }
             const json = JSON.stringify(event);
-            // Levels arrive 15 times a second; everything else is worth a (debug-level) line.
+            // @hook-start (test builds only: `build.sh --test-hooks`; stripped from the shipped bundle)
             if (event.t !== "levels") console.debug("voice", json);
             else if (event.levels.some(([, l]) => l > 0)) console.debug("voice-levels-nonzero");
+            // @hook-end
             emit(json);
         };
         this.room = undefined;
@@ -175,6 +181,8 @@ export class VoiceClient {
             this.room = room;
             this.wire(room, lk, session);
             this.emit({ t: "connecting" });
+            // Everything is subscribed at first (the SFU only reports speakers for subscribed rooms);
+            // a video track is dropped again at once and re-subscribed while a tile shows it.
             await room.connect(url, token, { autoSubscribe: true });
             if (!current()) {
                 await room.disconnect(true).catch(() => {});
@@ -185,6 +193,7 @@ export class VoiceClient {
                 this.watch(p, lk);
                 this.applyVolume(p);
                 this.emit({ t: "participantJoined", identity: p.identity });
+                for (const pub of p.trackPublications.values()) this.published(pub, p, lk, session);
             }
             this.watch(room.localParticipant, lk);
             this.startLevels();
@@ -211,6 +220,7 @@ export class VoiceClient {
             this.stopRoomAudio();
         }
         this.hideBanner();
+        this.stopAllFrames();
         if (first) this.emit({ t: "disconnected", reason });
         return first;
     }
@@ -233,10 +243,20 @@ export class VoiceClient {
             .on(RoomEvent.ParticipantDisconnected, (p) => {
                 this.emit({ t: "participantLeft", identity: p.identity });
             })
-            .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+            .on(RoomEvent.TrackPublished, (pub, p) => this.published(pub, p, lk, session))
+            .on(RoomEvent.TrackUnpublished, (pub) => this.unpublished(pub, lk, session))
+            .on(RoomEvent.LocalTrackPublished, (pub) => this.published(pub, room.localParticipant, lk, session))
+            .on(RoomEvent.LocalTrackUnpublished, (pub) => this.unpublished(pub, lk, session))
+            .on(RoomEvent.TrackUnsubscribed, (track, pub) => {
+                // Unsubscribed (ours, right after it was announced): its copy stops; a tile re-subscribes.
+                if (track.kind === lk.Track.Kind.Video) this.stopFrames(pub.trackSid);
+            })
+            .on(RoomEvent.TrackSubscribed, (track, pub, p) => {
                 if (track.kind === lk.Track.Kind.Audio) {
                     this.applyVolume(p);
                     track.attach(); // an <audio> element playing it, held by the track
+                } else if (this.session === session && this.wanted.has(pub.trackSid)) {
+                    this.startFrames(pub.trackSid, track.mediaStreamTrack);
                 }
             })
             .on(RoomEvent.TrackMuted, (pub, p) => this.trackMuted(pub, p, true, lk))
@@ -385,7 +405,7 @@ export class VoiceClient {
     }
 
     setUserVolume(identity, volume) {
-        console.debug("voice-cmd", "volume", identity, volume);
+        console.debug("voice-cmd", "volume", identity, volume); // @hook
         this.volumes.set(identity, volume);
         const p = this.room?.remoteParticipants.get(identity);
         if (p) this.applyVolume(p);
@@ -393,7 +413,9 @@ export class VoiceClient {
 
     applyVolume(p) {
         const v = this.deaf ? 0 : (this.volumes.get(p.identity) ?? 1);
-        try { p.setVolume(v); } catch { /* not subscribed yet: TrackSubscribed applies it */ }
+        // Separate tries: a share's sound track may not exist, which must not skip the microphone.
+        try { p.setVolume(v, sdk.Track.Source.Microphone); } catch { /* not subscribed yet: TrackSubscribed applies it */ }
+        try { p.setVolume(v, sdk.Track.Source.ScreenShareAudio); } catch { /* no share sound */ }
     }
 
     setMode(vad, threshold) {
@@ -403,7 +425,7 @@ export class VoiceClient {
     }
 
     setPtt(held) {
-        console.debug("voice-cmd", "ptt", held);
+        console.debug("voice-cmd", "ptt", held); // @hook
         this.ptt = held;
         this.applyGate();
     }
@@ -411,7 +433,7 @@ export class VoiceClient {
     /** A key-up lost to a focus change never arrives: close the gate (as the desktop app does). */
     releasePtt() {
         if (!this.ptt) return;
-        console.debug("voice-cmd", "ptt-release");
+        console.debug("voice-cmd", "ptt-release"); // @hook
         this.setPtt(false);
     }
 
@@ -426,7 +448,7 @@ export class VoiceClient {
     }
 
     async setInputDevice(id) {
-        console.debug("voice-cmd", "input", id ?? "default");
+        console.debug("voice-cmd", "input", id ?? "default"); // @hook
         this.input = id ?? undefined;
         if (this.room && this.micTrack() && (this.muted || this.deaf)) {
             this.micStale = true;
@@ -457,7 +479,7 @@ export class VoiceClient {
     }
 
     async setOutputDevice(id) {
-        console.debug("voice-cmd", "output", id ?? "default");
+        console.debug("voice-cmd", "output", id ?? "default"); // @hook
         this.output = id ?? undefined;
         cueSink = id ?? "";
         routeCues();
@@ -467,6 +489,204 @@ export class VoiceClient {
                 if (device) await this.room.switchActiveDevice("audiooutput", device);
             } catch (error) { this.emit({ t: "error", message: `Couldn't switch the speakers: ${describe(error)}` }); }
         }
+    }
+
+    // ---- video: camera, screen share, tiles --------------------------------------------------
+
+    /** A track appeared in the room (ours or theirs): audio is subscribed, video is announced. */
+    published(pub, p, lk, session) {
+        if (this.session !== session) return; // a leftover event of a session that has ended
+        const isLocal = p === this.room?.localParticipant;
+        if (pub.kind === lk.Track.Kind.Audio) {
+            return; // the microphone and a share's sound stay subscribed
+        }
+        if (!isLocal && !this.wanted.has(pub.trackSid)) pub.setSubscribed(false);
+        const source = pub.source === lk.Track.Source.ScreenShare ? "screen" : "camera";
+        this.owners.set(pub.trackSid, p.identity);
+        this.emit({ t: "videoTrack", identity: p.identity, source, trackId: pub.trackSid });
+    }
+
+    unpublished(pub, lk, session) {
+        if (this.session !== session || pub.kind !== lk.Track.Kind.Video) return;
+        this.stopFrames(pub.trackSid);
+        this.wanted.delete(pub.trackSid);
+        this.emit({ t: "videoEnded", identity: this.ownerOf(pub), trackId: pub.trackSid });
+    }
+
+    ownerOf(pub) {
+        return this.owners.get(pub.trackSid) ?? "";
+    }
+
+    findPub(sid) {
+        const room = this.room;
+        if (!room) return undefined;
+        for (const p of [room.localParticipant, ...room.remoteParticipants.values()]) {
+            const pub = p.trackPublications.get(sid);
+            if (pub) return { pub, local: p === room.localParticipant };
+        }
+        return undefined;
+    }
+
+    async setCamera(on) {
+        const lp = this.room?.localParticipant;
+        if (!lp) return;
+        const lk = sdk;
+        try {
+            if (on) {
+                const preset = lk.VideoPresets.h720;
+                await lp.setCameraEnabled(true, { deviceId: this.camera, resolution: preset.resolution }, {
+                    simulcast: true,
+                    videoEncoding: preset.encoding,
+                    videoSimulcastLayers: [lk.VideoPresets.h180, lk.VideoPresets.h360],
+                });
+                // Camera labels (and ids) are only listed once the browser has given permission: now.
+                if (!this.camerasKnown) {
+                    this.camerasKnown = true;
+                    void this.listDevices();
+                }
+            } else {
+                await this.unpublishSource(lk.Track.Source.Camera);
+            }
+        } catch (error) {
+            this.emit({ t: "error", message: cameraMessage(error) });
+        }
+    }
+
+    async setCameraDevice(id) {
+        console.debug("voice-cmd", "camera", id ?? "default"); // @hook
+        // An empty id would select nothing: it means the default.
+        const next = id || undefined;
+        if (next === this.camera) return; // the engine re-sends the setting after every device listing
+        this.camera = next;
+        const pub = this.room?.localParticipant.getTrackPublication(sdk.Track.Source.Camera);
+        const track = pub?.videoTrack;
+        if (!track) return;
+        try {
+            // No id is "the default": there is no "default" video device id to switch to.
+            if (next) await this.room.switchActiveDevice("videoinput", next);
+            else await track.restartTrack({});
+        } catch (error) {
+            this.emit({ t: "error", message: cameraMessage(error) });
+            return;
+        }
+        // The switch replaced the MediaStreamTrack: the self-view copy was reading the old one.
+        const sid = pub.trackSid;
+        if (this.wanted.has(sid) && pub.videoTrack) {
+            this.stopFrames(sid);
+            this.startFrames(sid, pub.videoTrack.mediaStreamTrack);
+        }
+    }
+
+    /** Called from the share button's click: `getDisplayMedia` needs the user gesture. */
+    async setScreenShare(on) {
+        const lp = this.room?.localParticipant;
+        if (!lp) return;
+        const lk = sdk;
+        try {
+            if (on) {
+                await lp.setScreenShareEnabled(true, {
+                    audio: true, // where the browser offers the tab's or system's sound
+                    contentHint: "detail",
+                    resolution: lk.VideoPresets.h1080.resolution,
+                }, {
+                    screenShareEncoding: lk.ScreenSharePresets.h1080fps30.encoding,
+                    screenShareSimulcastLayers: [],
+                });
+            } else {
+                await this.unpublishSource(lk.Track.Source.ScreenShare);
+                await this.unpublishSource(lk.Track.Source.ScreenShareAudio);
+            }
+        } catch (error) {
+            this.emit({ t: "error", message: screenMessage(error) });
+        }
+    }
+
+    async unpublishSource(source) {
+        const lp = this.room?.localParticipant;
+        const pub = lp?.getTrackPublication(source);
+        if (pub?.track) await lp.unpublishTrack(pub.track, true);
+    }
+
+    /** A tile shows `sid`: subscribe to it (or start on our own track) and copy its frames. */
+    watchVideo(sid) {
+        this.wanted.set(sid, true);
+        const found = this.findPub(sid);
+        if (!found) return;
+        if (found.local) {
+            const track = found.pub.track?.mediaStreamTrack;
+            if (track) this.startFrames(sid, track);
+        } else {
+            // Always (re)subscribe: right after a track is announced we may still be unsubscribing it.
+            found.pub.setSubscribed(true);
+            if (found.pub.isSubscribed && found.pub.track) this.startFrames(sid, found.pub.track.mediaStreamTrack);
+        }
+    }
+
+    /** No tile shows `sid` any more: stop copying, and let the SFU stop sending it. */
+    unwatchVideo(sid) {
+        this.wanted.delete(sid);
+        this.stopFrames(sid);
+        const found = this.findPub(sid);
+        if (found && !found.local) found.pub.setSubscribed(false);
+    }
+
+    /**
+     * The frame copy: a detached <video> plays the track and `requestVideoFrameCallback` hands each
+     * new picture to a canvas that scales it down (to what the number of tiles can show) and reads
+     * the RGBA back for Rust, which gives it to rune as a `Pixels`. Capped in size and rate.
+     */
+    startFrames(sid, mediaTrack) {
+        if (this.frames.has(sid)) return;
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = new MediaStream([mediaTrack]);
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        const entry = { video, stopped: false, last: 0 };
+        this.frames.set(sid, entry);
+        const tick = (now) => {
+            if (entry.stopped) return;
+            const n = this.frames.size;
+            // One tile is the whole stage: full size. Several share it: a tile is a few hundred px wide.
+            const [maxW, minGap] = n <= 1 ? [1280, 33] : n <= 3 ? [640, 33] : n <= 6 ? [640, 66] : [480, 66];
+            const w0 = video.videoWidth, h0 = video.videoHeight;
+            if (w0 && h0 && now - entry.last >= minGap) {
+                entry.last = now;
+                const k = Math.min(1, maxW / w0);
+                const w = Math.max(2, Math.round(w0 * k)), h = Math.max(2, Math.round(h0 * k));
+                if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+                if (entry.asked !== maxW) {
+                    // Ask the SFU for a layer about as big as we copy: a small tile need not decode 720p.
+                    // (From the target, not the size received: that would never ask for more.)
+                    entry.asked = maxW;
+                    const found = this.findPub(sid);
+                    if (found && !found.local) found.pub.setVideoDimensions({ width: maxW, height: Math.round((maxW * 9) / 16) });
+                }
+                ctx.drawImage(video, 0, 0, w, h);
+                const data = ctx.getImageData(0, 0, w, h).data;
+                this.onFrame(sid, w, h, data);
+            }
+            video.requestVideoFrameCallback(tick);
+        };
+        video.requestVideoFrameCallback(tick);
+        video.play().catch(() => {});
+    }
+
+    /** A session ended: its tiles' copy loops stop and nothing is wanted any more (no events: Rust resets itself). */
+    stopAllFrames() {
+        for (const sid of [...this.frames.keys()]) this.stopFrames(sid);
+        this.wanted.clear();
+        this.owners.clear();
+    }
+
+    stopFrames(sid) {
+        const entry = this.frames.get(sid);
+        if (!entry) return;
+        entry.stopped = true;
+        entry.video.pause();
+        entry.video.srcObject = null;
+        this.frames.delete(sid);
     }
 
     // ---- devices and the mic test ---------------------------------------------------------
@@ -479,7 +699,8 @@ export class VoiceClient {
             const inputs = await lk.Room.getLocalDevices("audioinput", true);
             const outputs = await lk.Room.getLocalDevices("audiooutput", false);
             const map = (d) => ({ id: d.deviceId, name: d.label || d.deviceId });
-            const real = (d) => d.deviceId !== "default" && d.deviceId !== "communications";
+            // Without a permission the browser lists placeholders with an empty id and label: not devices.
+            const real = (d) => d.deviceId && d.deviceId !== "default" && d.deviceId !== "communications";
             // The browser lists a "default" alias; the device it points at (same group) is the default.
             const defaultOf = (list) => {
                 const alias = list.find((d) => d.deviceId === "default");
@@ -492,6 +713,11 @@ export class VoiceClient {
                 defaultInput: defaultOf(inputs),
                 defaultOutput: defaultOf(outputs),
             });
+            // After the audio lists (Rust keeps both either way), and only when there is something to say.
+            try {
+                const cams = await lk.Room.getLocalDevices("videoinput", false);
+                this.emit({ t: "cameras", cameras: cams.filter(real).map(map), defaultCamera: defaultOf(cams) });
+            } catch { /* no camera list: the picker stays default-only */ }
         } catch (error) {
             this.emit({ t: "error", message: micMessage(error) });
         }
@@ -564,6 +790,24 @@ function micMessage(error) {
     if (name === "NotFoundError" || name === "OverconstrainedError") return "No microphone was found.";
     if (name === "NotReadableError") return "The microphone is in use by another app.";
     return `Microphone problem: ${describe(error)}`;
+}
+
+function cameraMessage(error) {
+    const name = error?.name ?? "";
+    if (name === "NotAllowedError" || name === "SecurityError" || /permission|denied|not allowed/i.test(describe(error))) {
+        return "Camera access was denied. Allow it for this site in your browser's address bar, then try again.";
+    }
+    if (name === "NotFoundError" || name === "OverconstrainedError") return "No camera was found.";
+    if (name === "NotReadableError") return "The camera is in use by another app.";
+    return `Camera problem: ${describe(error)}`;
+}
+
+function screenMessage(error) {
+    const name = error?.name ?? "";
+    // The user closed the browser's picker: no message (the app switches the share back off quietly).
+    if (name === "NotAllowedError" || name === "AbortError") return "";
+    if (name === "NotSupportedError") return "This browser can't share the screen.";
+    return `Screen sharing problem: ${describe(error)}`;
 }
 
 function reasonText(lk, reason) {

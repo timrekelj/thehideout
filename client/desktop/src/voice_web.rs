@@ -1,15 +1,17 @@
 //! The browser's voice engine: [`Engine`] over `js/voice.js`, which drives the `livekit-client`
-//! SDK (the same LiveKit server and join token as the native engine). Audio only; video and
-//! screen share stay desktop-only for now.
+//! SDK (the same LiveKit server and join token as the native engine). Audio and video: tiles are
+//! fed by copying frames out of the browser's decoder (see `voice.js`, "the frame copy") into the
+//! same `VideoSink`/`VideoFrame` path the native engine uses.
 //!
 //! The JS side reports events as JSON strings; they are parsed here into [`VoiceEvent`]s and queued
 //! for the sink, which drains them from `poll` like the native engine's. Cues (join, leave, mute
 //! clicks) are synthesized by `voice_engine::synth` and played through WebAudio.
 
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use thehideout_voice_types::{ScreenSource, VoiceEvent, VoiceMode};
+use thehideout_voice_types::{ScreenSource, VideoFrame, VideoSink, VoiceEvent, VoiceMode};
 use wasm_bindgen::prelude::*;
 
 use crate::voice::Sound;
@@ -20,7 +22,7 @@ use crate::voice_engine::{Engine, EngineSink, SoundOut, WakerCell, synth};
 extern "C" {
     type VoiceClient;
     #[wasm_bindgen(constructor)]
-    fn new(emit: &Closure<dyn FnMut(String)>) -> VoiceClient;
+    fn new(emit: &Closure<dyn FnMut(String)>, on_frame: &Closure<dyn FnMut(String, u32, u32, js_sys::Uint8ClampedArray)>) -> VoiceClient;
     #[wasm_bindgen(method)]
     fn connect(this: &VoiceClient, url: &str, token: &str, muted: bool, deaf: bool) -> js_sys::Promise;
     #[wasm_bindgen(method)]
@@ -37,6 +39,16 @@ extern "C" {
     fn set_output_device(this: &VoiceClient, id: Option<String>) -> js_sys::Promise;
     #[wasm_bindgen(method, js_name = setMode)]
     fn set_mode(this: &VoiceClient, voice_activity: bool, threshold: f32);
+    #[wasm_bindgen(method, js_name = setCamera)]
+    fn set_camera(this: &VoiceClient, on: bool) -> js_sys::Promise;
+    #[wasm_bindgen(method, js_name = setCameraDevice)]
+    fn set_camera_device(this: &VoiceClient, id: Option<String>) -> js_sys::Promise;
+    #[wasm_bindgen(method, js_name = setScreenShare)]
+    fn set_screen_share(this: &VoiceClient, on: bool) -> js_sys::Promise;
+    #[wasm_bindgen(method, js_name = watchVideo)]
+    fn watch_video(this: &VoiceClient, track: &str);
+    #[wasm_bindgen(method, js_name = unwatchVideo)]
+    fn unwatch_video(this: &VoiceClient, track: &str);
     #[wasm_bindgen(method, js_name = setPtt)]
     fn set_ptt(this: &VoiceClient, held: bool);
     #[wasm_bindgen(method, js_name = setNoiseSuppression)]
@@ -69,12 +81,17 @@ fn send(events: &Sender<VoiceEvent>, waker: &WakerCell, event: VoiceEvent) {
     }
 }
 
+/// The newest frame of each watched track, written by the JS frame copy, read through a `VideoSink`.
+type Cells = Arc<Mutex<HashMap<String, Arc<Mutex<Option<VideoFrame>>>>>>;
+
 pub struct WebEngine {
     client: VoiceClient,
     tx: Sender<VoiceEvent>,
     waker: WakerCell,
-    // Held for as long as the engine: the JS client calls it.
+    frames: Cells,
+    // Held for as long as the engine: the JS client calls them.
     _emit: Closure<dyn FnMut(String)>,
+    _on_frame: Closure<dyn FnMut(String, u32, u32, js_sys::Uint8ClampedArray)>,
 }
 
 impl WebEngine {
@@ -88,8 +105,18 @@ impl WebEngine {
                 send(&events, &wake, event);
             }
         });
-        let client = VoiceClient::new(&emit);
-        (WebEngine { client, tx, waker, _emit: emit }, rx)
+        let frames: Cells = Arc::default();
+        let cells = Arc::clone(&frames);
+        let on_frame = Closure::<dyn FnMut(String, u32, u32, js_sys::Uint8ClampedArray)>::new(
+            move |track: String, width: u32, height: u32, rgba: js_sys::Uint8ClampedArray| {
+                let cell = Arc::clone(cells.lock().unwrap().entry(track).or_default());
+                let mut slot = cell.lock().unwrap();
+                let seq = slot.as_ref().map_or(1, |f| f.seq + 1);
+                *slot = Some(VideoFrame { width, height, rgba: rgba.to_vec().into(), seq });
+            },
+        );
+        let client = VoiceClient::new(&emit, &on_frame);
+        (WebEngine { client, tx, waker, frames, _emit: emit, _on_frame: on_frame }, rx)
     }
 
     /// Runs a JS promise to its end; a rejection becomes an `Error` event.
@@ -151,10 +178,26 @@ impl Engine for WebEngine {
     fn stop_mic_test(&self) {
         self.client.stop_mic_test();
     }
-    // Camera and screen share: desktop only for now (the web UI offers neither).
-    fn set_camera(&self, _on: bool) {}
-    fn set_screen_share(&self, _source: Option<ScreenSource>) {}
+    fn set_camera(&self, on: bool) {
+        self.run(self.client.set_camera(on));
+    }
+    fn set_camera_device(&self, id: Option<String>) {
+        self.run(self.client.set_camera_device(id));
+    }
+    /// The browser's own picker opens inside this call (it runs in the share button's click).
+    fn set_screen_share(&self, source: Option<ScreenSource>) {
+        self.run(self.client.set_screen_share(source.is_some()));
+    }
     fn list_screen_sources(&self) {}
+    fn video_frames(&self, track: &str) -> Option<VideoSink> {
+        let cell = Arc::clone(self.frames.lock().unwrap().entry(track.to_owned()).or_default());
+        self.client.watch_video(track);
+        Some(VideoSink::new(move || cell.lock().unwrap().clone()))
+    }
+    fn release_video(&self, track: &str) {
+        self.client.unwatch_video(track);
+        self.frames.lock().unwrap().remove(track);
+    }
 }
 
 /// Cues through WebAudio.
