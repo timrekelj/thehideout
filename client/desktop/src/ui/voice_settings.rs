@@ -37,7 +37,7 @@ pub fn page(a: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     let input = device_select(a, k, layer, VoiceMenu::Input);
     let output = device_select(a, k, layer, VoiceMenu::Output);
     // The camera is picked here on the web only (the desktop uses the system's).
-    let camera = (!crate::voice::app_screen_picker()).then(|| device_select(a, k, layer, VoiceMenu::Camera));
+    let camera = crate::voice::is_web().then(|| device_select(a, k, layer, VoiceMenu::Camera));
 
     let page = col()
         .key("page-voice")

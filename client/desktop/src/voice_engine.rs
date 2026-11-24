@@ -240,7 +240,10 @@ impl<E: Engine> EngineSink<E> {
     }
 
     fn tear_down(&mut self) {
-        self.watches.clear();
+        // Every tile's subscription goes with the room (an engine may hold a cell per track).
+        for track in std::mem::take(&mut self.watches).into_keys() {
+            self.with_engine(|e| e.release_video(&track));
+        }
         if self.active
             && let Some((engine, _)) = &self.engine
         {
@@ -368,7 +371,7 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
     }
 
     fn events(&mut self) -> Vec<VoiceEvent> {
-        let Some((_, rx)) = &self.engine else {
+        let Some((engine, rx)) = &self.engine else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -376,8 +379,11 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
             // A teardown we asked for is reported once, in order, so each such report is
             // matched with one request; anything else is the engine giving up.
             if let VoiceEvent::VideoTrackEnded { track_id, .. } = &ev {
-                // A track that is gone has nothing to watch.
-                self.watches.remove(track_id);
+                // A track that is gone has nothing to watch: the engine drops what it kept for it
+                // (the later `UnwatchVideo` finds no watch, so this is the one place to do it).
+                if self.watches.remove(track_id).is_some() {
+                    engine.release_video(track_id);
+                }
             }
             if matches!(ev, VoiceEvent::Disconnected { .. }) {
                 if self.expected > 0 {

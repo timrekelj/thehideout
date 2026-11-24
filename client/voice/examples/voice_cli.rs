@@ -29,21 +29,23 @@ fn main() {
         engine.set_mode(VoiceMode::PushToTalk);
     }
     engine.list_devices();
+    let synthetic = flags.iter().any(|f| f == "--synthetic");
     engine.connect(url, token, ConnectOptions {
-            start_muted: flags.iter().any(|f| f == "--muted"),
-            // A generated tone instead of the microphone (no hardware or permission needed).
-            audio_input: if flags.iter().any(|f| f == "--synthetic") {
-                thehideout_voice::AudioInput::Synthetic(Default::default())
-            } else {
-                Default::default()
-            },
-            video_input: if flags.iter().any(|f| f == "--synthetic") {
-                thehideout_voice::VideoInput::Synthetic(Default::default())
-            } else {
-                Default::default()
-            },
-            ..Default::default()
-        });
+        start_muted: flags.iter().any(|f| f == "--muted"),
+        // A generated tone and picture instead of the microphone and camera (no hardware or
+        // permission needed).
+        audio_input: if synthetic {
+            thehideout_voice::AudioInput::Synthetic(Default::default())
+        } else {
+            Default::default()
+        },
+        video_input: if synthetic {
+            thehideout_voice::VideoInput::Synthetic(Default::default())
+        } else {
+            Default::default()
+        },
+        ..Default::default()
+    });
     let auto_camera = flags.iter().any(|f| f == "--camera");
 
     let (line_tx, lines) = mpsc::channel();

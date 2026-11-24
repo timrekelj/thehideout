@@ -387,6 +387,9 @@ impl Default for VoicePrefs {
 pub struct VoiceDevices {
     pub inputs: Vec<(String, String)>,
     pub outputs: Vec<(String, String)>,
+    /// The engine has answered with the audio lists (the camera list comes in its own report, so
+    /// it can arrive first and leave these empty: that must not read as "no devices").
+    pub audio_listed: bool,
     /// The cameras the browser lists (web only).
     pub cameras: Vec<(String, String)>,
     /// The names of the system defaults, for "System default (name)".
@@ -532,10 +535,15 @@ pub const fn video_available() -> bool {
     true
 }
 
+/// Whether this is the browser build.
+pub const fn is_web() -> bool {
+    cfg!(target_arch = "wasm32")
+}
+
 /// Whether sharing asks which screen or window in the app's own picker (the desktop); the browser
 /// has its own, opened by the share request itself.
 pub const fn app_screen_picker() -> bool {
-    !cfg!(target_arch = "wasm32")
+    !is_web()
 }
 
 impl AppState {
@@ -1107,6 +1115,12 @@ impl AppState {
                 self.toast(ToastKind::Danger, sentence(&message));
                 true
             }
+            // An empty message: nothing to say (the user closed the browser's share picker), but
+            // what was being started is off again.
+            VoiceEvent::Error(message) if message.is_empty() && self.voice.session != VoiceSession::None => {
+                self.revert_unpublished_video();
+                true
+            }
             VoiceEvent::Error(message) if self.voice.session != VoiceSession::None => {
                 // A camera or share that never started (no camera support, permission refused,
                 // the window is gone) is switched back off, so its button tells the truth.
@@ -1288,7 +1302,7 @@ impl AppState {
     pub fn effective_input(&self) -> Option<String> {
         let id = self.voice.prefs.input.as_ref()?;
         match &self.voice.devices {
-            Some(d) if !d.has_input(id) => None,
+            Some(d) if d.audio_listed && !d.has_input(id) => None,
             _ => Some(id.clone()),
         }
     }
@@ -1296,7 +1310,7 @@ impl AppState {
     pub fn effective_output(&self) -> Option<String> {
         let id = self.voice.prefs.output.as_ref()?;
         match &self.voice.devices {
-            Some(d) if !d.has_output(id) => None,
+            Some(d) if d.audio_listed && !d.has_output(id) => None,
             _ => Some(id.clone()),
         }
     }
@@ -1312,7 +1326,8 @@ impl AppState {
     }
 
     fn cameras_listed(&mut self, cameras: Vec<AudioDevice>, default: Option<String>) {
-        let cameras = pairs(cameras);
+        // A browser without permission lists placeholders with no id: not cameras.
+        let cameras: Vec<(String, String)> = pairs(cameras).into_iter().filter(|(id, _)| !id.is_empty()).collect();
         let default_camera = default.and_then(|id| cameras.iter().find(|(i, _)| *i == id).map(|(_, n)| n.clone()));
         let saved = self.voice.prefs.camera.clone().and_then(|id| cameras.iter().find(|(i, _)| *i == id).map(|(_, n)| n.clone()));
         let devices = self.voice.devices.get_or_insert_with(VoiceDevices::default);
@@ -1327,6 +1342,8 @@ impl AppState {
 
     /// Chooses the camera (`None`: the browser's default).
     pub fn voice_set_camera(&mut self, id: Option<String>) {
+        // An empty id is no camera (never saved: it would select nothing).
+        let id = id.filter(|i| !i.is_empty());
         let name = id.as_ref().and_then(|i| {
             let d = self.voice.devices.as_ref()?;
             d.cameras.iter().find(|(x, _)| x == i).map(|(_, n)| n.clone())
@@ -1370,6 +1387,7 @@ impl AppState {
             default_output: name_of(&outputs, default_output),
             inputs,
             outputs,
+            audio_listed: true,
             // The cameras come in their own report.
             ..self.voice.devices.clone().unwrap_or_default()
         };
@@ -1689,18 +1707,24 @@ impl AppState {
 
     /// The share button: stops our share, or opens the picker to start one.
     pub fn toggle_screen_share(&mut self) {
+        self.toggle_screen_share_with(app_screen_picker());
+    }
+
+    /// [`toggle_screen_share`](Self::toggle_screen_share) for a build with or without the app's own picker.
+    pub fn toggle_screen_share_with(&mut self, app_picker: bool) {
         if !self.voice_connected() {
             return;
         }
         if self.voice.sharing.is_some() {
             self.stop_screen_share();
-        } else if app_screen_picker() {
+        } else if app_picker {
             self.open_screen_picker();
         } else {
-            // The browser asks what to share when the engine starts it, from this click.
+            // The browser asks what to share (a screen, window or tab) when the engine starts it,
+            // from this click. This placeholder is never shown: only the picker lists sources.
             self.start_screen_share(ScreenSource {
                 id: 0,
-                title: "Your screen".into(),
+                title: "Chosen in the browser".into(),
                 kind: thehideout_voice_types::ScreenKind::Screen,
             });
         }

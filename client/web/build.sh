@@ -3,7 +3,7 @@
 # serves it at /app/): index.html, boot.js, app.js, app_bg.wasm, the Inter fonts and wasm-bindgen's
 # snippets. No inline scripts, so a strict CSP (script-src 'self' 'wasm-unsafe-eval') is enough.
 #
-#   client/web/build.sh [--dev] [--locked] [--out DIR]
+#   client/web/build.sh [--dev] [--locked] [--test-hooks] [--out DIR]
 #   client/web/build.sh [--dev] [--locked] --cook RECIPE   (Docker: build only the dependencies of a
 #                                                           `cargo chef prepare` recipe, same flags)
 #
@@ -18,14 +18,16 @@ cd "$(dirname "$0")/.."
 out=web/dist
 profile=release
 locked=()
+test_hooks=false
 cook=
 while (($#)); do
     case "$1" in
         --dev) profile=debug; shift ;;
         --locked) locked=(--locked); shift ;;
+        --test-hooks) test_hooks=true; shift ;;
         --cook) cook=${2:?--cook needs a recipe}; shift 2 ;;
         --out) out=${2:?--out needs a directory}; shift 2 ;;
-        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -64,6 +66,19 @@ bindgen=(--target web --out-dir "$out" --out-name app)
 [[ $profile == release ]] && bindgen+=(--remove-name-section)
 wasm-bindgen "${bindgen[@]}" "$artifact"
 rm -f "$out"/*.d.ts
+# desktop/js/voice.js carries test-only logging (event and command lines the browser tests read),
+# marked `// @hook` (one line) or between `// @hook-start` and `// @hook-end`. The shipped bundle
+# has none of it; `--test-hooks` keeps it.
+if ! $test_hooks; then
+    python3 - "$out"/snippets/*/js/voice.js <<'PY'
+import re, sys
+for path in sys.argv[1:]:
+    src = open(path).read()
+    src = re.sub(r"^[ \t]*// @hook-start.*?// @hook-end[^\n]*\n", "", src, flags=re.M | re.S)
+    src = re.sub(r"^[^\n]*// @hook[ \t]*\n", "", src, flags=re.M)
+    open(path, "w").write(src)
+PY
+fi
 
 if [[ $profile == release ]] && command -v wasm-opt >/dev/null; then
     wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-reference-types \

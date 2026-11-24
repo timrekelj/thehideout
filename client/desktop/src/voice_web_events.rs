@@ -13,6 +13,8 @@ pub fn parse(json: &str) -> Option<VoiceEvent> {
             .map(|a| {
                 a.iter()
                     .filter_map(|d| Some(AudioDevice { id: d.get("id")?.as_str()?.to_owned(), name: d.get("name")?.as_str()?.to_owned() }))
+                    // A browser without permission lists placeholders with no id: not devices.
+                    .filter(|d| !d.id.is_empty())
                     .collect()
             })
             .unwrap_or_default()
@@ -92,6 +94,15 @@ mod tests {
             parse(r#"{"t":"cameras","cameras":[{"id":"c1","name":"Cam"}],"defaultCamera":"c1"}"#),
             Some(VoiceEvent::Cameras { cameras: vec![AudioDevice { id: id("c1"), name: id("Cam") }], default: Some(id("c1")) })
         );
+    }
+
+    #[test]
+    fn placeholder_devices_without_an_id_are_dropped() {
+        assert_eq!(
+            parse(r#"{"t":"cameras","cameras":[{"id":"","name":""},{"id":"c1","name":"Cam"}],"defaultCamera":null}"#),
+            Some(VoiceEvent::Cameras { cameras: vec![AudioDevice { id: id("c1"), name: id("Cam") }], default: None })
+        );
+        assert_eq!(parse(r#"{"t":"error","message":""}"#), Some(VoiceEvent::Error(String::new())));
     }
 
     #[test]
