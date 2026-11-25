@@ -22,8 +22,13 @@ public final class AppStore {
     @ObservationIgnored private let tokens: any TokenStore
     @ObservationIgnored private let cache: Cache?
     @ObservationIgnored private let gateway: GatewayStream
+    @ObservationIgnored private let gatewayConfig: GatewayConfig
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
+    /// Whether a gateway task was started and not stopped since; guards against a second `start`.
+    @ObservationIgnored private var gatewayRunning = false
+    /// The pending debounced stop from `setActive(false)`; cancelled by a `setActive(true)` within the grace.
+    @ObservationIgnored private var deactivateTask: Task<Void, Never>?
 
     public init(api: any ApiClient, auth: (any AuthApi)? = nil, tokens: any TokenStore, cache: Cache? = nil,
                 gatewayConfig: GatewayConfig = GatewayConfig(), now: @escaping @Sendable () -> Date = { Date() }) {
@@ -31,6 +36,7 @@ public final class AppStore {
         self.auth = auth
         self.tokens = tokens
         self.cache = cache
+        self.gatewayConfig = gatewayConfig
         self.gateway = GatewayStream(source: api, config: gatewayConfig)
         self.now = now
     }
@@ -61,7 +67,7 @@ public final class AppStore {
             if let version = me.termsUpdateRequired { state.phase = .termsRequired(version: version); return }
             let snapshot = try await api.snapshot()
             state.applySnapshot(snapshot)
-            if active { startGateway() }
+            if active { await startGateway() }
             drain()
             if let cache { Task { await cache.saveSnapshot(snapshot) } }
         } catch {
@@ -72,7 +78,7 @@ public final class AppStore {
             case .suspended(let reason, let until): state.phase = .suspended(reason: reason, until: until)
             default:
                 // Offline with a cache: keep showing it. Without one: the loading screen offers a retry.
-                if state.me != nil { state.phase = .signedIn; if active { startGateway() } } else { bootstrapError = e }
+                if state.me != nil { state.phase = .signedIn; if active { await startGateway() } } else { bootstrapError = e }
             }
         }
     }
@@ -106,6 +112,8 @@ public final class AppStore {
     public func signOut() {
         tokens.clear()
         let cache = self.cache, gateway = self.gateway
+        deactivateTask?.cancel(); deactivateTask = nil
+        gatewayRunning = false
         Task { await cache?.clear() }
         Task { await gateway.stop() }
         for t in tasks.values { t.cancel() }
@@ -117,27 +125,47 @@ public final class AppStore {
 
     // MARK: lifecycle
 
-    /// The app became active (`scenePhase`): the stream runs only then. On foreground it reconnects and refetches.
+    /// The app became active (`scenePhase`): the stream runs only then. On foreground it reconnects and refetches;
+    /// going inactive debounces for `gatewayConfig.inactiveGrace`, so a notification-centre pull or an app-switcher
+    /// glance (a brief `.active` -> `.inactive` -> `.active` blip) rides out rather than tearing the stream down.
     public func setActive(_ active: Bool) {
         guard self.active != active else { return }
         self.active = active
+        deactivateTask?.cancel(); deactivateTask = nil
         if active {
-            if state.phase == .signedIn {
-                // Whatever happened while away was not delivered: refetch on the way back.
-                if state.connection != .connecting { state.stream = .interrupted }
-                startGateway()
-            }
+            Task { await self.activate() }
         } else {
-            let gateway = self.gateway
-            Task { await gateway.stop() }
-            state.connection = .connecting
+            let grace = gatewayConfig.inactiveGrace
+            deactivateTask = Task { [weak self] in
+                if grace > 0 { try? await Task.sleep(for: .seconds(grace)) }
+                guard let self, !Task.isCancelled else { return }
+                await self.deactivate()
+            }
         }
     }
 
-    private func startGateway() {
+    private func activate() async {
+        guard state.phase == .signedIn else { return }
+        // A blip the gateway rode out (the debounced stop never ran): it's still live, nothing was missed.
+        if !gatewayRunning, state.connection != .connecting { state.stream = .interrupted }
+        await startGateway()
+    }
+
+    private func deactivate() async {
+        gatewayRunning = false
+        await gateway.stop()
+        state.connection = .connecting
+    }
+
+    private func startGateway() async {
+        // The scene can activate while the session is still loading (`onChange` fires before `loadSession`
+        // finishes), and a debounced reactivation calls this again on an already-live stream: one subscription
+        // per activation, so a redundant `start` never cancels the live stream right after its handshake.
+        guard !gatewayRunning else { return }
+        gatewayRunning = true
         let gateway = self.gateway
         let me = WeakStore(self)
-        Task { await gateway.start { update in await me.store?.receive(update) } }
+        await gateway.start { update in await me.store?.receive(update) }
     }
 
     func receive(_ update: GatewayUpdate) {

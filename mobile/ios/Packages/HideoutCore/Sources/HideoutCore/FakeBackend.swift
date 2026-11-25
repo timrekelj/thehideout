@@ -21,6 +21,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
     public let accounts = FakeAccounts()
     private var world: World
     private var subscribers: [UUID: AsyncThrowingStream<GatewayEvent, Error>.Continuation] = [:]
+    private var subscribeCount = 0
 
     /// Seconds each call waits before it answers.
     public var latency: TimeInterval {
@@ -71,6 +72,10 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
     }
 
     public var openStreams: Int { lock.withLock { subscribers.count } }
+
+    /// How many times `subscribe()` has opened a stream, ever (a recording fake: tests check this against
+    /// `openStreams` to tell "reconnected" from "started a redundant second stream").
+    public var totalSubscribes: Int { lock.withLock { subscribeCount } }
 
     func delay() async throws {
         let l = latency
@@ -218,6 +223,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
             let id = UUID()
             let snapshot = lock.withLock { () -> GatewayEvent in
                 subscribers[id] = continuation
+                subscribeCount += 1
                 return .voiceSnapshot(guilds: world.guilds.map(\.id), states: world.voiceStates)
             }
             // Headers + first events, as the server opens a stream.
