@@ -17,6 +17,8 @@ data class ShellActions(
     val editMessage: (Long, Long, String) -> Unit = { _, _, _ -> },
     val deleteMessage: (Long, Long) -> Unit = { _, _ -> },
     val setDraft: (Long, String) -> Unit = { _, _ -> },
+    /** An embed card's header was tapped: its fold flips (ATT-07). */
+    val toggleEmbedCollapsed: (Long, Int) -> Unit = { _, _ -> },
     /** The composer's "+": files just picked, camera-captured, pasted or shared in (ATT-09). */
     val attachFiles: (Long, List<PickedFile>) -> Unit = { _, _ -> },
     val removeAttachment: (Long) -> Unit = {},
@@ -45,6 +47,7 @@ data class ShellActions(
             editMessage = store::editMessage,
             deleteMessage = store::deleteMessage,
             setDraft = store::setDraft,
+            toggleEmbedCollapsed = store::toggleEmbedCollapsed,
             attachFiles = store::attachFiles,
             removeAttachment = store::removeAttachment,
             retryAttachment = store::retryAttachment,

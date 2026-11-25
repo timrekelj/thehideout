@@ -1,6 +1,7 @@
 package app.thehideout.core
 
 import app.thehideout.core.api.AppError
+import app.thehideout.core.embed.EmbedRef
 import app.thehideout.core.api.GuildMembers
 import app.thehideout.core.api.GuildRoles
 import app.thehideout.core.api.MessagePage
@@ -34,15 +35,15 @@ class ReducerTest {
         assertEquals(setOf(TIM, ANA, BRUNO), s0.users.keys - CVETKA)
     }
 
-    @Test fun `opening a guild fetches its first page, its members and roles once`() {
+    @Test fun `opening a guild fetches its first page, its members, roles and emojis once`() {
         val r = Reducer.reduce(AppState(), Action.InitialLoaded(kotlinx.coroutines.runBlocking { app.thehideout.core.fake.FakeBackend().loadInitial() }))
         assertEquals(
-            listOf(Effect.LoadMembers(HIDEOUT), Effect.LoadAccess(HIDEOUT), Effect.LoadMessages(GENERAL, null)),
+            listOf(Effect.LoadMembers(HIDEOUT), Effect.LoadAccess(HIDEOUT), Effect.LoadEmojis(HIDEOUT), Effect.LoadMessages(GENERAL, null)),
             r.effects,
         )
         val again = Reducer.reduce(r.state, Action.OpenGuild(GARAGE)).state
         val back = Reducer.reduce(again, Action.OpenGuild(HIDEOUT))
-        assertEquals(emptyList<Effect>(), back.effects, "already asked for members, roles and the first page")
+        assertEquals(emptyList<Effect>(), back.effects, "already asked for members, roles, emojis and the first page")
     }
 
     @Test fun `sidebar order follows the layout and voice channels are not opened`() {
@@ -678,6 +679,21 @@ class ReducerTest {
         assertEquals(4L, roles.roleVersions[HIDEOUT])
         val failed = s0.reduce(Action.MembersLoaded(GARAGE, Result.failure(AppError.Unavailable("x"))))
         assertFalse(GARAGE in failed.membersAsked)
+    }
+
+    @Test fun `emoji replies fill the list, a failure allows asking again`() {
+        val s = s0.reduce(Action.EmojisLoaded(HIDEOUT, Result.success(listOf(Emoji(1, HIDEOUT, "wave", false, "k", TIM, T0)))))
+        assertEquals(listOf("wave"), s.emojis[HIDEOUT]?.map { it.name })
+        val failed = s0.copy(emojisAsked = setOf(GARAGE)).reduce(Action.EmojisLoaded(GARAGE, Result.failure(AppError.Unavailable("x"))))
+        assertFalse(GARAGE in failed.emojisAsked)
+    }
+
+    @Test fun `an embed's fold flips and is remembered per message and index`() {
+        val s = s0.reduce(Action.ToggleEmbedCollapsed(1, 0))
+        assertTrue(EmbedRef(1, 0) in s.collapsedEmbeds)
+        assertFalse(EmbedRef(1, 1) in s.collapsedEmbeds)
+        val reopened = s.reduce(Action.ToggleEmbedCollapsed(1, 0))
+        assertFalse(EmbedRef(1, 0) in reopened.collapsedEmbeds)
     }
 
     @Test fun `notices queue three and dismiss by id`() {

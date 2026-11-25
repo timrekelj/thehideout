@@ -13,16 +13,17 @@ class FakeBackendAttachmentsTest {
     fun `design has the eight seeded attachment messages`() = runBlocking {
         val fake = FakeBackend()
         val page = fake.listMessages(FakeBackend.DESIGN, before = null, limit = 50)
-        assertEquals(8, page.items.size)
+        val withAttachments = page.items.filter { it.attachments.isNotEmpty() }
+        assertEquals(8, withAttachments.size)
         // Newest first: the removed message was seeded last, the single dashboard image first.
-        assertEquals(listOf(1, 1, 1, 1, 4, 3, 2, 1), page.items.map { it.attachments.size })
+        assertEquals(listOf(1, 1, 1, 1, 4, 3, 2, 1), withAttachments.map { it.attachments.size })
     }
 
     @Test
     fun `the removed attachment has no file and is marked removed`() = runBlocking {
         val fake = FakeBackend()
         val page = fake.listMessages(FakeBackend.DESIGN, before = null, limit = 50)
-        val removed = page.items.first().attachments.single()
+        val removed = page.items.first { it.attachments.isNotEmpty() }.attachments.single()
         assertTrue(removed.removed)
         assertTrue(removed.file.isEmpty())
         assertEquals("invoice.xlsx", removed.filename)

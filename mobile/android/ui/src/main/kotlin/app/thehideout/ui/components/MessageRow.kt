@@ -21,13 +21,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocal
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.thehideout.core.model.Embed
+import app.thehideout.core.embed.EmbedRef
+import app.thehideout.core.model.Emoji
 import app.thehideout.core.model.Message
 import app.thehideout.core.model.Reaction
 import app.thehideout.core.model.ReactionEmoji
@@ -82,9 +84,13 @@ fun MessageRow(
     onReact: (Reaction) -> Unit = {},
     onRetry: () -> Unit = {},
     onOpenLightbox: (LightboxRequest) -> Unit = {},
+    serverEmojis: List<Emoji> = emptyList(),
+    collapsedEmbeds: Set<EmbedRef> = emptySet(),
+    onToggleEmbedCollapsed: (Int) -> Unit = {},
 ) {
     val c = Hideout.colors
     val m = ui.message
+    val customEmojis = remember(serverEmojis) { serverEmojis.associateBy { it.id } }
     val mentionsMe = ui.me != null && app.thehideout.core.store.mentions(m.content, ui.me)
     val failed = ui.delivery == Delivery.Failed
     val metrics = Hideout.metrics
@@ -109,15 +115,22 @@ fun MessageRow(
                 }
             }
             Box(Modifier.alpha(if (ui.delivery == Delivery.Pending) 0.6f else 1f)) {
-                MarkdownText(m.content, me = ui.me)
+                MarkdownText(m.content, me = ui.me, customEmojis = customEmojis)
             }
             if (m.editedAt != null) Text("edited", style = MaterialTheme.typography.bodySmall, color = c.textFaint)
             if (ui.pending.isNotEmpty()) PendingAttachmentPreviews(ui.pending)
             if (m.attachments.isNotEmpty()) MessageAttachments(m.attachments, onOpenLightbox = onOpenLightbox)
-            m.embeds.forEach { EmbedCard(it) }
+            m.embeds.forEachIndexed { index, embed ->
+                EmbedCard(
+                    embed,
+                    collapsed = EmbedRef(m.id, index) in collapsedEmbeds,
+                    onToggleCollapsed = { onToggleEmbedCollapsed(index) },
+                    onOpenLightbox = onOpenLightbox,
+                )
+            }
             if (m.reactions.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
-                    m.reactions.forEach { ReactionChip(it, onClick = { onReact(it) }) }
+                    m.reactions.forEach { ReactionChip(it, customEmojis = customEmojis, onClick = { onReact(it) }) }
                 }
             }
             if (ui.delivery == Delivery.Pending) Text("Sending…", style = MaterialTheme.typography.bodySmall, color = c.textFaint)
@@ -133,12 +146,9 @@ fun MessageRow(
 
 /** An emoji and its count; yours is outlined in the accent. */
 @Composable
-fun ReactionChip(r: Reaction, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
+fun ReactionChip(r: Reaction, modifier: Modifier = Modifier, customEmojis: Map<Long, Emoji> = emptyMap(), onClick: () -> Unit = {}) {
     val c = Hideout.colors
-    val label = when (val e = r.emoji) {
-        is ReactionEmoji.Unicode -> e.emoji
-        is ReactionEmoji.Custom -> ":${e.id}:"
-    }
+    val mediaBase = LocalMediaBase.current
     Surface(
         onClick = onClick,
         modifier = modifier,
@@ -147,25 +157,14 @@ fun ReactionChip(r: Reaction, modifier: Modifier = Modifier, onClick: () -> Unit
         border = BorderStroke(1.dp, if (r.me) c.accent else c.borderSubtle),
     ) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
+            when (val e = r.emoji) {
+                is ReactionEmoji.Unicode -> Text(e.emoji, style = MaterialTheme.typography.bodyLarge)
+                is ReactionEmoji.Custom -> {
+                    val emoji = customEmojis[e.id]
+                    if (emoji != null) InlineCustomEmoji(emoji, mediaBase, 20.dp) else Text(":${e.id}:", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
             Text(r.count.toString(), style = MaterialTheme.typography.labelMedium, color = if (r.me) c.accentText else c.textMuted, fontWeight = FontWeight(600))
-        }
-    }
-}
-
-/** A link preview: the site, the title, a few lines of description, an accent bar on the left. */
-@Composable
-fun EmbedCard(e: Embed, modifier: Modifier = Modifier) {
-    val c = Hideout.colors
-    Row(
-        modifier.padding(top = 4.dp).fillMaxWidth().height(IntrinsicSize.Min)
-            .background(c.surface, RoundedCornerShape(Radius.md)),
-    ) {
-        Box(Modifier.width(4.dp).fillMaxHeight().background(c.accent, RoundedCornerShape(topStart = Radius.md, bottomStart = Radius.md)))
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (e.siteName.isNotEmpty()) Text(e.siteName, style = MaterialTheme.typography.labelMedium, color = c.textMuted)
-            if (e.title.isNotEmpty()) Text(e.title, style = MaterialTheme.typography.titleSmall, color = c.accentText, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (e.description.isNotEmpty()) Text(e.description, style = MaterialTheme.typography.bodyMedium, color = c.textMuted, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
     }
 }

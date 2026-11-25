@@ -150,6 +150,7 @@ fun TranscriptPane(
     val log = state.log(channelId)
     val today = LocalToday.current ?: LocalDate.now(zone)
     val listState = rememberLazyListState()
+    val collapsedEmbeds = remember(state.collapsedEmbeds) { state.collapsedEmbeds.toSet() }
     val sink = remember { FocusRequester() }
     LaunchedEffect(channelId) { sink.requestFocus() }
 
@@ -233,6 +234,9 @@ fun TranscriptPane(
                                 onReact = { r -> actions.react(channelId, item.ui.message.id, r.emoji) },
                                 onRetry = { item.ui.message.nonce.takeIf { it.isNotEmpty() }?.let(actions.retry) },
                                 onOpenLightbox = { lightboxRequest = it },
+                                serverEmojis = serverEmojis,
+                                collapsedEmbeds = collapsedEmbeds,
+                                onToggleEmbedCollapsed = { index -> actions.toggleEmbedCollapsed(item.ui.message.id, index) },
                             )
                             is TranscriptItem.Day -> DayDivider(item.date, today)
                             TranscriptItem.New -> NewDivider()
