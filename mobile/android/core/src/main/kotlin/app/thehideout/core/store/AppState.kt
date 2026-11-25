@@ -1,6 +1,7 @@
 package app.thehideout.core.store
 
 import app.thehideout.core.api.AppError
+import app.thehideout.core.attachment.DEFAULT_MAX_UPLOAD_BYTES
 import app.thehideout.core.model.*
 import java.time.Instant
 
@@ -89,6 +90,8 @@ data class Outgoing(
     val at: Instant,
     val state: Delivery = Delivery.Pending,
     val attachmentIds: List<Long> = emptyList(),
+    /** Local previews of [attachmentIds], shown until the server's message replaces this pending one. */
+    val attachments: List<PendingPreview> = emptyList(),
 )
 
 enum class NoticeKind { Info, Success, Danger }
@@ -115,6 +118,10 @@ data class AppState(
     val memberRoles: Map<Long, Map<Long, List<Long>>> = emptyMap(),
     val accessAsked: Set<Long> = emptySet(),
     val emojis: Map<Long, List<Emoji>> = emptyMap(),
+    /** Guilds whose emojis were asked for, so one question is ever in flight. */
+    val emojisAsked: Set<Long> = emptySet(),
+    /** Folded embeds (ATT-07), oldest first, capped like desktop's `collapsed_embeds`. */
+    val collapsedEmbeds: List<app.thehideout.core.embed.EmbedRef> = emptyList(),
     /** The account's notification settings, once known (a change on another session arrives as an event). */
     val notificationSettings: NotificationSettings? = null,
     val logs: Map<Long, ChannelLog> = emptyMap(),
@@ -132,10 +139,18 @@ data class AppState(
     val notices: List<Notice> = emptyList(),
     /** The composer's unsent text per channel, kept while switching channels. */
     val drafts: Map<Long, String> = emptyMap(),
+    /** The composer's attached-but-unsent files per channel (ATT-09). */
+    val attachDrafts: Map<Long, AttachDraft> = emptyMap(),
+    /** The server's per-upload byte cap, assumed until the server says otherwise (none of our RPCs report it yet). */
+    val maxUploadBytes: Long = DEFAULT_MAX_UPLOAD_BYTES,
     val noticeSeq: Long = 0,
     val nonceSeq: Long = 0,
+    val uploadSeq: Long = 0,
     /** Guilds we are leaving or deleting ourselves, so their `guild_removed` is not announced as news. */
     val exiting: Set<Long> = emptySet(),
+    /** Whether the shell's tab that can show [currentChannel]'s transcript (Servers for a guild,
+     * DMs for home) is the foreground destination. */
+    val channelForeground: Boolean = true,
 ) {
     val myId: Long get() = me?.id ?: 0L
 
@@ -201,6 +216,8 @@ data class AppState(
     fun knownUsers(): List<User> = users.values.filter { it.id != myId }.sortedBy { it.username.lowercase() }
 
     fun draft(channel: Long): String = drafts[channel].orEmpty()
+
+    fun attachDraft(channel: Long): AttachDraft = attachDrafts[channel] ?: AttachDraft()
 
     /** Loaded messages that mention the signed-in user, newest first, across every channel whose history is in memory. */
     fun mentionFeed(): List<MentionEntry> {

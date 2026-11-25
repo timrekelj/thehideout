@@ -1,7 +1,12 @@
 **/target/
 .git/
 .github/
-client/
+# The server image builds the web client from client/ (see the Dockerfile): everything of it but
+# the other apps' build output and snapshots.
+client/target/
+client/web/dist*/
+client/web/.cache/
+client/**/snapshots/
 **/snapshots/
 .env
 .env.*

@@ -32,6 +32,8 @@ import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButton
@@ -43,6 +45,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,9 +72,12 @@ import app.thehideout.core.model.Message
 import app.thehideout.core.model.ReactionEmoji
 import app.thehideout.core.model.User
 import app.thehideout.core.store.AppState
+import app.thehideout.core.store.AttachDraft
 import app.thehideout.core.store.ConnectionStatus
 import app.thehideout.core.store.Delivery
 import app.thehideout.core.store.Marker
+import app.thehideout.core.store.PickedFile
+import app.thehideout.design.Radius
 import app.thehideout.ui.components.*
 import app.thehideout.ui.components.LocalToday
 import app.thehideout.ui.icons.Sym
@@ -113,7 +122,7 @@ internal fun transcriptItems(state: AppState, channel: Long, zone: ZoneId): List
     for (o in state.outgoing.filter { it.channelId == channel }) {
         val head = prev?.authorId != state.myId
         val message = Message(0, channel, null, state.myId, o.content, o.at, nonce = o.nonce)
-        out += TranscriptItem.Row(MessageUi(message, state.me, head, me, o.state))
+        out += TranscriptItem.Row(MessageUi(message, state.me, head, me, o.state, pending = o.attachments))
         prev = message
     }
     return out
@@ -136,18 +145,20 @@ fun TranscriptPane(
     onOpenMembers: (() -> Unit)? = null,
 ) {
     val c = Hideout.colors
-    val zone = app.thehideout.ui.components.LocalTimeZone.current
+    val zone = LocalTimeZone.current
     val items = remember(state.logs[channelId], state.outgoing, state.marker, state.users, zone) { transcriptItems(state, channelId, zone) }
     val log = state.log(channelId)
     val today = LocalToday.current ?: LocalDate.now(zone)
     val listState = rememberLazyListState()
-    val sink = remember { androidx.compose.ui.focus.FocusRequester() }
+    val collapsedEmbeds = remember(state.collapsedEmbeds) { state.collapsedEmbeds.toSet() }
+    val sink = remember { FocusRequester() }
     LaunchedEffect(channelId) { sink.requestFocus() }
 
     var actionMessage by remember { mutableStateOf<Message?>(null) }
+    var lightboxRequest by remember { mutableStateOf<LightboxRequest?>(null) }
     var editing by remember(channelId) { mutableStateOf<Message?>(null) }
     val text = rememberSaveable(channelId, saver = TextFieldState.Saver) { TextFieldState(state.draft(channelId)) }
-    val composerFocus = remember(channelId) { androidx.compose.ui.focus.FocusRequester() }
+    val composerFocus = remember(channelId) { FocusRequester() }
     LaunchedEffect(channelId) { snapshotFlow { text.text.toString() }.collect { if (editing == null) actions.setDraft(channelId, it) } }
 
     Scaffold(
@@ -181,6 +192,10 @@ fun TranscriptPane(
                 serverEmojis = serverEmojis,
                 editing = editing,
                 focusRequester = composerFocus,
+                attachDraft = state.attachDraft(channelId),
+                onAttachFiles = { files -> actions.attachFiles(channelId, files) },
+                onRemoveAttachment = actions.removeAttachment,
+                onRetryAttachment = actions.retryAttachment,
                 onCancelEdit = { editing = null; text.setTextAndPlaceCursorAtEnd(state.draft(channelId)) },
                 onSend = { body ->
                     val e = editing
@@ -218,6 +233,10 @@ fun TranscriptPane(
                                 },
                                 onReact = { r -> actions.react(channelId, item.ui.message.id, r.emoji) },
                                 onRetry = { item.ui.message.nonce.takeIf { it.isNotEmpty() }?.let(actions.retry) },
+                                onOpenLightbox = { lightboxRequest = it },
+                                serverEmojis = serverEmojis,
+                                collapsedEmbeds = collapsedEmbeds,
+                                onToggleEmbedCollapsed = { index -> actions.toggleEmbedCollapsed(item.ui.message.id, index) },
                             )
                             is TranscriptItem.Day -> DayDivider(item.date, today)
                             TranscriptItem.New -> NewDivider()
@@ -250,6 +269,10 @@ fun TranscriptPane(
             serverEmojis = serverEmojis,
         )
     }
+
+    lightboxRequest?.let { req ->
+        AttachmentLightbox(req, onDismiss = { lightboxRequest = null })
+    }
 }
 
 /** The connection pill: hidden while live, shown while connecting or reconnecting (TRANS-09). */
@@ -276,8 +299,9 @@ private fun LoadOlderWhenReached(state: LazyListState, count: Int, hasMore: Bool
 
 /**
  * The message field: multi-line, `@mention`/`:emoji` autocomplete above it (MSG-10, simplified to
- * assume the caret sits at the end of the text while typing), an emoji button opening the picker,
- * and an inline edit mode (own message) with Cancel/Save instead of Send.
+ * assume the caret sits at the end of the text while typing), a "+" button opening the attach menu
+ * (ATT-09) with the upload tray above the field, an emoji button opening the picker, and an inline
+ * edit mode (own message) with Cancel/Save instead of Send.
  */
 @Composable
 private fun Composer(
@@ -286,16 +310,27 @@ private fun Composer(
     members: List<User>,
     serverEmojis: List<Emoji>,
     editing: Message?,
-    focusRequester: androidx.compose.ui.focus.FocusRequester,
+    focusRequester: FocusRequester,
+    attachDraft: AttachDraft,
+    onAttachFiles: (List<PickedFile>) -> Unit,
+    onRemoveAttachment: (Long) -> Unit,
+    onRetryAttachment: (Long) -> Unit,
     onCancelEdit: () -> Unit,
     onSend: (String) -> Unit,
 ) {
     val c = Hideout.colors
     var showEmojiPicker by remember { mutableStateOf(false) }
+    var showAttachMenu by remember { mutableStateOf(false) }
+    val pickers = rememberAttachPickers(onAttachFiles)
     val current = text.text.toString()
     val trigger = remember(current) { Autocomplete.trigger(current, current.length) }
+    // Send needs text or a finished upload; while anything is still going up, Send waits (the reducer blocks it too).
+    val canSend = if (editing != null) text.text.isNotBlank() else !attachDraft.uploading && (text.text.isNotBlank() || attachDraft.readyCount > 0)
 
     Column {
+        if (editing == null) {
+            AttachTray(attachDraft, onRemove = onRemoveAttachment, onRetry = onRetryAttachment)
+        }
         when (trigger) {
             is Trigger.Mention -> {
                 val matches = Autocomplete.mentionMatches(trigger.query, members)
@@ -331,19 +366,46 @@ private fun Composer(
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (editing == null) {
+                Box {
+                    IconButton(onClick = { showAttachMenu = true }, modifier = Modifier.padding(bottom = 2.dp).testTag("composer-attach")) { SymIcon(Sym.Add, "Attach") }
+                    DropdownMenu(expanded = showAttachMenu, onDismissRequest = { showAttachMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Photos and videos") },
+                            leadingIcon = { SymIcon(Sym.Image, null, size = 20.dp) },
+                            onClick = { showAttachMenu = false; pickers.openPhotos() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Files") },
+                            leadingIcon = { SymIcon(Sym.Description, null, size = 20.dp) },
+                            onClick = { showAttachMenu = false; pickers.openFiles() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Take a photo") },
+                            leadingIcon = { SymIcon(Sym.PhotoCamera, null, size = 20.dp) },
+                            onClick = { showAttachMenu = false; pickers.openCameraPhoto() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Record a video") },
+                            leadingIcon = { SymIcon(Sym.Videocam, null, size = 20.dp) },
+                            onClick = { showAttachMenu = false; pickers.openCameraVideo() },
+                        )
+                    }
+                }
+            }
             IconButton(onClick = { showEmojiPicker = true }, modifier = Modifier.padding(bottom = 2.dp)) { SymIcon(Sym.Mood, "Emoji") }
             OutlinedTextField(
                 state = text,
                 modifier = Modifier.weight(1f).testTag("composer-field").focusRequester(focusRequester),
                 placeholder = { Text(if (editing != null) "Edit message" else "Message $channelName") },
                 lineLimits = TextFieldLineLimits.MultiLine(1, 5),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.xl),
+                shape = RoundedCornerShape(Radius.xl),
             )
             FilledIconButton(
-                onClick = { if (text.text.isNotBlank()) onSend(text.text.toString()) },
-                enabled = text.text.isNotBlank(),
+                onClick = { if (canSend) onSend(text.text.toString()) },
+                enabled = canSend,
                 modifier = Modifier.padding(bottom = 6.dp),
-                shapes = androidx.compose.material3.IconButtonDefaults.shapes(),
+                shapes = IconButtonDefaults.shapes(),
             ) { SymIcon(if (editing != null) Sym.Check else Sym.Send, if (editing != null) "Save" else "Send") }
         }
     }
@@ -376,7 +438,7 @@ private fun customEmojiToken(e: EmojiEntry.Custom): String = "<${if (e.animated)
 @Composable
 private fun AutocompleteStrip(labels: List<String>, onPick: (String) -> Unit) {
     val c = Hideout.colors
-    androidx.compose.foundation.lazy.LazyRow(
+    LazyRow(
         Modifier.fillMaxWidth().background(c.surfaceRaised).padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -384,7 +446,7 @@ private fun AutocompleteStrip(labels: List<String>, onPick: (String) -> Unit) {
             Surface(
                 onClick = { onPick(label) },
                 modifier = Modifier.testTag("autocomplete-$label"),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(app.thehideout.design.Radius.md),
+                shape = RoundedCornerShape(Radius.md),
                 color = c.surfaceOverlay,
             ) {
                 Text(label, style = MaterialTheme.typography.labelMedium, color = c.text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))

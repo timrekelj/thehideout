@@ -12,8 +12,8 @@ import com.connectrpc.ResponseMessage
  *
  *  Site admins invite anyone (optionally pre-joining guilds and granting site
  *  admin). Guild members with PERMISSION_INVITE_PEOPLE invite people into that
- *  guild. The invitee gets an email with a link (token) and a short code;
- *  either can be passed to LookupInvite / AcceptInvite. Invites expire after 7
+ *  guild. The invitee gets an email with a short code (8 characters, `ABCD-EFGH`) and a link containing
+ *  it; the code is passed to LookupInvite / AcceptInvite. Invites expire after 7
  *  days. Guild invite codes (`Guild.invite_code`) only let existing accounts
  *  join more guilds.
  */

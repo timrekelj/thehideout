@@ -49,6 +49,8 @@ pub struct Config {
     /// LiveKit (voice channels); `None` = voice is not configured and
     /// `JoinVoice` answers UNAVAILABLE.
     pub livekit: Option<LiveKitConfig>,
+    /// Web client bundle served at `/app/` (`THEHIDEOUT_WEB_DIR`); `None` = not served.
+    pub web_dir: Option<PathBuf>,
     /// ScyllaDB credentials (`THEHIDEOUT_SCYLLA_USERNAME` / `THEHIDEOUT_SCYLLA_PASSWORD`).
     pub scylla_auth: Option<ScyllaAuth>,
     /// CA bundle (PEM) that enables TLS to ScyllaDB (`THEHIDEOUT_SCYLLA_TLS_CA`).
@@ -354,6 +356,7 @@ impl Config {
             embed_max_video_bytes,
             admins: crate::admin::parse_admins(&var("THEHIDEOUT_ADMINS", "")),
             livekit,
+            web_dir: crate::web::dir_from_env(non_empty("THEHIDEOUT_WEB_DIR")),
             scylla_auth,
             scylla_tls_ca: non_empty("THEHIDEOUT_SCYLLA_TLS_CA").map(PathBuf::from),
             scylla_replication,
@@ -366,7 +369,7 @@ impl Config {
 }
 
 /// `THEHIDEOUT_CONTACT_EMAIL` (required away from development hosts),
-/// `THEHIDEOUT_OPERATOR_NAME` and `THEHIDEOUT_MIN_CLIENT_VERSION[_DESKTOP|_IOS|_ANDROID]`.
+/// `THEHIDEOUT_OPERATOR_NAME` and `THEHIDEOUT_MIN_CLIENT_VERSION[_DESKTOP|_IOS|_ANDROID|_WEB]`.
 fn policy_from_env(public_url: &url::Url, non_empty: &dyn Fn(&str) -> Option<String>) -> Result<crate::policy::Policy> {
     use crate::policy::{MinClient, Policy};
     let contact_email = non_empty("THEHIDEOUT_CONTACT_EMAIL").map(|e| crate::accounts::normalize_email(&e));
@@ -380,7 +383,7 @@ fn policy_from_env(public_url: &url::Url, non_empty: &dyn Fn(&str) -> Option<Str
     }
     let version = |name: &str| MinClient::parse_var(name, non_empty(name).as_deref()).map_err(anyhow::Error::msg);
     let mut min_client = MinClient { default: version("THEHIDEOUT_MIN_CLIENT_VERSION")?, ..Default::default() };
-    for platform in ["desktop", "ios", "android"] {
+    for platform in ["desktop", "ios", "android", "web"] {
         if let Some(v) = version(&format!("THEHIDEOUT_MIN_CLIENT_VERSION_{}", platform.to_uppercase()))? {
             min_client.platforms.insert(platform.to_owned(), v);
         }
@@ -768,6 +771,9 @@ mod policy_tests {
         assert_eq!(p.operator_name.as_deref(), Some("Us"));
         assert_eq!(p.min_client.minimum("desktop"), Some(crate::policy::Version(1, 2, 0)));
         assert_eq!(p.min_client.minimum("ios"), Some(crate::policy::Version(2, 0, 1)));
+        assert_eq!(p.min_client.minimum("web"), None, "web does not inherit the default");
+        let p = policy_from_env(&url("http://localhost"), &env(&[("THEHIDEOUT_MIN_CLIENT_VERSION_WEB", "3.0.0")])).unwrap();
+        assert_eq!(p.min_client.minimum("web"), Some(crate::policy::Version(3, 0, 0)));
         assert!(policy_from_env(&url("http://localhost"), &env(&[("THEHIDEOUT_MIN_CLIENT_VERSION", "soon")])).is_err());
         assert_eq!(policy_from_env(&url("http://localhost"), &env(&[])).unwrap().min_client.minimum("desktop"), None);
     }

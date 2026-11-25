@@ -6,6 +6,11 @@ import app.thehideout.core.api.GuildMembers
 import app.thehideout.core.api.GuildRoles
 import app.thehideout.core.api.Initial
 import app.thehideout.core.api.MessagePage
+import app.thehideout.core.api.PendingAttachment
+import app.thehideout.core.attachment.MAX_ATTACHMENTS
+import app.thehideout.core.attachment.humanSize
+import app.thehideout.core.embed.EmbedRef
+import app.thehideout.core.embed.toggleEmbedCollapsed
 import app.thehideout.core.model.*
 import java.time.Instant
 
@@ -15,6 +20,7 @@ sealed interface Effect {
     data class LoadChannels(val guild: Long) : Effect
     data class LoadMembers(val guild: Long) : Effect
     data class LoadAccess(val guild: Long) : Effect
+    data class LoadEmojis(val guild: Long) : Effect
     /** The lists again after a gap in the stream. */
     data object Refresh : Effect
     data class SendMessage(val channel: Long, val content: String, val nonce: String, val attachmentIds: List<Long>) : Effect
@@ -23,6 +29,10 @@ sealed interface Effect {
     data class EditMessage(val channel: Long, val message: Long, val content: String, val previous: String) : Effect
     data class DeleteMessage(val channel: Long, val message: Long) : Effect
     data class OpenDm(val userId: Long) : Effect
+    /** Streams [source]'s bytes as a pending attachment; the runner gates concurrency and retries transient failures. */
+    data class UploadAttachment(val id: Long, val channel: Long, val filename: String, val contentType: String, val size: Long, val source: app.thehideout.core.api.UploadSource) : Effect
+    /** The tray's ✕ on a file that is queued or uploading: stop it. */
+    data class CancelUpload(val id: Long) : Effect
 }
 
 /** Where editing a message landed: the new content, or the server's refusal and what to roll back to. */
@@ -44,6 +54,7 @@ sealed interface Action {
     data class DmOpened(val result: Result<DmChannel>) : Action
     data class MembersLoaded(val guild: Long, val result: Result<GuildMembers>) : Action
     data class AccessLoaded(val guild: Long, val result: Result<GuildRoles>) : Action
+    data class EmojisLoaded(val guild: Long, val result: Result<List<Emoji>>) : Action
     data class Gateway(val update: GatewayUpdate) : Action
 
     // ---- session ----
@@ -65,11 +76,26 @@ sealed interface Action {
     data class EditMessage(val channel: Long, val message: Long, val content: String) : Action
     data class DeleteMessage(val channel: Long, val message: Long) : Action
     data class SetDraft(val channel: Long, val text: String) : Action
+    /** Files the picker, camera or a share/paste handed the composer; each starts uploading (concurrency gated by the runner). */
+    data class AttachFiles(val channel: Long, val files: List<PickedFile>) : Action
+    /** A queued upload got its turn (the runner acquired a concurrency slot). */
+    data class AttachStarted(val id: Long) : Action
+    data class AttachProgress(val id: Long, val sent: Long, val total: Long) : Action
+    data class AttachUploaded(val id: Long, val result: Result<PendingAttachment>) : Action
+    /** The tray's ✕: forgets the file (and cancels it if it was still going up). */
+    data class RemoveAttachment(val id: Long) : Action
+    /** The failed chip's "Try again". */
+    data class RetryAttachment(val id: Long) : Action
     data class DismissNotice(val id: Long) : Action
     /** Raises a snackbar notice. */
     data class Notice(val kind: NoticeKind, val text: String) : Action
     /** Marks a guild as being left or deleted by us, so its `guild_removed` is not announced. */
     data class Exiting(val guild: Long) : Action
+    /** The embed card's header was tapped: its fold flips (ATT-07). */
+    data class ToggleEmbedCollapsed(val message: Long, val index: Int) : Action
+    /** The shell's tab that can show [AppState.currentChannel]'s transcript (Servers for a guild,
+     * DMs for home) became, or stopped being, the foreground destination. */
+    data class SetChannelForeground(val visible: Boolean) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -109,6 +135,10 @@ object Reducer {
             { Reduction(s.copy(roles = s.roles + (a.guild to sortRoles(it.roles)), roleVersions = s.roleVersions + (a.guild to it.version))) },
             { Reduction(s.copy(accessAsked = s.accessAsked - a.guild)) },
         )
+        is Action.EmojisLoaded -> a.result.fold(
+            { Reduction(s.copy(emojis = s.emojis + (a.guild to it))) },
+            { Reduction(s.copy(emojisAsked = s.emojisAsked - a.guild)) },
+        )
         is Action.Gateway -> gateway(s, a.update)
         is Action.SignedOut -> Reduction(AppState(phase = SessionPhase.SignedOut(a.error)))
         is Action.SetPhase -> Reduction(s.copy(phase = a.phase))
@@ -127,9 +157,28 @@ object Reducer {
         is Action.EditMessage -> editMessage(s, a.channel, a.message, a.content)
         is Action.DeleteMessage -> Reduction(s, listOf(Effect.DeleteMessage(a.channel, a.message)))
         is Action.SetDraft -> Reduction(s.copy(drafts = if (a.text.isEmpty()) s.drafts - a.channel else s.drafts + (a.channel to a.text)))
+        is Action.AttachFiles -> attachFiles(s, a.channel, a.files)
+        is Action.AttachStarted -> Reduction(updateDraftFile(s, a.id) { it.copy(state = AttachUploadState(AttachUploadPhase.Uploading, total = it.size)) })
+        is Action.AttachProgress -> Reduction(
+            updateDraftFile(s, a.id) { f ->
+                if (f.state.phase != AttachUploadPhase.Uploading) f
+                else f.copy(size = maxOf(f.size, a.total), state = f.state.copy(sent = a.sent, total = a.total))
+            },
+        )
+        is Action.AttachUploaded -> attachUploaded(s, a.id, a.result)
+        is Action.RemoveAttachment -> removeAttachment(s, a.id)
+        is Action.RetryAttachment -> retryAttachment(s, a.id)
         is Action.DismissNotice -> Reduction(s.copy(notices = s.notices.filter { it.id != a.id }))
         is Action.Notice -> Reduction(notice(s, a.kind, a.text))
         is Action.Exiting -> Reduction(s.copy(exiting = s.exiting + a.guild))
+        is Action.ToggleEmbedCollapsed -> Reduction(s.copy(collapsedEmbeds = toggleEmbedCollapsed(s.collapsedEmbeds, EmbedRef(a.message, a.index))))
+        // Coming back into foreground is an arrival in its own right: whatever piled up in
+        // `currentChannel` while away (its `currentChannel` never changed, so `OpenChannel` would
+        // have no-opped) needs the same unread-clearing, marker-fixing treatment.
+        is Action.SetChannelForeground -> {
+            if (a.visible && !s.channelForeground) arrive(s.copy(channelForeground = true))
+            else Reduction(s.copy(channelForeground = a.visible))
+        }
     }
 
     // ---- data in ------------------------------------------------------------------------------
@@ -186,6 +235,7 @@ object Reducer {
             members = s.members.filterKeys { it == open },
             membersAsked = s.membersAsked.filter { it == open }.toSet(),
             emojis = s.emojis.filterKeys { it == open },
+            emojisAsked = s.emojisAsked.filter { it == open }.toSet(),
         )
         val effects = mutableListOf<Effect>()
         if (open != null) {
@@ -200,6 +250,8 @@ object Reducer {
             val r = wantAccess(next, open)
             next = r.state
             effects += r.effects
+            effects += Effect.LoadEmojis(open)
+            next = next.copy(emojisAsked = next.emojisAsked + open)
         }
         return Reduction(next, effects)
     }
@@ -424,7 +476,7 @@ object Reducer {
         if (m.nonce.isNotEmpty()) next = next.copy(outgoing = next.outgoing.filter { it.nonce != m.nonce })
         val effects = mutableListOf<Effect>()
         wantAuthor(next, m).let { next = it.state; effects += it.effects }
-        val visible = next.phase == SessionPhase.SignedIn && next.currentChannel == channel
+        val visible = next.phase == SessionPhase.SignedIn && next.currentChannel == channel && next.channelForeground
         val mine = m.authorId == next.myId
         val mention = !mine && (next.dm(channel) != null || next.mentionsMe(m.content))
         val log = next.logs[channel]?.takeIf { it.loaded }
@@ -561,6 +613,7 @@ object Reducer {
             members = s.members - guild,
             membersAsked = s.membersAsked - guild,
             emojis = s.emojis - guild,
+            emojisAsked = s.emojisAsked - guild,
             guildChannel = s.guildChannel - guild,
         )
         return if (wasOpen) goHome(next.copy(place = Place.InGuild(guild))) else Reduction(next)
@@ -598,6 +651,7 @@ object Reducer {
         val effects = mutableListOf<Effect>()
         wantMembers(next, id).let { next = it.state; effects += it.effects }
         wantAccess(next, id).let { next = it.state; effects += it.effects }
+        wantEmojis(next, id).let { next = it.state; effects += it.effects }
         if (id !in next.channels) effects += Effect.LoadChannels(id)
         arrive(next).let { next = it.state; effects += it.effects }
         return Reduction(next, effects)
@@ -609,6 +663,9 @@ object Reducer {
     private fun wantAccess(s: AppState, guild: Long): Reduction =
         if (guild !in s.roles && guild !in s.accessAsked) Reduction(s.copy(accessAsked = s.accessAsked + guild), listOf(Effect.LoadAccess(guild))) else Reduction(s)
 
+    private fun wantEmojis(s: AppState, guild: Long): Reduction =
+        if (guild !in s.emojis && guild !in s.emojisAsked) Reduction(s.copy(emojisAsked = s.emojisAsked + guild), listOf(Effect.LoadEmojis(guild))) else Reduction(s)
+
     /** Asks for the members of the guild [m] was posted in when its author is a stranger. */
     private fun wantAuthor(s: AppState, m: Message): Reduction {
         val g = m.guildId
@@ -619,7 +676,10 @@ object Reducer {
     private fun selectChannel(s: AppState, channel: Long): Reduction {
         val place = s.place
         if (place is Place.InGuild && s.channel(place.id, channel)?.kind == ChannelKind.Voice) return Reduction(s)
-        if (s.currentChannel == channel) return Reduction(s)
+        // Still arrives (clears unread, fixes the marker) even when this channel was already
+        // selected: a tab switch away and a tap back on the same channel does not change
+        // `currentChannel`, but the reader is genuinely arriving at it again.
+        if (s.currentChannel == channel) return arrive(s)
         val next = when (place) {
             Place.Home -> s.copy(homeDm = channel)
             is Place.InGuild -> s.copy(guildChannel = s.guildChannel + (place.id to channel))
@@ -658,15 +718,105 @@ object Reducer {
 
     // ---- sending ------------------------------------------------------------------------------
 
-    /** Queues [text] as a pending message in the open channel. Nothing queued when there is no channel, no text, or it is over the limit. */
+    /**
+     * Queues [text] (with the channel's uploaded files) as a pending message. Nothing queued when
+     * there is no channel, the text is over the limit, a file is still going up, or there is
+     * neither text nor a finished file (desktop's `AppState::send`).
+     */
     private fun send(s: AppState, text: String, now: Instant): Reduction {
         val content = text.trim()
         val channel = s.currentChannel ?: return Reduction(s)
-        if (content.isEmpty() || content.codePointCount(0, content.length) > MAX_MESSAGE_CHARS) return Reduction(s)
+        if (content.codePointCount(0, content.length) > MAX_MESSAGE_CHARS) return Reduction(s)
+        val draft = s.attachDrafts[channel]
+        if (draft != null && draft.uploading) return Reduction(s)
+        if (content.isEmpty() && (draft == null || draft.readyCount == 0)) return Reduction(s)
+        val ready = draft?.files.orEmpty().filter { it.state.phase == AttachUploadPhase.Ready }
+        val kept = draft?.files.orEmpty().filterNot { it.state.phase == AttachUploadPhase.Ready }
+        val attachmentIds = ready.mapNotNull { it.state.pendingId }
+        val previews = ready.map { PendingPreview(it.name, it.contentType, it.size, it.preview) }
         val seq = s.nonceSeq + 1
         val nonce = "${s.myId}-$seq"
-        val out = Outgoing(nonce, channel, content, now)
-        return Reduction(s.copy(nonceSeq = seq, outgoing = s.outgoing + out), listOf(Effect.SendMessage(channel, content, nonce, emptyList())))
+        val out = Outgoing(nonce, channel, content, now, attachmentIds = attachmentIds, attachments = previews)
+        val drafts = if (draft == null) s.attachDrafts else s.attachDrafts + (channel to draft.copy(files = kept, note = null))
+        return Reduction(
+            s.copy(nonceSeq = seq, outgoing = s.outgoing + out, attachDrafts = drafts),
+            listOf(Effect.SendMessage(channel, content, nonce, attachmentIds)),
+        )
+    }
+
+    // ---- attachments (ATT-09) ------------------------------------------------------------------
+
+    /** Admits each file against [MAX_ATTACHMENTS] and the channel's upload cap, then starts it uploading; the note says what the last refused file broke. */
+    private fun attachFiles(s: AppState, channel: Long, files: List<PickedFile>): Reduction {
+        var draft = s.attachDraft(channel)
+        var seq = s.uploadSeq
+        val effects = mutableListOf<Effect>()
+        for (f in files) {
+            when {
+                draft.files.size >= MAX_ATTACHMENTS -> draft = draft.copy(note = "You can attach up to $MAX_ATTACHMENTS files to a message")
+                f.size > s.maxUploadBytes -> draft = draft.copy(note = "${f.name} is ${humanSize(f.size)}, over the ${humanSize(s.maxUploadBytes)} limit")
+                else -> {
+                    seq++
+                    draft = draft.copy(files = draft.files + DraftFile(seq, f.name, f.contentType, f.size, f.preview, f.source, AttachUploadState(AttachUploadPhase.Queued)), note = null)
+                    effects += Effect.UploadAttachment(seq, channel, f.name, f.contentType, f.size, f.source)
+                }
+            }
+        }
+        return Reduction(s.copy(uploadSeq = seq, attachDrafts = s.attachDrafts + (channel to draft)), effects)
+    }
+
+    /** Applies [f] to the draft file [id], wherever its channel is. */
+    private fun updateDraftFile(s: AppState, id: Long, f: (DraftFile) -> DraftFile): AppState {
+        var changed = false
+        val drafts = s.attachDrafts.mapValues { (_, d) ->
+            val at = d.files.indexOfFirst { it.id == id }
+            if (at < 0) d else {
+                changed = true
+                d.copy(files = d.files.toMutableList().also { it[at] = f(it[at]) })
+            }
+        }
+        return if (changed) s.copy(attachDrafts = drafts) else s
+    }
+
+    private fun attachUploaded(s: AppState, id: Long, result: Result<PendingAttachment>): Reduction = result.fold(
+        { p ->
+            Reduction(updateDraftFile(s, id) { f -> f.copy(size = p.size, state = AttachUploadState(AttachUploadPhase.Ready, sent = p.size, total = p.size, pendingId = p.id)) })
+        },
+        { e ->
+            val reason = uploadErrorMessage(e as? AppError ?: AppError.Other(e.message.orEmpty()))
+            Reduction(updateDraftFile(s, id) { f -> f.copy(state = AttachUploadState(AttachUploadPhase.Failed, reason = reason)) })
+        },
+    )
+
+    /** What a refused upload's chip says (desktop's `attach::upload_error`). */
+    private fun uploadErrorMessage(e: AppError): String = when (e) {
+        AppError.TooLarge -> "Too large"
+        is AppError.Unavailable -> "Upload failed"
+        AppError.PermissionDenied -> "You can't attach files here"
+        AppError.RateLimited -> "Slow down, try again"
+        else -> sentence(e.message.orEmpty()).trimEnd('.')
+    }
+
+    /** The tray's ✕: forgets the file in whichever channel holds it, cancelling it if it was still going up. */
+    private fun removeAttachment(s: AppState, id: Long): Reduction {
+        var wasRunning = false
+        val drafts = s.attachDrafts.mapValues { (_, d) ->
+            val f = d.files.firstOrNull { it.id == id } ?: return@mapValues d
+            if (f.state.phase == AttachUploadPhase.Queued || f.state.phase == AttachUploadPhase.Uploading) wasRunning = true
+            d.copy(files = d.files.filter { it.id != id }, note = null)
+        }
+        val effects = if (wasRunning) listOf(Effect.CancelUpload(id)) else emptyList()
+        return Reduction(s.copy(attachDrafts = drafts), effects)
+    }
+
+    /** "Try again" on a file that failed: back to queued, with the same source so it streams again. */
+    private fun retryAttachment(s: AppState, id: Long): Reduction {
+        for ((channel, d) in s.attachDrafts) {
+            val f = d.files.firstOrNull { it.id == id && it.state.phase == AttachUploadPhase.Failed } ?: continue
+            val next = updateDraftFile(s, id) { it.copy(state = AttachUploadState(AttachUploadPhase.Queued)) }
+            return Reduction(next, listOf(Effect.UploadAttachment(id, channel, f.name, f.contentType, f.size, f.source)))
+        }
+        return Reduction(s)
     }
 
     private fun retry(s: AppState, nonce: String): Reduction {

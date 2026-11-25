@@ -156,3 +156,98 @@ whether an account exists.
   `adb reverse tcp:8080 tcp:8080` + `http://127.0.0.1:8080` if the NAT alias is blocked for the app's
   UID on the AVD in use (see above). Verified end to end: the bootstrap invite → shell, sign out →
   password sign-in → shell, sign out → emailed-code sign-in → shell.
+
+## E2E check (phase 3a chat, against the real server)
+
+A manual pass with two clients signed into the same guild: the app on an emulator (the bootstrap
+admin) and `curl` against the Connect JSON API (`POST /thehideout.v1.<Service>/<Method>`,
+`Content-Type: application/json`, `Authorization: Bearer <token>`; field names from
+`proto/thehideout/v1/*.proto`) as a second, invited member. Ten checkpoints:
+
+1. Cold start restores the persisted server URL and session (not the build-default URL).
+2. Bootstrap invite → sign-up → first guild, auto-created `general` channel.
+3. Second user (curl) accepts an invite into the same guild.
+4. The gateway subscribe stream survives past 10 s (no silent drop/reconnect loop).
+5. Sign-out → sign back in restores the same place.
+6. Reactions, edits and deletes each way (app ↔ curl) appear live on the other side.
+7. A curl `@username` mention shows in the Mentions tab with an accent badge, and tapping it lands
+   in the channel's transcript.
+8. A curl-opened DM shows live with a badge; the app replies; curl sees the reply
+   (`ListMessages`).
+9. The reconnect banner recovers after the server restarts.
+10. 80 messages from curl, then scrolling up in the app: older pages load with no scroll jump.
+
+To rerun: start Docker services and `cargo run` in `server/` with a fresh keyspace
+(`THEHIDEOUT_KEYSPACE=<something_scratch>`, `CARGO_INCREMENTAL=0`), boot the AVD, `adb reverse
+tcp:8080 tcp:8080`, install the debug APK, set the server URL to `http://127.0.0.1:8080` in the
+sign-in card's sheet, accept the bootstrap invite (its code is logged on first boot and in
+Mailpit, http://127.0.0.1:8025), create a guild, and invite a second account to drive from `curl`.
+Afterwards drop the scratch keyspace (`cqlsh -e "DROP KEYSPACE IF EXISTS <keyspace>"`).
+
+Gotchas:
+
+- **Run the server from *this* checkout's `server/`, not a sibling worktree on an older branch.**
+  Mismatched server and client protos fail in confusing ways: `EditMessage`/`DeleteMessage`
+  returning `unimplemented`, or an invite's `minimum_age` reading back as `0` (the server's
+  `Policy::MIN_AGE` not existing yet on that branch) — both looked like client bugs at first and
+  were not.
+- **Reusing a shared `CARGO_TARGET_DIR` across checkouts can serve a stale build-script output**
+  (a `buf build` descriptor set missing a service that exists in this checkout's protos).
+  `cargo clean -p thehideout-server` before the first build if `cargo run` fails with
+  `file_to_generate '...' not found in descriptor set`.
+- **Only one emulator at a time if anything else on the machine drives `adb`.** `adb` is a single
+  shared daemon; a second, unrelated agent's `adb shell` calls land on the same `emulator-5554`
+  and can force-stop/clear the app or flip on `--ez fake true` mid-run. Boot a second AVD on its
+  own port (`emulator -avd <name> -port 5556`) and target it explicitly
+  (`export ANDROID_SERIAL=emulator-5556`, or `adb -s emulator-5556 ...`) to get exclusive use.
+- **`adb shell input tap`/`swipe` coordinates must come from a fresh `uiautomator dump`** (device
+  pixels), not from eyeballing a screenshot — the screenshot tool may render it scaled, and a tap
+  based on the scaled size lands on the wrong element (observed: it opened "Explore with demo
+  data" and typed into the wrong field more than once).
+- **`adb shell input text` with a full `host:port` can let Gboard autocomplete commit a
+  suggestion**, mangling what was typed (seen turning a server URL into gibberish, and once
+  routing a tap meant for the next field into "Explore with demo data"). Split such input into two
+  `input text` calls (e.g. the scheme+host, then `:port`), and take a screenshot to confirm the
+  field's contents before moving on.
+- **Switching the shell's bottom tab does not, by itself, tell the store whether the open
+  channel's transcript is actually on screen** (`AppState.currentChannel` stays set to the
+  last-selected channel in whichever tab shows it, Servers or DMs, even while a different tab is
+  in front). See `AppState.channelForeground`'s doc for how the store knows.
+
+## Attachments and the lightbox (phase 3b)
+
+Rendering only (ATT-01..05, ATT-12): uploading, embeds and custom emoji images are later tasks.
+
+- **Layout maths in `:core`.** `app.thehideout.core.attachment.AttachmentLayout` ports desktop's
+  `attachments.rs` bit for bit: `fitSize`, `imageGrid` (1 keeps its aspect; 2 side by side; 3 with
+  the first tall on the left; 4+ a 2x2 with "+N" on the last tile, every width capped to the
+  column, never past 400dp), `fileKind`, `humanSize`, `clockLabel`, and `mediaUrl` (`{base}/media/{key}`,
+  or the key unchanged when it already names a full URI — the fake backend's bundled assets).
+- **Coil 3.** One `ImageLoader` per process (`HideoutApp.newImageLoader`, `SingletonImageLoader.Factory`),
+  sharing an `OkHttpClient` with `OkHttpNetworkFetcherFactory`, animated WebP/GIF via
+  `AnimatedImageDecoder`, a sized memory and disk cache. `AttachmentImage` (`:ui`) is a plain
+  `AsyncImage`, not `SubcomposeAsyncImage` — the grid and video card sit inside a `Row` sized by
+  `IntrinsicSize.Min` (`MessageRow`), which a `SubcomposeLayout`-based composable can't be measured
+  under; a sized placeholder and a tap-to-retry error state are plain overlay `Box`es instead.
+- **The grid and the video/audio/file cards** (`ui/components/Attachments.kt`) read off the
+  attachment's own width/height; the grid and the video card use a custom single-pass `Layout`
+  (not `BoxWithConstraints`, same `SubcomposeLayout` reason) to adapt to the column's width at
+  measure time. The video card: a poster, a play button, then an `ExoPlayer` created on first play
+  with a bar (play/pause, scrub, time, mute, expand into the lightbox). The audio row: the same
+  controls, compact. The file card: a type icon, name, size, "Open" (through a `FileProvider` and
+  `ACTION_VIEW`) and "Download" (`MediaStore.Downloads` on API 29+, else the legacy Downloads folder
+  registered with `DownloadManager`). `removed` attachments (or ones without a file) show the
+  "File removed by an admin" placeholder.
+- **The lightbox** (`ui/components/Lightbox.kt`): a `Dialog`, `HorizontalPager` over the message's
+  pictures (or the one video a card's "Expand" opened), `Modifier.transformable(canPan = { scale != 1f })`
+  for pinch and double-tap zoom with pan without fighting the pager's own swipe, swipe-down-to-dismiss
+  with a fade, predictive back (`BackHandler`), a top bar (name and position, share through the
+  system sheet, save, close), and Media3's `PlayerView` for video (its own standard controls).
+- **The fake backend's assets** (`ui/src/main/assets/fake_media`, generated with `ffmpeg`, originals):
+  a handful of gradient JPEGs at different aspect ratios (for every grid layout), a six-second H.264
+  clip with a poster frame, a short AAC tone, and a text file — seeded into the otherwise-empty
+  `#design` channel (`FakeBackend.seedAttachments`) so they render and play offline.
+- **Known gap.** The emulator's software H.264 decoder (`c2.goldfish.h264.decoder` on
+  `Medium_Phone_API_37.0`) fails to decode the bundled clip (`MediaCodecVideoDecoderException`) —
+  an AVD limitation, not an app bug: the player reaches a correct, controllable state (duration,
+  bar) and a real device or a hardware-accelerated AVD image should play it.

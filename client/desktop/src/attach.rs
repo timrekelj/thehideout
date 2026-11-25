@@ -220,6 +220,19 @@ pub fn upload_error(e: &ApiError) -> String {
     }
 }
 
+
+/// The size of the file at `path`; `Ok(None)` for a folder. On the web a path is a picked `File`.
+#[cfg(not(target_arch = "wasm32"))]
+fn file_size(path: &Path) -> std::io::Result<Option<u64>> {
+    let m = std::fs::metadata(path)?;
+    Ok(m.is_file().then_some(m.len()))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn file_size(path: &Path) -> std::io::Result<Option<u64>> {
+    crate::web::file_size(path).map(Some).ok_or_else(|| std::io::ErrorKind::NotFound.into())
+}
+
 impl AppState {
     // ---- uploads -----------------------------------------------------------------------------
 
@@ -257,9 +270,9 @@ impl AppState {
         let Some(channel) = self.current_channel() else { return };
         let name = path.file_name().map_or_else(|| "file".to_owned(), |n| n.to_string_lossy().into_owned());
         // One `stat`: the size is needed to refuse a file that is too large before it is read.
-        let size = match std::fs::metadata(path) {
-            Ok(m) if m.is_file() => m.len(),
-            Ok(_) => return self.set_note(channel, format!("{name} is a folder; attach its files instead")),
+        let size = match file_size(path) {
+            Ok(Some(len)) => len,
+            Ok(None) => return self.set_note(channel, format!("{name} is a folder; attach its files instead")),
             Err(_) => return self.set_note(channel, format!("Couldn't read {name}")),
         };
         if !self.admit(channel, &name, size) {

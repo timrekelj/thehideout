@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
@@ -22,10 +25,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.thehideout.core.auth.AuthPresenter
@@ -33,6 +38,8 @@ import app.thehideout.core.auth.AuthUiState
 import app.thehideout.core.store.AppState
 import app.thehideout.core.store.SessionPhase
 import app.thehideout.ui.auth.AuthScreen
+import app.thehideout.ui.components.HideoutCard
+import app.thehideout.ui.components.LocalMediaBase
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.shell.ShellActions
@@ -62,6 +69,8 @@ fun HideoutRoot(
     onOpenUrl: (String) -> Unit,
     versionName: String,
     modifier: Modifier = Modifier,
+    /** Where this session's attachments load from: the server, or the fake backend's bundled assets. */
+    mediaBase: String = serverUrl,
 ) {
     val c = Hideout.colors
     val snackbar = remember { SnackbarHostState() }
@@ -75,7 +84,7 @@ fun HideoutRoot(
     Scaffold(
         modifier = modifier,
         containerColor = c.bg,
-        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
+        contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbar) },
     ) { _ ->
         when (val phase = state.phase) {
@@ -89,7 +98,9 @@ fun HideoutRoot(
                 onOpenUrl = onOpenUrl,
                 useDemo = actions.useDemo,
             )
-            SessionPhase.SignedIn -> SignedInShell(state, look, onLookChange, actions, versionName)
+            SessionPhase.SignedIn -> CompositionLocalProvider(LocalMediaBase provides mediaBase) {
+                SignedInShell(state, look, onLookChange, actions, versionName)
+            }
             is SessionPhase.TermsRequired -> TermsGate(
                 version = phase.version,
                 serverUrl = serverUrl,
@@ -143,9 +154,9 @@ fun TermsGate(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-          app.thehideout.ui.components.HideoutCard(Modifier.fillMaxWidth()) {
+          HideoutCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("thehideout", style = MaterialTheme.typography.displayMedium, color = c.accentText, fontWeight = androidx.compose.ui.text.font.FontWeight(700))
+            Text("thehideout", style = MaterialTheme.typography.displayMedium, color = c.accentText, fontWeight = FontWeight(700))
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("We updated our Terms and Privacy Policy", style = MaterialTheme.typography.titleMedium, color = c.text)
                 Text(
@@ -154,7 +165,7 @@ fun TermsGate(
                     color = c.textMuted,
                 )
             }
-            androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TextButton(onClick = { onOpenUrl("$serverUrl/terms") }) { Text("Read the Terms", color = c.accentText) }
                 TextButton(onClick = { onOpenUrl("$serverUrl/privacy") }) { Text("Read the Privacy Policy", color = c.accentText) }
             }
@@ -181,6 +192,7 @@ fun GateScreen(sym: Sym, title: String, body: String, onAction: (() -> Unit)?, a
 }
 
 @Composable
-private fun TextButton(onClick: () -> Unit, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+private fun TextButton(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+    // Fully qualified: a plain import would collide with this file's own `TextButton` above.
     androidx.compose.material3.TextButton(onClick = onClick, content = content)
 }

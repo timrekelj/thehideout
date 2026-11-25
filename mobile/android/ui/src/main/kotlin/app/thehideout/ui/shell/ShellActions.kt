@@ -2,6 +2,7 @@ package app.thehideout.ui.shell
 
 import app.thehideout.core.model.ReactionEmoji
 import app.thehideout.core.store.AppStore
+import app.thehideout.core.store.PickedFile
 
 /** What the screens can ask for. A plain bag of lambdas so screens are previewable and testable without a store. */
 data class ShellActions(
@@ -16,6 +17,13 @@ data class ShellActions(
     val editMessage: (Long, Long, String) -> Unit = { _, _, _ -> },
     val deleteMessage: (Long, Long) -> Unit = { _, _ -> },
     val setDraft: (Long, String) -> Unit = { _, _ -> },
+    /** An embed card's header was tapped: its fold flips (ATT-07). */
+    val toggleEmbedCollapsed: (Long, Int) -> Unit = { _, _ -> },
+    /** The composer's "+": files just picked, camera-captured, pasted or shared in (ATT-09). */
+    val attachFiles: (Long, List<PickedFile>) -> Unit = { _, _ -> },
+    val removeAttachment: (Long) -> Unit = {},
+    val retryAttachment: (Long) -> Unit = {},
+    val setChannelForeground: (Boolean) -> Unit = {},
     /** Switches tabs (set by [SignedInShell]; plain UI actions, not store intents). */
     val navigateToDms: () -> Unit = {},
     val navigateToServers: () -> Unit = {},
@@ -39,6 +47,11 @@ data class ShellActions(
             editMessage = store::editMessage,
             deleteMessage = store::deleteMessage,
             setDraft = store::setDraft,
+            toggleEmbedCollapsed = store::toggleEmbedCollapsed,
+            attachFiles = store::attachFiles,
+            removeAttachment = store::removeAttachment,
+            retryAttachment = store::retryAttachment,
+            setChannelForeground = store::setChannelForeground,
             signOut = store::signOut,
             acceptTerms = store::acceptTerms,
             dismissNotice = store::dismissNotice,

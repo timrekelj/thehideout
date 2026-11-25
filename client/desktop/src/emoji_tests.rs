@@ -21,7 +21,7 @@ use crate::forms::DialogKind;
 use crate::scenes::{booted, booted_as};
 use crate::server_settings::ServerPage;
 use crate::state::{chat_id_of, AppState, Place};
-use crate::tests::{click, has, key, runtime, settle, type_text};
+use crate::tests::{click, click_at, has, key, runtime, settle, type_text};
 
 const G: u64 = 1;
 
@@ -777,6 +777,60 @@ fn the_chips_the_plus_chip_and_the_hover_bar_button_work_through_real_input() {
                 ..
             }
         )) == 1
+    );
+}
+
+/// The hover bar floats over the row's top edge, so a pointer travelling to it from the row's
+/// text leaves the row first; the row must stay hovered long enough for the pointer to land on it.
+#[test]
+fn the_hover_bar_stays_up_while_the_pointer_travels_from_the_row_to_it() {
+    let (app, _) = memes();
+    // The last message has room above it for the bar (the first one's bar is clipped by the list).
+    let m = app.state.log(MEMES).unwrap().messages.last().unwrap().id;
+    let me = app.state.my_id();
+    let id = chat_id_of(
+        app.state
+            .log(MEMES)
+            .unwrap()
+            .messages
+            .iter()
+            .find(|x| x.id == m)
+            .unwrap(),
+        me,
+    );
+    let mut rt = runtime(app);
+    settle(&mut rt, 3);
+    let row = rt.find(&format!("msg-{id}")).expect("the row");
+    let target = rt
+        .find(&format!("react-bar-{id}"))
+        .expect("the bar's React button");
+    // Start on the row's text, then walk a straight line to the button at about 700px/s
+    // (12px a frame), which leaves the row's top edge left of the bar.
+    let from = (row.0 + 40.0, row.1);
+    rt.pointer_move(from.0, from.1);
+    settle(&mut rt, 6);
+    let (dx, dy) = (target.0 - from.0, target.1 - from.1);
+    let steps = (dx.abs().max(dy.abs()) / 12.0).ceil().max(1.0) as u32;
+    for i in 1..=steps {
+        let f = i as f32 / steps as f32;
+        rt.pointer_move(from.0 + dx * f, from.1 + dy * f);
+        settle(&mut rt, 1);
+    }
+    click_at(&mut rt, target);
+    settle(&mut rt, 4);
+    let p = rt
+        .state
+        .state
+        .ui
+        .picker
+        .as_ref()
+        .expect("the React button opened the picker");
+    assert_eq!(
+        p.target,
+        PickerTarget::Reaction {
+            channel: MEMES,
+            message: m
+        }
     );
 }
 

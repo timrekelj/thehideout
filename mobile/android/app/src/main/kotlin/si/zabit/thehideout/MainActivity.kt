@@ -56,6 +56,12 @@ class MainActivity : ComponentActivity() {
                 SystemBars(Hideout.isDark)
                 if (gallery) {
                     GalleryScreen(look, viewModel::setLook)
+                } else if (session == null) {
+                    // The session is still being opened (the real client awaits the persisted
+                    // server URL before it starts): keep the splash up rather than flash this
+                    // frame's empty content, which `setKeepOnScreenCondition` below would never
+                    // run for since it is reached only once a session exists.
+                    splash.setKeepOnScreenCondition { true }
                 } else {
                     session?.let { s ->
                         val state by s.store.state.collectAsStateWithLifecycle()
@@ -86,6 +92,8 @@ class MainActivity : ComponentActivity() {
                             onProbeServer = container::probeServer,
                             onOpenUrl = ::openUrl,
                             versionName = BuildConfig.VERSION_NAME,
+                            // The fake backend has no server: its attachments are bundled assets (ATT-01..05).
+                            mediaBase = if (fake) "file:///android_asset/fake_media" else serverUrl,
                         )
                     }
                 }

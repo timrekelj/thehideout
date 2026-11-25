@@ -29,7 +29,7 @@ pub enum ImagePurpose {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    // ---- signing in: no session yet, sent to the auth form's server --------------------------
+    // ---- signing in: no session yet, sent to the app's server --------------------------
     /// `username` is a username or an email.
     Login {
         username: String,
@@ -529,29 +529,22 @@ pub struct Initial {
 
 type R<T> = Result<T, ApiError>;
 
-impl Command {
-    /// Whether the command is answered without a session, by the server in the auth form's field.
-    pub fn signed_out(&self) -> bool {
-        matches!(
-            self,
-            Command::Login { .. }
-                | Command::RequestEmailCode { .. }
-                | Command::VerifyEmailCode { .. }
-                | Command::CompleteSecondFactor { .. }
-                | Command::BeginSecondFactorPasskey { .. }
-                | Command::RequestPasswordReset { .. }
-                | Command::ResetPassword { .. }
-                | Command::BeginPasskeyLogin { .. }
-                | Command::LookupInvite { .. }
-                | Command::AcceptInvite { .. }
-        )
-    }
-}
-
 /// What this device is called in the account's session list (and a new passkey's default name):
 /// the computer's name, else "thehideout desktop on <OS>".
 pub fn device_label() -> String {
-    let host = gethostname::gethostname().to_string_lossy().trim().trim_end_matches(".local").to_owned();
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::device_label();
+    #[cfg(not(target_arch = "wasm32"))]
+    native_device_label()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_device_label() -> String {
+    let host = gethostname::gethostname()
+        .to_string_lossy()
+        .trim()
+        .trim_end_matches(".local")
+        .to_owned();
     let os = match std::env::consts::OS {
         "macos" => "macOS",
         "windows" => "Windows",
@@ -903,9 +896,9 @@ pub enum Reply {
         result: R<()>,
     },
     SignedOut,
-    /// Answer to `Resume`: no saved session, a valid one (its server URL and the session), or why
-    /// it couldn't be used (`Unauthenticated`: the token was refused and is forgotten).
-    Resume(R<Option<(String, Session)>>),
+    /// Answer to `Resume`: no saved session, a valid one, or why it couldn't be
+    /// used (`Unauthenticated`: the token was refused and is forgotten).
+    Resume(R<Option<Session>>),
     Gateway(GatewayUpdate),
 }
 
@@ -924,8 +917,6 @@ pub trait Backend {
     }
     /// Called once with the shell's waker: wake it whenever a reply becomes available.
     fn set_waker(&mut self, _waker: rune::Waker) {}
-    /// The server the next sign-in talks to (the auth form's field; empty: the default).
-    fn set_server(&mut self, _url: &str) {}
     /// Every command submitted so far (tests).
     #[cfg_attr(not(test), allow(dead_code))]
     fn sent(&self) -> Vec<Command> {

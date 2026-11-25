@@ -2,9 +2,11 @@ package si.zabit.thehideout
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.thehideout.core.InMemoryTokenStore
@@ -20,9 +22,11 @@ import app.thehideout.ui.theme.Look
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -43,7 +47,15 @@ class LookStore(private val store: DataStore<Preferences>) {
 
 /** The server the app talks to, persisted (debug default `http://10.0.2.2:8080`, release `https://thehideout.zabit.si`). */
 class ServerStore(private val store: DataStore<Preferences>) {
-    val url: Flow<String> = store.data.map { it[KEY] ?: "" }
+    /** Empty (the build default applies) on a fresh install, and also on a read failure: a cold
+     * start must never crash or hang over a corrupt or unreadable preferences file. */
+    val url: Flow<String> = store.data
+        .catch { e ->
+            if (e !is IOException) throw e
+            Log.e("ServerStore", "Couldn't read the persisted server URL; using the build default.", e)
+            emit(emptyPreferences())
+        }
+        .map { it[KEY] ?: "" }
 
     suspend fun save(url: String) {
         store.edit { it[KEY] = url }
@@ -68,6 +80,9 @@ class AppContainer(private val context: Context) {
     private val keystoreTokens: TokenStore by lazy { KeystoreTokenStore(context) }
 
     private val probe = OkHttpClient()
+
+    /** Shared with Coil: media is public by its unguessable key, so no auth header is needed. */
+    val mediaHttpClient: OkHttpClient = OkHttpClient()
 
     /** The default server of this build (debug `http://10.0.2.2:8080`, release the public one). */
     fun defaultServer(): String = BuildConfig.DEFAULT_SERVER

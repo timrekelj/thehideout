@@ -11,6 +11,7 @@ description = "Voice and video engine for the desktop app: a thin, testable laye
 camera = ["dep:nokhwa"]
 
 [dependencies]
+thehideout-voice-types = { path = "../voice-types" }
 cpal = "0.18.2"
 futures-util = { version = "0.3", default-features = false }
 livekit = { version = "0.12", features = ["native-tls"] }

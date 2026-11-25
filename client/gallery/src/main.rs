@@ -39,6 +39,8 @@ pub struct G {
     /// Accent, background, tint and contrast of every page (`appearance` is `dark` above).
     pub spec: ThemeSpec,
     pub edits: [TextEdit; 6],
+    /// The invite code boxes on the Controls page: empty, partial, full, error.
+    pub codes: [TextEdit; 4],
     pub tooltip_open: bool,
     pub chat: chat_app::ChatDemo,
     /// The emoji picker on the Chat page's sheet.
@@ -57,6 +59,12 @@ fn init() -> G {
             TextEdit::new(""),
             TextEdit::new("not-a-code"),
             TextEdit::new(""),
+        ],
+        codes: [
+            TextEdit::new(""),
+            TextEdit::new("N0X6"),
+            TextEdit::new("N0X6PFNB"),
+            TextEdit::new("N0X6PFNB"),
         ],
         tooltip_open: false,
         chat: chat_app::ChatDemo::new(),

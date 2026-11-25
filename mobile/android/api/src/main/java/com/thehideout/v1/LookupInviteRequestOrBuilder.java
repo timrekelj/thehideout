@@ -12,7 +12,7 @@ public interface LookupInviteRequestOrBuilder extends
 
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>
@@ -21,7 +21,7 @@ public interface LookupInviteRequestOrBuilder extends
   java.lang.String getTokenOrCode();
   /**
    * <pre>
-   * The link token or the short code (dashes and case ignored).
+   * The short code (dashes and case ignored).
    * </pre>
    *
    * <code>string token_or_code = 1 [json_name = "tokenOrCode"];</code>

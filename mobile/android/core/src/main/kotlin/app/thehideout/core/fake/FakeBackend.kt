@@ -1,6 +1,9 @@
 package app.thehideout.core.fake
 
 import app.thehideout.core.api.*
+import app.thehideout.core.attachment.DEFAULT_MAX_UPLOAD_BYTES
+import app.thehideout.core.attachment.FileKind
+import app.thehideout.core.attachment.fileKind
 import app.thehideout.core.auth.InvitePreview
 import app.thehideout.core.auth.PasskeyCeremony
 import app.thehideout.core.auth.PasskeyFinish
@@ -115,6 +118,14 @@ class FakeBackend(
         VoiceState(HIDEOUT, LOUNGE, BRUNO, selfMute = true, joinedAt = now - Duration.ofMinutes(12)),
     )
 
+    private val emojis = mutableMapOf(
+        HIDEOUT to mutableListOf(
+            Emoji(EMOJI_WAVE, HIDEOUT, "wave", animated = false, image = "$FAKE_EMOJI_PREFIX/wave.webp", creatorId = TIM, createdAt = now - Duration.ofDays(60)),
+            Emoji(EMOJI_THUMBS_UP, HIDEOUT, "thumbs_up", animated = false, image = "$FAKE_EMOJI_PREFIX/thumbs_up.webp", creatorId = ANA, createdAt = now - Duration.ofDays(55)),
+            Emoji(EMOJI_PARTY_PARROT, HIDEOUT, "party_parrot", animated = true, image = "$FAKE_EMOJI_PREFIX/party_parrot.gif", creatorId = CVETKA, createdAt = now - Duration.ofDays(40)),
+        ),
+    )
+
     private val messages = mutableMapOf<Long, MutableList<Message>>()
     private var nextId = 10_000L
     private var unreadDemoSent = false
@@ -124,6 +135,14 @@ class FakeBackend(
     var failSends: Int = 0
     /** The next [n] edits fail with a network error, independent of [failSends]. */
     var failEdits: Int = 0
+    /** The next [n] uploads fail with a network error, after their simulated progress (for the failed-chip/retry state). */
+    var failUploads: Int = 0
+    /** The fake's stand-in for the server's per-upload cap (ATT-09); a file over this throws [AppError.TooLarge] at once. */
+    var maxUploadBytes: Long = DEFAULT_MAX_UPLOAD_BYTES
+    /** How many `progress` calls a simulated upload makes on its way to 100%. */
+    var uploadTicks: Int = 4
+    private val pendingUploads = mutableMapOf<Long, PendingAttachment>()
+    private var nextPendingId = 90_000L
 
     /** Every message ever sent through [sendMessage], oldest first. */
     val sent: MutableList<Message> = mutableListOf()
@@ -217,10 +236,56 @@ class FakeBackend(
             failSends--
             throw AppError.Unavailable("connection reset")
         }
-        val m = push(channel, TIM, content, now + Duration.ofMinutes(5), nonce)
+        val attachments = attachmentIds.mapNotNull { id -> pendingUploads.remove(id)?.let(::fakeAttachment) }
+        val m = push(channel, TIM, content, now + Duration.ofMinutes(5), nonce, attachments = attachments)
         sent += m
         emit(GatewayEvent.MessageCreated(m))
         return m
+    }
+
+    /**
+     * Simulates a streamed upload: reads [source] whole (the fake has no real network to stream
+     * over), reports [uploadTicks] progress steps paced by [latency], then either fails
+     * ([failUploads]) or answers a [PendingAttachment] good for [sendMessage] within the hour.
+     */
+    override suspend fun uploadAttachment(channel: Long, filename: String, contentType: String, size: Long, source: UploadSource, progress: (Long) -> Unit): PendingAttachment {
+        if (size > maxUploadBytes) throw AppError.TooLarge
+        val bytes = source.open().use { it.readBytes() }
+        val ticks = uploadTicks.coerceAtLeast(1)
+        repeat(ticks) { t ->
+            if (!latency.isZero) delay(latency.toMillis() / ticks)
+            progress(bytes.size.toLong() * (t + 1) / ticks)
+        }
+        if (failUploads > 0) {
+            failUploads--
+            throw AppError.Unavailable("connection reset")
+        }
+        val id = nextPendingId++
+        val pending = PendingAttachment(id, filename, contentType.ifBlank { "application/octet-stream" }, bytes.size.toLong(), now + Duration.ofHours(1))
+        pendingUploads[id] = pending
+        return pending
+    }
+
+    /** A generated `Attachment` for a message that linked [pending]: a bundled asset standing in for the real upload, by its kind. */
+    private fun fakeAttachment(pending: PendingAttachment): Attachment {
+        val kind = fileKind(pending.contentType, pending.filename)
+        val source = when (kind) {
+            FileKind.Image -> "square-1.jpg"
+            FileKind.Video -> "clip-1.mp4"
+            FileKind.Audio -> "tone-1.m4a"
+            else -> "notes-1.txt"
+        }
+        val picture = kind == FileKind.Image
+        return Attachment(
+            id = pending.id,
+            filename = pending.filename,
+            contentType = pending.contentType,
+            size = pending.size,
+            file = "file:///android_asset/fake_media/$source",
+            width = if (picture) 800 else null,
+            height = if (picture) 600 else null,
+            thumbnail = if (kind == FileKind.Video) "file:///android_asset/fake_media/clip-1-poster.jpg" else null,
+        )
     }
 
     private val openedDms = mutableListOf<DmChannel>().apply { addAll(dms) }
@@ -249,6 +314,11 @@ class FakeBackend(
     override suspend fun listRoles(guild: Long): GuildRoles {
         pause()
         return GuildRoles(roles[guild].orEmpty(), version = 4)
+    }
+
+    override suspend fun listEmojis(guild: Long): List<Emoji> {
+        pause()
+        return emojis[guild].orEmpty()
     }
 
     override suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji) {
@@ -530,11 +600,70 @@ class FakeBackend(
         if (i >= 0) list[i] = f(list[i])
     }
 
-    private fun push(channel: Long, author: Long, content: String, at: Instant, nonce: String = ""): Message {
+    private fun push(channel: Long, author: Long, content: String, at: Instant, nonce: String = "", attachments: List<Attachment> = emptyList()): Message {
         val guild = channels.firstOrNull { it.id == channel }?.guildId
-        val m = Message(nextId++, channel, guild, author, content, at, nonce = nonce)
+        val m = Message(nextId++, channel, guild, author, content, at, nonce = nonce, attachments = attachments)
         messages.getOrPut(channel) { mutableListOf() }.add(m)
         return m
+    }
+
+    /**
+     * A generated attachment: `displayName` is what the message shows (unique per attachment, like a
+     * real upload's name); `asset` is which bundled file it points to (`ui/src/main/assets/fake_media`,
+     * several attachments can share one, as several real uploads could share a generated thumbnail).
+     */
+    private fun asset(displayName: String, asset: String, contentType: String, size: Long, width: Int? = null, height: Int? = null, thumbnail: String? = null, removed: Boolean = false) =
+        Attachment(
+            id = nextId++,
+            filename = displayName,
+            contentType = contentType,
+            size = size,
+            file = if (removed) "" else "file:///android_asset/fake_media/$asset",
+            width = width,
+            height = height,
+            thumbnail = thumbnail?.let { "file:///android_asset/fake_media/$it" },
+            removed = removed,
+        )
+
+    /**
+     * Pictures (1, 2, 3 and 4+ up, for every grid layout), a video, an audio note, a file and one
+     * an admin removed — desktop's `fake_files.rs::seed_attachments`, into the empty #design channel.
+     */
+    private fun seedAttachments() {
+        var t = now - Duration.ofDays(3)
+        push(DESIGN, BRUNO, "the new dashboard, before the polish pass", t, attachments = listOf(asset("dashboard.jpg", "square-1.jpg", "image/jpeg", 420_000, 1000, 1000)))
+        t = t.plusSeconds(360)
+        push(
+            DESIGN, TIM, "shots from the hike", t,
+            attachments = listOf(asset("hike-1.jpg", "landscape-3.jpg", "image/jpeg", 480_000, 1200, 800), asset("hike-2.jpg", "square-1.jpg", "image/jpeg", 410_000, 1000, 1000)),
+        )
+        t = t.plusSeconds(360)
+        push(
+            DESIGN, ANA, "Photos from Saturday", t,
+            attachments = listOf(
+                asset("saturday-1.jpg", "landscape-1.jpg", "image/jpeg", 840_000, 1200, 800),
+                asset("saturday-2.jpg", "portrait-1.jpg", "image/jpeg", 910_000, 900, 1200),
+                asset("saturday-3.jpg", "landscape-2.jpg", "image/jpeg", 1_200_000, 1200, 800),
+            ),
+        )
+        t = t.plusSeconds(360)
+        push(
+            DESIGN, CVETKA, "moodboard", t,
+            attachments = listOf(
+                asset("mood-1.jpg", "landscape-4.jpg", "image/jpeg", 300_000, 1200, 800),
+                asset("mood-2.jpg", "landscape-5.jpg", "image/jpeg", 300_000, 1200, 800),
+                asset("mood-3.jpg", "portrait-1.jpg", "image/jpeg", 300_000, 900, 1200),
+                asset("mood-4.jpg", "square-1.jpg", "image/jpeg", 300_000, 1000, 1000),
+            ),
+        )
+        t = t.plusSeconds(360)
+        push(DESIGN, ANA, "screen recording of the bug", t, attachments = listOf(asset("demo.mp4", "clip-1.mp4", "video/mp4", 590_746, 960, 540, thumbnail = "clip-1-poster.jpg")))
+        t = t.plusSeconds(360)
+        push(DESIGN, ANA, "", t, attachments = listOf(asset("voice-note.m4a", "tone-1.m4a", "audio/mp4", 98_808)))
+        t = t.plusSeconds(360)
+        push(DESIGN, BRUNO, "notes from the planning session", t, attachments = listOf(asset("meeting-notes.txt", "notes-1.txt", "text/plain", 218)))
+        t = t.plusSeconds(360)
+        push(DESIGN, CVETKA, "this was the wrong sheet", t, attachments = listOf(asset("invoice.xlsx", "notes-1.txt", "application/vnd.ms-excel", 88_000, removed = true)))
     }
 
     private fun seed() {
@@ -571,6 +700,134 @@ class FakeBackend(
         DM_BRUNO_LINES.forEachIndexed { i, (who, line) -> push(DM_BRUNO, who, line, now - Duration.ofDays(5) + Duration.ofSeconds(i * 120L)) }
         push(20, ANA, "rehearsal moved to Thursday", now - Duration.ofDays(6))
         push(30, BRUNO, "sourdough starter is alive", now - Duration.ofDays(7))
+        // Oldest seeds first: the transcript orders by message id, and the attachment UI tests
+        // scroll to the attachment rows, so those must stay the newest messages in #design.
+        seedEmbeds()
+        seedEmoji()
+        seedAttachments()
+    }
+
+    /** Custom emoji inline in a sentence, and a jumbo-only message (MD-06/07), into #design.
+     *  Seeded older than the attachment messages so they stay the newest - and so the rows the
+     *  attachment UI tests scroll to remain in the transcript's initial viewport. */
+    private fun seedEmoji() {
+        var t = now - Duration.ofDays(4) - Duration.ofHours(2)
+        push(DESIGN, BRUNO, "nice work team <:thumbs_up:$EMOJI_THUMBS_UP> see you at standup <:wave:$EMOJI_WAVE>", t)
+        t = t.plusSeconds(300)
+        push(DESIGN, ANA, "<a:party_parrot:$EMOJI_PARTY_PARROT> <a:party_parrot:$EMOJI_PARTY_PARROT> <a:party_parrot:$EMOJI_PARTY_PARROT>", t)
+    }
+
+    /**
+     * A link, image and video embed, then one rich post per provider (X, TikTok, Instagram,
+     * Reddit) - desktop's `fake_files.rs::seed_embeds` (ATT-06), into #design. `message_updated`
+     * is simulated by attaching the embed directly rather than delaying it (the gateway path is
+     * exercised by the reducer and UI tests, not the fake's timing). Seeded older than the
+     * attachment messages so those stay the newest in #design (see [seedEmoji]).
+     */
+    private fun seedEmbeds() {
+        var t = now - Duration.ofDays(4) - Duration.ofHours(6)
+        pushEmbed(
+            DESIGN, TIM, "the release notes are up", t,
+            Embed(
+                url = "https://example.com/wiki/release",
+                title = "Release notes: v0.0.3",
+                description = "Adds a live gateway, drops polling in favor of push updates, and tightens the reconnect backoff so flaky networks recover faster without hammering the server.",
+                siteName = "example wiki",
+                thumbnail = "$FAKE_MEDIA_PREFIX/landscape-3.jpg",
+                thumbnailWidth = 1200,
+                thumbnailHeight = 800,
+                kind = EmbedKind.Link,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, ANA, "found the old mockup", t,
+            Embed(
+                url = "https://example.com/gallery/mockup",
+                title = "Early dashboard mockup",
+                description = "Before the warm palette landed.",
+                siteName = "example gallery",
+                thumbnail = "$FAKE_MEDIA_PREFIX/square-1.jpg",
+                thumbnailWidth = 1000,
+                thumbnailHeight = 1000,
+                kind = EmbedKind.Image,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, BRUNO, "clip from the demo", t,
+            Embed(
+                url = "https://example.com/clips/demo",
+                title = "Screen recording of the bug",
+                siteName = "example clips",
+                kind = EmbedKind.Video,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Video, file = "$FAKE_MEDIA_PREFIX/clip-1.mp4", poster = "$FAKE_MEDIA_PREFIX/clip-1-poster.jpg", width = 960, height = 540, durationMs = 6_000, size = 590_746)),
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, CVETKA, "", t,
+            Embed(
+                url = "https://x.example.com/cvetka/status/1",
+                provider = "x",
+                authorName = "cvetka",
+                authorIcon = "$FAKE_MEDIA_PREFIX/square-1.jpg",
+                description = "Shipped the new icon set today. Been a long couple of weeks but it's finally in the wiki.",
+                kind = EmbedKind.Rich,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/landscape-4.jpg", width = 1200, height = 800)),
+                publishedAt = t,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, ANA, "", t,
+            Embed(
+                url = "https://tiktok.example.com/@ana/video/1",
+                provider = "tiktok",
+                authorName = "ana",
+                description = "weekend hike recap #trail",
+                kind = EmbedKind.Rich,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Video, file = "$FAKE_MEDIA_PREFIX/clip-1.mp4", poster = "$FAKE_MEDIA_PREFIX/clip-1-poster.jpg", width = 960, height = 540, durationMs = 6_000, size = 590_746)),
+                publishedAt = t,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, BRUNO, "", t,
+            Embed(
+                url = "https://instagram.example.com/p/1",
+                provider = "instagram",
+                authorName = "bruno.cooks",
+                authorIcon = "$FAKE_MEDIA_PREFIX/square-1.jpg",
+                description = "Saturday's moodboard.",
+                kind = EmbedKind.Rich,
+                media = listOf(
+                    EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/landscape-1.jpg", width = 1200, height = 800),
+                    EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/portrait-1.jpg", width = 900, height = 1200),
+                ),
+                publishedAt = t,
+            ),
+        )
+        t = t.plusSeconds(240)
+        pushEmbed(
+            DESIGN, TIM, "", t,
+            Embed(
+                url = "https://reddit.example.com/r/thehideout/comments/1",
+                provider = "reddit",
+                authorName = "u/tim",
+                title = "Found this at the flea market, 5 euros",
+                description = "Still works. Mechanical, loud, perfect.",
+                kind = EmbedKind.Rich,
+                media = listOf(EmbedMedia(kind = EmbedMediaKind.Image, file = "$FAKE_MEDIA_PREFIX/landscape-5.jpg", width = 1200, height = 800)),
+                publishedAt = t,
+            ),
+        )
+    }
+
+    private fun pushEmbed(channel: Long, author: Long, content: String, at: Instant, embed: Embed) {
+        val m = push(channel, author, content, at)
+        val withEmbed = m.copy(embeds = listOf(embed))
+        messages.getValue(channel).let { list -> list[list.indexOfFirst { it.id == m.id }] = withEmbed }
     }
 
     companion object {
@@ -605,6 +862,14 @@ class FakeBackend(
 
         const val DM_ANA = 50L
         const val DM_BRUNO = 51L
+
+        /** The Hideout's custom emoji (MSG-09): two static, one animated. */
+        const val EMOJI_WAVE = 9001L
+        const val EMOJI_THUMBS_UP = 9002L
+        const val EMOJI_PARTY_PARROT = 9003L
+
+        private const val FAKE_MEDIA_PREFIX = "file:///android_asset/fake_media"
+        private const val FAKE_EMOJI_PREFIX = "file:///android_asset/fake_emoji"
 
         /** The account with an authenticator app (signing in as her asks for the second factor). */
         const val DORA = 5L

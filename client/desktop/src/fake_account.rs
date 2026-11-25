@@ -11,7 +11,8 @@
 //! - `tim` has a passkey; a passkey ceremony finishes [`PASSKEY_SECS`] after it starts;
 //! - `bruno` is a legacy account without an email;
 //! - invites `WXYZ-2345` (pending, The Hideout), `EXPD-0001` (expired), `RVKD-0001` (revoked)
-//!   and `USED-0001` (accepted); a link `.../invite/tok-wxyz` is the first one's.
+//!   and `ACPT-0001` (accepted), all valid 8-character Crockford codes; a link
+//!   `.../invite/WXYZ-2345` is the first one's.
 
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -52,7 +53,7 @@ pub const DORA: &str = "dora";
 pub const INVITE_PENDING: &str = "WXYZ-2345";
 pub const INVITE_EXPIRED: &str = "EXPD-0001";
 pub const INVITE_REVOKED: &str = "RVKD-0001";
-pub const INVITE_USED: &str = "USED-0001";
+pub const INVITE_USED: &str = "ACPT-0001";
 const SECOND_FACTOR_TRIES: u32 = 5;
 /// Signed-in code checks (authenticator, email change) the fake allows.
 const USER_CHECKS: u32 = 10;
@@ -61,7 +62,6 @@ const INVITE_DAYS: i64 = 7;
 struct FakeInvite {
     invite: Invite,
     code: String,
-    token: String,
 }
 
 pub(super) struct Accounts {
@@ -154,7 +154,6 @@ impl Accounts {
         let invite = |id: u64,
                       email: &str,
                       code: &str,
-                      token: &str,
                       status: InviteStatus,
                       inviter: Option<User>,
                       guilds: Vec<u64>,
@@ -173,7 +172,6 @@ impl Accounts {
                 accepted_user_id: (status == InviteStatus::Accepted).then_some(ANA),
             },
             code: code.into(),
-            token: token.into(),
         };
         let tim = Some(user(TIM, "tim"));
         Accounts {
@@ -194,7 +192,6 @@ impl Accounts {
                     9001,
                     "erin@example.com",
                     INVITE_PENDING,
-                    "tok-wxyz",
                     InviteStatus::Pending,
                     tim.clone(),
                     vec![HIDEOUT],
@@ -204,7 +201,6 @@ impl Accounts {
                     9002,
                     "finn@example.com",
                     INVITE_EXPIRED,
-                    "tok-expd",
                     InviteStatus::Expired,
                     tim.clone(),
                     vec![HIDEOUT],
@@ -214,7 +210,6 @@ impl Accounts {
                     9003,
                     "gus@example.com",
                     INVITE_REVOKED,
-                    "tok-rvkd",
                     InviteStatus::Revoked,
                     tim.clone(),
                     vec![HIDEOUT],
@@ -224,7 +219,6 @@ impl Accounts {
                     9004,
                     "ana@example.com",
                     INVITE_USED,
-                    "tok-used",
                     InviteStatus::Accepted,
                     None,
                     vec![HIDEOUT],
@@ -242,10 +236,7 @@ impl Accounts {
 
     fn find_invite(&self, code_or_link: &str) -> Option<usize> {
         let raw = code_or_link.trim();
-        let token = raw.rsplit('/').next().unwrap_or(raw);
-        self.invites
-            .iter()
-            .position(|i| i.token == token || plain(&i.code) == plain(raw))
+        self.invites.iter().position(|i| plain(&i.code) == plain(raw))
     }
 }
 
@@ -437,7 +428,7 @@ impl World {
             id,
             email,
             code: Some(code.clone()),
-            link: Some(format!("http://127.0.0.1:8080/invite/tok-{id}")),
+            link: Some(format!("http://127.0.0.1:8080/invite/{code}")),
             status: InviteStatus::Pending,
             inviter: Some(self.me.clone()),
             guild_ids: guilds,
@@ -455,7 +446,6 @@ impl World {
                     ..invite.clone()
                 },
                 code,
-                token: format!("tok-{id}"),
             },
         );
         Ok(invite)
@@ -600,10 +590,9 @@ impl World {
                 f.code = format!("RSND-{:04}", id % 10_000);
                 f.invite.status = InviteStatus::Pending;
                 f.invite.expires_at = at(now_unix() + INVITE_DAYS * DAY);
-                f.token = format!("tok-rsnd-{id}");
                 Ok(Invite {
                     code: Some(f.code.clone()),
-                    link: Some(format!("http://127.0.0.1:8080/invite/{}", f.token)),
+                    link: Some(format!("http://127.0.0.1:8080/invite/{}", f.code)),
                     ..f.invite.clone()
                 })
             }

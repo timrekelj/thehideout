@@ -1,6 +1,7 @@
 package app.thehideout.core
 
 import app.thehideout.core.api.AppError
+import app.thehideout.core.embed.EmbedRef
 import app.thehideout.core.api.GuildMembers
 import app.thehideout.core.api.GuildRoles
 import app.thehideout.core.api.MessagePage
@@ -34,15 +35,15 @@ class ReducerTest {
         assertEquals(setOf(TIM, ANA, BRUNO), s0.users.keys - CVETKA)
     }
 
-    @Test fun `opening a guild fetches its first page, its members and roles once`() {
+    @Test fun `opening a guild fetches its first page, its members, roles and emojis once`() {
         val r = Reducer.reduce(AppState(), Action.InitialLoaded(kotlinx.coroutines.runBlocking { app.thehideout.core.fake.FakeBackend().loadInitial() }))
         assertEquals(
-            listOf(Effect.LoadMembers(HIDEOUT), Effect.LoadAccess(HIDEOUT), Effect.LoadMessages(GENERAL, null)),
+            listOf(Effect.LoadMembers(HIDEOUT), Effect.LoadAccess(HIDEOUT), Effect.LoadEmojis(HIDEOUT), Effect.LoadMessages(GENERAL, null)),
             r.effects,
         )
         val again = Reducer.reduce(r.state, Action.OpenGuild(GARAGE)).state
         val back = Reducer.reduce(again, Action.OpenGuild(HIDEOUT))
-        assertEquals(emptyList<Effect>(), back.effects, "already asked for members, roles and the first page")
+        assertEquals(emptyList<Effect>(), back.effects, "already asked for members, roles, emojis and the first page")
     }
 
     @Test fun `sidebar order follows the layout and voice channels are not opened`() {
@@ -62,6 +63,33 @@ class ReducerTest {
         val s = s0.withLog(GENERAL, listOf(1, 2)).event(GatewayEvent.MessageCreated(msg(3, GENERAL, ANA)))
         assertEquals(listOf(1L, 2L, 3L), s.log(GENERAL)!!.messages.map { it.id })
         assertEquals(Unread(), s.unreadOf(GENERAL))
+    }
+
+    @Test fun `message_created in the open channel counts unread when its tab is not on screen`() {
+        // Switching to the DMs/Mentions/You tab leaves `currentChannel` selected in the Servers
+        // tab, so it alone cannot say whether the transcript is actually visible.
+        val s = s0.withLog(GENERAL, listOf(1, 2)).reduce(Action.SetChannelForeground(false))
+            .event(GatewayEvent.MessageCreated(msg(3, GENERAL, ANA, "hello @tim")))
+        assertEquals(listOf(1L, 2L, 3L), s.log(GENERAL)!!.messages.map { it.id })
+        assertEquals(Unread(1, 1), s.unreadOf(GENERAL))
+    }
+
+    @Test fun `message_created in an open DM stays read while the DMs tab is front`() {
+        // Opening a DM moves `place` to Home; the DMs tab (not Servers) is the one showing it.
+        val opened = s0.reduce(Action.StartDm(ANA))
+        assertEquals(Place.Home, opened.place)
+        assertEquals(DM_ANA, opened.currentChannel)
+        val s = opened.event(GatewayEvent.MessageCreated(msg(9, DM_ANA, ANA, "hi", guild = null)))
+        assertEquals(Unread(), s.unreadOf(DM_ANA))
+    }
+
+    @Test fun `SetChannelForeground(true) alone clears what piled up in the current channel`() {
+        val s = s0.withLog(GENERAL, listOf(1, 2)).reduce(Action.SetChannelForeground(false))
+            .event(GatewayEvent.MessageCreated(msg(3, GENERAL, ANA)))
+        assertEquals(Unread(1), s.unreadOf(GENERAL))
+        val back = s.reduce(Action.SetChannelForeground(true))
+        assertEquals(Unread(), back.unreadOf(GENERAL))
+        assertEquals(Marker.After(GENERAL, 2L), back.marker, "divider after the last read message")
     }
 
     @Test fun `message_created elsewhere counts unread and mentions`() {
@@ -85,6 +113,26 @@ class ReducerTest {
         val visited = s.reduce(Action.OpenChannel(DEV))
         assertEquals(Unread(), visited.unreadOf(DEV))
         assertEquals(Marker.After(DEV, 3L), visited.marker, "divider after the last read message")
+    }
+
+    @Test fun `reselecting the already-open channel re-arrives with no duplicate fetch unless its log is stale`() {
+        val loaded = s0.withLog(GENERAL, listOf(1, 2))
+        val reselected = Reducer.reduce(loaded, Action.OpenChannel(GENERAL))
+        assertEquals(emptyList<Effect>(), reselected.effects, "already loaded and not stale: no duplicate LoadMessages")
+
+        val stale = loaded.copy(logs = loaded.logs + (GENERAL to loaded.logs.getValue(GENERAL).copy(stale = true)))
+        val staleReselect = Reducer.reduce(stale, Action.OpenChannel(GENERAL))
+        assertEquals(listOf(Effect.LoadMessages(GENERAL, null)), staleReselect.effects, "stale: refetches the newest page")
+    }
+
+    @Test fun `reopening the already-selected channel still clears unread it piled up while its tab was not on screen`() {
+        // E.g. switching to the Mentions tab (which does not change `currentChannel`), a message
+        // arrives, then tapping that entry re-opens the same channel: it must still clear.
+        val s = s0.withLog(GENERAL, listOf(1, 2)).reduce(Action.SetChannelForeground(false))
+            .event(GatewayEvent.MessageCreated(msg(3, GENERAL, ANA)))
+        assertEquals(Unread(1), s.unreadOf(GENERAL))
+        val reopened = s.reduce(Action.SetChannelForeground(true)).reduce(Action.OpenChannel(GENERAL))
+        assertEquals(Unread(), reopened.unreadOf(GENERAL))
     }
 
     @Test fun `message_updated takes content, embeds and attachments but keeps reactions`() {
@@ -631,6 +679,21 @@ class ReducerTest {
         assertEquals(4L, roles.roleVersions[HIDEOUT])
         val failed = s0.reduce(Action.MembersLoaded(GARAGE, Result.failure(AppError.Unavailable("x"))))
         assertFalse(GARAGE in failed.membersAsked)
+    }
+
+    @Test fun `emoji replies fill the list, a failure allows asking again`() {
+        val s = s0.reduce(Action.EmojisLoaded(HIDEOUT, Result.success(listOf(Emoji(1, HIDEOUT, "wave", false, "k", TIM, T0)))))
+        assertEquals(listOf("wave"), s.emojis[HIDEOUT]?.map { it.name })
+        val failed = s0.copy(emojisAsked = setOf(GARAGE)).reduce(Action.EmojisLoaded(GARAGE, Result.failure(AppError.Unavailable("x"))))
+        assertFalse(GARAGE in failed.emojisAsked)
+    }
+
+    @Test fun `an embed's fold flips and is remembered per message and index`() {
+        val s = s0.reduce(Action.ToggleEmbedCollapsed(1, 0))
+        assertTrue(EmbedRef(1, 0) in s.collapsedEmbeds)
+        assertFalse(EmbedRef(1, 1) in s.collapsedEmbeds)
+        val reopened = s.reduce(Action.ToggleEmbedCollapsed(1, 0))
+        assertFalse(EmbedRef(1, 0) in reopened.collapsedEmbeds)
     }
 
     @Test fun `notices queue three and dismiss by id`() {

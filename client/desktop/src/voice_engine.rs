@@ -12,16 +12,14 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::Receiver;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rune::{Pixels, Waker};
-use thehideout_voice::{
-    AudioInput, ConnectOptions, ScreenSource, SyntheticPicture, VideoFrame, VideoInput, VideoSink, VoiceEngine,
-    VoiceEvent, VoiceMode,
-};
+use thehideout_voice_types::{ScreenSource, VideoFrame, VideoSink, VoiceEvent, VoiceMode};
 
 use crate::voice::{Sound, VoiceIntent, VoiceSink};
 
@@ -49,6 +47,8 @@ pub trait Engine {
     fn start_mic_test(&self) {}
     fn stop_mic_test(&self) {}
     fn set_camera(&self, _on: bool) {}
+    /// The camera to publish (`None`: the default). The web engine only.
+    fn set_camera_device(&self, _id: Option<String>) {}
     fn set_screen_share(&self, _source: Option<ScreenSource>) {}
     fn list_screen_sources(&self) {}
     /// The newest-frame handle of a video track, `None` when the engine has no pictures (a test
@@ -87,6 +87,7 @@ pub fn mirrored(f: &VideoFrame) -> Vec<u8> {
     out
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
     let spawned = std::thread::Builder::new().name("thehideout-video".into()).spawn(move || {
         let mut seen = 0;
@@ -106,6 +107,24 @@ fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
     }
 }
 
+/// The browser has no threads: the same poll runs on the event loop, every 16 ms.
+#[cfg(target_arch = "wasm32")]
+fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut seen = 0;
+        while !stop.load(Ordering::Relaxed) {
+            if let Some(f) = sink.latest_frame()
+                && f.seq != seen
+            {
+                seen = f.seq;
+                let rgba = if mirror { mirrored(&f) } else { f.rgba.to_vec() };
+                pixels.set(f.width, f.height, rgba);
+            }
+            gloo_timers::future::sleep(Duration::from_millis(16)).await;
+        }
+    });
+}
+
 /// The settings the engine is told about, kept so a connect, a mic test or a device refresh that
 /// builds the engine starts it with them. A field is `None` until the app has said it, so an engine
 /// the app never configured keeps its own defaults.
@@ -113,6 +132,7 @@ fn pump(sink: VideoSink, pixels: Pixels, mirror: bool, stop: Arc<AtomicBool>) {
 struct Config {
     input: Option<Option<String>>,
     output: Option<Option<String>>,
+    camera: Option<Option<String>>,
     mode: Option<VoiceMode>,
     ns: Option<bool>,
     ec: Option<bool>,
@@ -126,6 +146,9 @@ impl Config {
         }
         if let Some(o) = &self.output {
             engine.set_output_device(o.clone());
+        }
+        if let Some(c) = &self.camera {
+            engine.set_camera_device(c.clone());
         }
         if let Some(m) = self.mode {
             engine.set_mode(m);
@@ -217,7 +240,10 @@ impl<E: Engine> EngineSink<E> {
     }
 
     fn tear_down(&mut self) {
-        self.watches.clear();
+        // Every tile's subscription goes with the room (an engine may hold a cell per track).
+        for track in std::mem::take(&mut self.watches).into_keys() {
+            self.with_engine(|e| e.release_video(&track));
+        }
         if self.active
             && let Some((engine, _)) = &self.engine
         {
@@ -259,6 +285,10 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
             VoiceIntent::SetInputDevice(id) => {
                 self.config.input = Some(id.clone());
                 self.with_engine(|e| e.set_input_device(id));
+            }
+            VoiceIntent::SetCameraDevice(id) => {
+                self.config.camera = Some(id.clone());
+                self.with_engine(|e| e.set_camera_device(id));
             }
             VoiceIntent::SetOutputDevice(id) => {
                 self.config.output = Some(id.clone());
@@ -341,7 +371,7 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
     }
 
     fn events(&mut self) -> Vec<VoiceEvent> {
-        let Some((_, rx)) = &self.engine else {
+        let Some((engine, rx)) = &self.engine else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -349,8 +379,11 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
             // A teardown we asked for is reported once, in order, so each such report is
             // matched with one request; anything else is the engine giving up.
             if let VoiceEvent::VideoTrackEnded { track_id, .. } = &ev {
-                // A track that is gone has nothing to watch.
-                self.watches.remove(track_id);
+                // A track that is gone has nothing to watch: the engine drops what it kept for it
+                // (the later `UnwatchVideo` finds no watch, so this is the one place to do it).
+                if self.watches.remove(track_id).is_some() {
+                    engine.release_video(track_id);
+                }
             }
             if matches!(ev, VoiceEvent::Disconnected { .. }) {
                 if self.expected > 0 {
@@ -372,6 +405,62 @@ impl<E: Engine> VoiceSink for EngineSink<E> {
         self.watches.get(track).map(|w| w.pixels.clone())
     }
 }
+
+// ---- sounds ----------------------------------------------------------------------------------
+
+/// One note of a cue: frequency in Hz and length in seconds.
+type Note = (f32, f32);
+
+/// The cue's notes. All short and soft, two-note blips going up for "something arrived" and down
+/// for "something left", single or paired lower tones for the mute and deafen clicks.
+fn notes(sound: Sound) -> &'static [Note] {
+    match sound {
+        Sound::Join => &[(523.25, 0.09), (783.99, 0.15)],
+        Sound::PeerJoin => &[(659.25, 0.07), (880.0, 0.11)],
+        Sound::PeerLeave => &[(880.0, 0.07), (659.25, 0.11)],
+        Sound::MuteOn => &[(329.63, 0.08)],
+        Sound::MuteOff => &[(440.0, 0.08)],
+        Sound::DeafOn => &[(440.0, 0.06), (293.66, 0.09)],
+        Sound::DeafOff => &[(293.66, 0.06), (440.0, 0.09)],
+        Sound::Disconnect => &[(587.33, 0.08), (392.0, 0.16)],
+    }
+}
+
+/// How loud a cue is at its peak (of full scale): present, never startling.
+const CUE_GAIN: f32 = 0.16;
+
+/// The cue as mono samples at `rate` Hz: each note a sine with a hint of its octave, a 6 ms
+/// fade in and a smooth fade out, so notes start and end at zero and never click.
+pub fn synth(sound: Sound, rate: u32) -> Vec<f32> {
+    let rate_f = rate as f32;
+    let mut out = Vec::new();
+    for &(hz, secs) in notes(sound) {
+        let n = (secs * rate_f) as usize;
+        let attack = (0.006 * rate_f) as usize;
+        for i in 0..n {
+            let t = i as f32 / rate_f;
+            let phase = std::f32::consts::TAU * hz * t;
+            let tone = phase.sin() + 0.2 * (2.0 * phase).sin();
+            let fade_in = (i as f32 / attack.max(1) as f32).min(1.0);
+            let left = (n - i) as f32 / n as f32;
+            // Raised cosine over the whole note: loudest at the start, zero at the end.
+            let fade_out = 0.5 * (1.0 + (std::f32::consts::PI * (1.0 - left)).cos());
+            out.push(CUE_GAIN * tone / 1.2 * fade_in * fade_out.powf(0.8));
+        }
+    }
+    out.extend(std::iter::repeat_n(0.0, (0.01 * rate_f) as usize));
+    out
+}
+
+// The native engine (LiveKit, cpal): not built for the browser, whose engine is `voice_web.rs`.
+#[cfg(not(target_arch = "wasm32"))]
+pub use live::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod live {
+use super::*;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use thehideout_voice::{AudioInput, ConnectOptions, SyntheticPicture, VideoInput, VoiceEngine};
 
 // ---- the real engine -----------------------------------------------------------------------
 
@@ -544,52 +633,6 @@ pub fn app_sink() -> EngineSink<LiveEngine> {
     live_sink(std::env::var_os(SYNTHETIC_ENV).is_some())
 }
 
-// ---- sounds ----------------------------------------------------------------------------------
-
-/// One note of a cue: frequency in Hz and length in seconds.
-type Note = (f32, f32);
-
-/// The cue's notes. All short and soft, two-note blips going up for "something arrived" and down
-/// for "something left", single or paired lower tones for the mute and deafen clicks.
-fn notes(sound: Sound) -> &'static [Note] {
-    match sound {
-        Sound::Join => &[(523.25, 0.09), (783.99, 0.15)],
-        Sound::PeerJoin => &[(659.25, 0.07), (880.0, 0.11)],
-        Sound::PeerLeave => &[(880.0, 0.07), (659.25, 0.11)],
-        Sound::MuteOn => &[(329.63, 0.08)],
-        Sound::MuteOff => &[(440.0, 0.08)],
-        Sound::DeafOn => &[(440.0, 0.06), (293.66, 0.09)],
-        Sound::DeafOff => &[(293.66, 0.06), (440.0, 0.09)],
-        Sound::Disconnect => &[(587.33, 0.08), (392.0, 0.16)],
-    }
-}
-
-/// How loud a cue is at its peak (of full scale): present, never startling.
-const CUE_GAIN: f32 = 0.16;
-
-/// The cue as mono samples at `rate` Hz: each note a sine with a hint of its octave, a 6 ms
-/// fade in and a smooth fade out, so notes start and end at zero and never click.
-pub fn synth(sound: Sound, rate: u32) -> Vec<f32> {
-    let rate_f = rate as f32;
-    let mut out = Vec::new();
-    for &(hz, secs) in notes(sound) {
-        let n = (secs * rate_f) as usize;
-        let attack = (0.006 * rate_f) as usize;
-        for i in 0..n {
-            let t = i as f32 / rate_f;
-            let phase = std::f32::consts::TAU * hz * t;
-            let tone = phase.sin() + 0.2 * (2.0 * phase).sin();
-            let fade_in = (i as f32 / attack.max(1) as f32).min(1.0);
-            let left = (n - i) as f32 / n as f32;
-            // Raised cosine over the whole note: loudest at the start, zero at the end.
-            let fade_out = 0.5 * (1.0 + (std::f32::consts::PI * (1.0 - left)).cos());
-            out.push(CUE_GAIN * tone / 1.2 * fade_in * fade_out.powf(0.8));
-        }
-    }
-    out.extend(std::iter::repeat_n(0.0, (0.01 * rate_f) as usize));
-    out
-}
-
 /// Plays cues through the default output device with `cpal`. Each cue opens a short stream on a
 /// thread of its own (a `cpal` stream is not `Send`) and closes it when the cue ends, so
 /// nothing is held open between cues and a changed default device is followed.
@@ -671,4 +714,6 @@ fn play_blocking(sound: Sound) -> Result<(), String> {
     std::thread::sleep(std::time::Duration::from_secs_f32(secs + 0.25));
     drop(stream);
     Ok(())
+}
+
 }

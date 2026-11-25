@@ -16,27 +16,10 @@ mod video;
 
 use std::sync::mpsc::Receiver;
 
-pub use video::{VideoFrame, VideoSink, i420_to_rgba, synthetic_rgba};
+pub use thehideout_voice_types::*;
+pub use video::{i420_to_rgba, synthetic_rgba};
 pub use audio::{LEVELS_HZ, SpeakingDetector, TxGate, level_of};
 pub use session::{ConnState, StateMachine};
-
-/// A participant's identity: our user id as a decimal string.
-pub type Identity = String;
-
-/// When the microphone transmits.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum VoiceMode {
-    /// Transmit while the mic level (0..1, see [`level_of`]) is at or above `threshold`.
-    VoiceActivity { threshold: f32 },
-    /// Transmit while [`VoiceEngine::set_ptt`] says the key is held.
-    PushToTalk,
-}
-
-impl Default for VoiceMode {
-    fn default() -> Self {
-        VoiceMode::VoiceActivity { threshold: 0.35 }
-    }
-}
 
 /// Where microphone audio comes from.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -102,79 +85,6 @@ pub struct ConnectOptions {
     pub start_muted: bool,
     /// Join deafened (implies muted).
     pub start_deafened: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MediaKind {
-    Audio,
-    Video,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VideoKind {
-    Camera,
-    Screen,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Quality {
-    Excellent,
-    Good,
-    Poor,
-    Lost,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AudioDevice {
-    /// Pass this to `set_input_device` / `set_output_device`. Stable across hot-plug.
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScreenKind {
-    /// A whole display. On macOS the system picker (ScreenCaptureKit) asks the user which one.
-    Screen,
-    Window,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScreenSource {
-    pub id: u64,
-    pub title: String,
-    pub kind: ScreenKind,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum VoiceEvent {
-    Connecting,
-    Connected,
-    Reconnecting,
-    Disconnected { reason: String },
-    ParticipantJoined { identity: Identity },
-    ParticipantLeft { identity: Identity },
-    /// A participant started or stopped talking. The local user is included.
-    Speaking { identity: Identity, speaking: bool },
-    /// Mic and playback levels, 0..1, about [`LEVELS_HZ`] times a second while anything is
-    /// audible (one all-zero batch when it stops). The local mic is reported under the local
-    /// identity once connected and under `""` before that (mic test). Everyone with an audio
-    /// track in the room is in each batch.
-    Levels(Vec<(Identity, f32)>),
-    TrackMuted { identity: Identity, kind: MediaKind, muted: bool },
-    Devices {
-        inputs: Vec<AudioDevice>,
-        outputs: Vec<AudioDevice>,
-        default_input: Option<String>,
-        default_output: Option<String>,
-    },
-    ScreenSources(Vec<ScreenSource>),
-    /// A camera or screen track is available. `track_id` goes to
-    /// [`VoiceEngine::subscribe_video`]. The local user's own camera and screen are reported
-    /// too, for a preview.
-    VideoTrack { identity: Identity, source: VideoKind, track_id: String },
-    VideoTrackEnded { identity: Identity, track_id: String },
-    ConnectionQuality { identity: Identity, quality: Quality },
-    Error(String),
 }
 
 pub(crate) enum Command {
@@ -312,7 +222,8 @@ impl VoiceEngine {
 
     /// The newest-frame handle for a track announced by `VideoTrack`.
     pub fn subscribe_video(&self, track_id: &str) -> VideoSink {
-        VideoSink { cell: self.videos.cell(track_id) }
+        let cell = self.videos.cell(track_id);
+        VideoSink::new(move || cell.latest())
     }
 }
 

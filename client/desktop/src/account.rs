@@ -13,14 +13,15 @@ use thehideout_api::{
     ApiError, DeviceSession, Invite, InvitePreview, InviteStatus, NewInvite, Passkey, Permissions,
     SecondFactorMethod, TotpSetup, User,
 };
-use thehideout_design::components::{ToastKind, digits_only};
+use thehideout_design::components::invite_code_input::CODE_LEN;
+use thehideout_design::components::{ToastKind, digits_only, normalize_code};
 
 use crate::backend::{Command, InviteAction, SecurityInfo, Session};
 use crate::forms::{
     AuthError, AuthField, AuthMode, AuthStep, DialogKind, Phase, RESEND_SECS, auth_error, sentence,
 };
 use crate::server_settings::error_text;
-use crate::state::{AppState, Section};
+use crate::state::{AppState, Screen, Section};
 
 /// Shortest password the server takes.
 pub const MIN_PASSWORD: usize = 8;
@@ -117,23 +118,46 @@ pub struct InvitesUi {
     pub busy: HashSet<u64>,
 }
 
-/// The invite code as typed or pasted (the server ignores case and the dash).
+/// The invite code as typed or pasted, cleaned up (a pasted link gives its code) and written
+/// `XXXX-XXXX` once it is whole; shorter codes come back as the bare characters.
 pub fn invite_code(raw: &str) -> String {
-    raw.trim().to_owned()
-}
-
-/// Whether the invite field holds a link rather than a code.
-fn looks_like_link(raw: &str) -> bool {
-    raw.contains("://") || raw.contains("/invite/")
-}
-
-/// The token at the end of an invite link the OS opened (`thehideout://invite/<token>`).
-fn link_token(url: &str) -> String {
-    let url = url.trim();
-    match url.find("/invite/") {
-        Some(at) => url[at + "/invite/".len()..].split(['?', '#', '/']).next().unwrap_or("").to_owned(),
-        None => String::new(),
+    let code = normalize_code(raw);
+    if code.len() == CODE_LEN {
+        format!("{}-{}", &code[..CODE_LEN / 2], &code[CODE_LEN / 2..])
+    } else {
+        code
     }
+}
+
+/// The whole code in an invite link (`thehideout://invite/XXXX-XXXX`, `https://<host>/invite/...`),
+/// `None` when the text has no `/invite/` or no full 8-character code after it.
+pub fn link_code(url: &str) -> Option<String> {
+    let url = url.trim();
+    let rest = &url[url.rfind("/invite/")? + "/invite/".len()..];
+    exact_code(rest.split(['?', '#', '/']).next().unwrap_or(""))
+}
+
+/// The code of the invite link the web client was opened at (`/app/?invite=XXXX-XXXX`; the path
+/// may lack its trailing slash); `None` for any other page or a code that isn't complete.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn invite_query_code(pathname: &str, search: &str) -> Option<String> {
+    if !matches!(pathname, "/app" | "/app/") {
+        return None;
+    }
+    let query = search.strip_prefix('?').unwrap_or(search);
+    let value = query.split('&').find_map(|pair| pair.strip_prefix("invite="))?;
+    // The browser may send the dash percent-encoded.
+    exact_code(&value.replace("%2D", "-").replace("%2d", "-"))
+}
+
+/// The code characters of `segment` (as the code field reads them) when there are exactly
+/// [`CODE_LEN`] of them; a longer or shorter segment is no code, it is not cut to length.
+fn exact_code(segment: &str) -> Option<String> {
+    let code: String = segment
+        .chars()
+        .filter_map(|c| normalize_code(c.encode_utf8(&mut [0; 4])).chars().next())
+        .collect();
+    (code.len() == CODE_LEN).then_some(code)
 }
 
 /// A loose email check: something@something.something, no spaces.
@@ -295,9 +319,10 @@ impl AppState {
                 if code.is_empty() {
                     return self.auth_invalid(AuthField::Invite, "Enter the code from your invite email.");
                 }
-                if looks_like_link(&code) {
-                    return self.auth_invalid(AuthField::Invite, "Paste just the code from your invite email, not the link.");
+                if normalize_code(&code).len() != CODE_LEN {
+                    return self.auth_invalid(AuthField::Invite, "Invite codes have 8 characters.");
                 }
+                self.auth.invite_tried = Some(code.clone());
                 Command::LookupInvite { code }
             }
             AuthStep::InviteAccept { code, .. } => {
@@ -544,16 +569,52 @@ impl AppState {
         }
     }
 
-    /// A link the system opened the app with (`thehideout://invite/<token>`): straight to the
-    /// invite, when signed out.
+    /// A link the system opened the app with (`thehideout://invite/XXXX-XXXX`, or the emailed
+    /// `https://<host>/invite/XXXX-XXXX`): straight to the invite, when signed out. Only a full
+    /// code counts.
     pub fn open_link(&mut self, url: &str) {
-        let code = link_token(url);
-        if !url.contains("/invite/") || code.is_empty() || self.session.is_some() || self.auth.phase == Phase::Busy {
+        let Some(code) = link_code(url) else { return };
+        if self.session.is_some() || self.auth.phase == Phase::Busy {
             return;
         }
         self.set_auth_mode(AuthMode::Invite);
         self.auth.invite.replace_text(&code);
         self.submit_auth();
+    }
+
+    /// The 8th character of an invite code was entered (typed or pasted): look it up, once per
+    /// code. Enter and "Continue" still work; so does a second go at a code that failed, after it
+    /// is edited. True when the lookup started.
+    pub fn auto_submit_invite(&mut self) -> bool {
+        if self.auth.step != AuthStep::InviteCode || self.auth.phase == Phase::Busy {
+            return false;
+        }
+        let code = invite_code(&self.auth.invite.text);
+        if normalize_code(&code).len() != CODE_LEN {
+            self.auth.invite_tried = None;
+            return false;
+        }
+        if self.auth.invite_tried.as_deref() == Some(code.as_str()) {
+            return false;
+        }
+        self.submit_auth();
+        true
+    }
+
+    /// The link the page was opened at, once the saved session has been checked.
+    /// True when it did something.
+    pub fn apply_pending_link(&mut self) -> bool {
+        match self.screen {
+            Screen::Loading => false,
+            Screen::Main => self.pending_link.take().is_some(),
+            Screen::Auth => match self.pending_link.take() {
+                Some(url) => {
+                    self.open_link(&url);
+                    true
+                }
+                None => false,
+            },
+        }
     }
 
     /// A passkey ceremony page is ready: the browser opens it and the form (or dialog) waits.
@@ -1123,18 +1184,36 @@ mod tests {
 
     #[test]
     fn invite_codes_are_taken_as_typed_and_links_are_spotted() {
-        assert_eq!(invite_code(" WXYZ-2345 "), "WXYZ-2345");
-        assert!(!looks_like_link("WXYZ-2345"));
-        assert!(looks_like_link("https://hideout.example/invite/abc"));
-        assert!(looks_like_link("thehideout://invite/tok"));
-        assert!(looks_like_link("hideout.example/invite/abc"));
+        assert_eq!(invite_code(" wxyz-2345 "), "WXYZ-2345");
+        assert_eq!(invite_code("WXYZ2"), "WXYZ2");
+        assert_eq!(invite_code("https://hideout.example/invite/wxyz-2345"), "WXYZ-2345");
+        assert_eq!(invite_code(""), "");
     }
 
     #[test]
-    fn deep_links_carry_their_token() {
-        assert_eq!(link_token("https://hideout.example/invite/abc_DEF-123"), "abc_DEF-123");
-        assert_eq!(link_token("thehideout://invite/tok?x=1"), "tok");
-        assert_eq!(link_token("thehideout://other"), "");
+    fn deep_links_carry_their_code() {
+        assert_eq!(link_code("https://hideout.example/invite/wxyz-2345").as_deref(), Some("WXYZ2345"));
+        assert_eq!(link_code("thehideout://invite/WXYZ2345?x=1").as_deref(), Some("WXYZ2345"));
+        assert_eq!(link_code("thehideout://invite/WXYZ-23"), None);
+        assert_eq!(link_code("https://hideout.example/invite/ABCDEFGHJK"), None);
+        assert_eq!(link_code("thehideout://invite/"), None);
+        assert_eq!(link_code("thehideout://other"), None);
+        assert_eq!(link_code("WXYZ-2345"), None);
+    }
+
+    #[test]
+    fn the_web_query_of_an_invite_is_parsed() {
+        assert_eq!(invite_query_code("/app/", "?invite=wxyz-2345").as_deref(), Some("WXYZ2345"));
+        assert_eq!(invite_query_code("/app", "?invite=WXYZ-2345").as_deref(), Some("WXYZ2345"));
+        assert_eq!(invite_query_code("/app/", "?x=1&invite=WXYZ2345").as_deref(), Some("WXYZ2345"));
+        assert_eq!(invite_query_code("/app/", "?invite=WXYZ%2D2345").as_deref(), Some("WXYZ2345"));
+        assert_eq!(invite_query_code("/app/", "?invite=WXYZ-23"), None);
+        assert_eq!(invite_query_code("/app/", "?invite=ABCD-EFGH-XYZ"), None);
+        assert_eq!(invite_query_code("/app/", "?invite="), None);
+        assert_eq!(invite_query_code("/app/", "?x=1"), None);
+        assert_eq!(invite_query_code("/app/", ""), None);
+        assert_eq!(invite_query_code("/app/invite/WXYZ-2345", ""), None);
+        assert_eq!(invite_query_code("/other", "?invite=WXYZ-2345"), None);
     }
 
     #[test]

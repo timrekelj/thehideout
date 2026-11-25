@@ -1,0 +1,20 @@
+thehideout for Linux (x86_64)
+
+Quick start
+  tar xzf thehideout-*-linux-x86_64.tar.gz
+  cd thehideout-*-linux-x86_64
+  ./thehideout-desktop
+
+Install for your user (adds a launcher and makes thehideout://invite/... links open the app)
+  install -Dm755 thehideout-desktop ~/.local/bin/thehideout-desktop
+  install -Dm644 thehideout.desktop ~/.local/share/applications/thehideout.desktop
+  update-desktop-database ~/.local/share/applications
+  xdg-mime default thehideout.desktop x-scheme-handler/thehideout
+
+Make sure ~/.local/bin is on your PATH, because the .desktop file runs `thehideout-desktop`
+by name. To use another location, edit the Exec= line.
+
+Runtime needs: a GPU with Vulkan drivers (mesa-vulkan-drivers on Debian/Ubuntu),
+libxkbcommon, libasound2 and either Wayland or X11. Built on Ubuntu 24.04 (glibc 2.39), so
+distributions older than that may not run it.
+The camera is not supported on Linux yet.

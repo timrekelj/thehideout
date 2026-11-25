@@ -7,8 +7,10 @@ import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
 import com.connectrpc.ConnectException
+import com.connectrpc.MethodSpec
 import com.connectrpc.ProtocolClientConfig
 import com.connectrpc.ResponseMessage
+import com.connectrpc.StreamType
 import com.connectrpc.extensions.GoogleJavaLiteProtobufStrategy
 import com.connectrpc.impl.ProtocolClient
 import com.connectrpc.okhttp.ConnectOkHttpClient
@@ -24,6 +26,8 @@ import com.thehideout.v1.CompleteSecondFactorRequest
 import com.thehideout.v1.DeleteMessageRequest
 import com.thehideout.v1.DmServiceClient
 import com.thehideout.v1.EditMessageRequest
+import com.thehideout.v1.EmojiServiceClient
+import com.thehideout.v1.ListEmojisRequest
 import com.thehideout.v1.FinishPasskeyLoginRequest
 import com.thehideout.v1.FinishPasskeyRegistrationRequest
 import com.thehideout.v1.FinishSecondFactorPasskeyRequest
@@ -53,10 +57,22 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.async
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
+import okio.BufferedSink
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** What the real client needs to know about where it runs. */
 class ApiConfig(
@@ -80,14 +96,39 @@ fun buildHttpClients(config: ApiConfig, base: OkHttpClient = OkHttpClient()): Pa
     return unary to stream
 }
 
+/** Percent-encodes everything except RFC 3986 unreserved characters (desktop's `upload.rs::encode_component`). */
+private fun encodeUploadComponent(s: String): String = buildString {
+    for (b in s.toByteArray(Charsets.UTF_8)) {
+        val c = b.toInt() and 0xFF
+        if (c.toChar().isLetterOrDigit() && c < 128 || c.toChar() in "-._~") append(c.toChar())
+        else append("%%%02X".format(c))
+    }
+}
+
+/**
+ * connect-kotlin's own default times every call out at 10 s, the gateway's Subscribe stream
+ * included: it was being torn down and reopened every ~10 s regardless of the OkHttp stream
+ * client's readTimeout(0) and GatewayStream's own 75 s silence watchdog. Unary calls keep that
+ * 10 s default; a stream gets `null` so the library schedules no timeout for it at all (its own
+ * watchdog is the only thing that can end it) — not `Duration.INFINITE`, which `simpleTimeouts`
+ * cannot express (its two parameters are non-null) and which would still schedule a very long
+ * real timer rather than none.
+ */
+internal val apiTimeoutOracle: (MethodSpec<*, *>) -> Duration? = { spec -> if (spec.streamType == StreamType.UNARY) 10.seconds else null }
 /** The real [ApiClient]: connect-kotlin over OkHttp, with every failure mapped to [AppError]. */
-class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
+class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient> = buildHttpClients(config)) : ApiClient {
+    /** The server this client was built for (tests check a cold start used the right one). */
+    val baseUrl: String get() = config.baseUrl
+    /** [baseUrl] trimmed, as the upload URL is built from it. */
+    private val uploadBaseUrl = baseUrl.trimEnd('/')
+    private val uploadHttp = http.first
     private val client = ProtocolClient(
         ConnectOkHttpClient(http.first, http.second),
         ProtocolClientConfig(
             host = config.baseUrl,
             serializationStrategy = GoogleJavaLiteProtobufStrategy(),
             networkProtocol = NetworkProtocol.CONNECT,
+            timeoutOracle = apiTimeoutOracle,
         ),
     )
     private val auth = AuthServiceClient(client)
@@ -95,6 +136,7 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     private val dms = DmServiceClient(client)
     private val messages = MessageServiceClient(client)
     private val roles = RoleServiceClient(client)
+    private val emojiService = EmojiServiceClient(client)
     private val gateway = GatewayServiceClient(client)
     private val invites = InviteServiceClient(client)
 
@@ -156,6 +198,52 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
         return call { messages.sendMessage(req.build()) }.message.toModel()
     }
 
+    override suspend fun uploadAttachment(channel: Long, filename: String, contentType: String, size: Long, source: UploadSource, progress: (Long) -> Unit): PendingAttachment {
+        val url = "$uploadBaseUrl/attachments?channel_id=$channel&filename=${encodeUploadComponent(filename)}"
+        val body = object : RequestBody() {
+            override fun contentType() = contentType.toMediaTypeOrNull()
+            override fun contentLength() = size
+            override fun writeTo(sink: BufferedSink) {
+                source.open().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var sent = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        sink.write(buffer, 0, read)
+                        sent += read
+                        progress(sent)
+                    }
+                }
+            }
+        }
+        val request = Request.Builder().url(url).post(body).build()
+        return suspendCancellableCoroutine { cont ->
+            val call = uploadHttp.newCall(request)
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(AppError.Unavailable(e.message.orEmpty()))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    // Reading the body can itself throw (truncated stream, reset connection): map that to a
+                    // retryable Unavailable and resume, so the waiting coroutine never hangs in this callback.
+                    val result = response.use { r ->
+                        runCatching { r.body.bytes() }.fold(
+                            onSuccess = { bytes ->
+                                if (!r.isSuccessful) Result.failure(httpAttachmentError(r.code, bytes)) else runCatching { parsePendingAttachment(bytes) }
+                            },
+                            onFailure = { e -> Result.failure(AppError.Unavailable(e.message ?: "couldn't read the upload response")) },
+                        )
+                    }
+                    if (!cont.isActive) return
+                    result.fold(cont::resume, cont::resumeWithException)
+                }
+            })
+        }
+    }
+
     override suspend fun openDm(userId: Long): DmChannel {
         val r = call { dms.openDm(com.thehideout.v1.OpenDmRequest.newBuilder().setUserId(userId).build()) }
         return r.channel.toModel()
@@ -169,6 +257,11 @@ class ConnectApiClient(config: ApiConfig, http: Pair<OkHttpClient, OkHttpClient>
     override suspend fun listRoles(guild: Long): GuildRoles {
         val r = call { roles.listRoles(ListRolesRequest.newBuilder().setGuildId(guild).build()) }
         return GuildRoles(r.rolesList.map { it.toModel() }, r.version)
+    }
+
+    override suspend fun listEmojis(guild: Long): List<Emoji> {
+        val r = call { emojiService.listEmojis(ListEmojisRequest.newBuilder().setGuildId(guild).build()) }
+        return r.emojisList.map { it.toModel() }
     }
 
     override suspend fun addReaction(channel: Long, message: Long, emoji: ReactionEmoji) {

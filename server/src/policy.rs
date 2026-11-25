@@ -40,7 +40,7 @@ impl Version {
 }
 
 /// Minimum client versions: one for everybody, optionally overridden per
-/// platform (`desktop`, `ios`, `android`).
+/// platform (`desktop`, `ios`, `android`, `web`; `web` has no generic fallback).
 #[derive(Debug, Clone, Default)]
 pub struct MinClient {
     pub default: Option<Version>,
@@ -58,6 +58,10 @@ impl MinClient {
 
     /// The minimum for `platform`.
     pub fn minimum(&self, platform: &str) -> Option<Version> {
+        // The web bundle ships with the server, so it never inherits the generic default.
+        if platform == "web" {
+            return self.platforms.get(platform).copied();
+        }
         self.platforms.get(platform).copied().or(self.default)
     }
 
@@ -85,7 +89,7 @@ pub struct Policy {
 
 /// Paths that never get the client-version check.
 fn exempt(path: &str) -> bool {
-    ["/health", "/ready", "/privacy", "/terms", "/invite", "/media"]
+    ["/health", "/ready", "/privacy", "/terms", "/invite", "/media", "/app"]
         .iter()
         .any(|p| path == *p || path.strip_prefix(p).is_some_and(|rest| rest.starts_with('/')))
 }
@@ -152,11 +156,21 @@ mod tests {
     }
 
     #[test]
+    fn web_never_inherits_the_default_minimum() {
+        let mut min = MinClient { default: Version::parse("1.2.0"), ..Default::default() };
+        assert!(min.too_old("web/0.1.0").is_none());
+        min.platforms.insert("web".into(), Version(2, 0, 0));
+        assert!(min.too_old("web/1.9.0").is_some());
+        assert!(min.too_old("web/2.0.0").is_none());
+    }
+
+    #[test]
     fn exempt_paths() {
-        for p in ["/health", "/ready", "/privacy", "/terms", "/invite/abc", "/media/k"] {
+        for p in ["/health", "/ready", "/privacy", "/terms", "/invite/abc", "/media/k", "/app", "/app/", "/app/app_bg.wasm"] {
             assert!(exempt(p), "{p}");
         }
         assert!(!exempt("/thehideout.v1.AuthService/Login"));
         assert!(!exempt("/privacy-x"));
+        assert!(!exempt("/application"));
     }
 }

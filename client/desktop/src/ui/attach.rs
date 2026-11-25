@@ -59,7 +59,15 @@ fn open_web(tx: &mut Tx, url: &str) {
 }
 
 /// The save dialog for `key`; the answer starts the download.
-pub fn save_as(tx: &mut Tx, key: String, name: String) {
+#[cfg(target_arch = "wasm32")]
+pub fn save_as(a: &mut App, _tx: &mut Tx, key: String, name: String) {
+    // No save dialog on the web: the browser downloads `/media/<key>` (the server names the file).
+    crate::web::download_url(&a.state.media_url(&key), &name);
+    a.state.toast(ToastKind::Success, format!("Downloading {name}"));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_as(_a: &mut App, tx: &mut Tx, key: String, name: String) {
     let options = rune::FileDialogOptions {
         title: "Save file".into(),
         file_name: Some(name),
@@ -78,6 +86,12 @@ pub fn save_as(tx: &mut Tx, key: String, name: String) {
 }
 
 /// The "+": the system's file chooser (one file at a time: Rune's dialog picks one).
+#[cfg(target_arch = "wasm32")]
+pub fn choose_files(_tx: &mut Tx) {
+    crate::web::pick_files("", true, |a, paths| a.act(|s| s.attach_paths(&paths)));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn choose_files(tx: &mut Tx) {
     let options = rune::FileDialogOptions {
         title: "Attach a file".into(),
@@ -189,7 +203,7 @@ fn file_card(a: &App, k: &Kit, key: &str, att: &Attachment, file: &str, kind: Fi
         size: att.size,
         kind,
         progress: a.state.ui.attach.downloads.get(file).map(|d| d.fraction()),
-        download: wire_tx(move |_, tx| save_as(tx, f1.clone(), n1.clone())),
+        download: wire_tx(move |a, tx| save_as(a, tx, f1.clone(), n1.clone())),
         open: kind
             .opens_inline()
             .then(|| wire_tx(move |a, tx| open_web(tx, &a.state.media_url(&f2)))),
@@ -214,7 +228,7 @@ fn audio_attachment(a: &App, k: &Kit, key: &str, att: &Attachment, file: &str) -
             a.act(|s| s.toggle_clip(&f1, &src, ClipKind::Audio));
         }),
         seek: scrub(f2),
-        download: wire_tx(move |_, tx| save_as(tx, f3.clone(), n.clone())),
+        download: wire_tx(move |a, tx| save_as(a, tx, f3.clone(), n.clone())),
     }
     .build(k)
 }
@@ -577,7 +591,7 @@ pub fn lightbox_layer(a: &App, k: &Kit, layer: &mut Vec<El>, window: (f32, f32))
         on_close: wire(|a| a.act(|s| s.close_lightbox())),
         on_prev: (lb.at > 0).then(|| wire(|a| a.act(|s| s.lightbox_step(-1)))),
         on_next: (lb.at + 1 < n).then(|| wire(|a| a.act(|s| s.lightbox_step(1)))),
-        on_download: wire_tx(move |_, tx| save_as(tx, key.clone(), name.clone())),
+        on_download: wire_tx(move |a, tx| save_as(a, tx, key.clone(), name.clone())),
     };
     lightbox(k, layer, view, |e| {
         e.modal(true, |a: &mut App| a.act(|s| s.close_lightbox()))

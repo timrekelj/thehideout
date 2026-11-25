@@ -1,6 +1,6 @@
 //! Voice calls of [`Client`]: joining and leaving voice channels, own flags and moderation.
 
-use connectrpc::client::HttpClient;
+use crate::transport::Transport;
 
 use crate::client::{Client, required};
 use crate::error::ApiError;
@@ -10,7 +10,7 @@ use crate::types::{VoiceJoin, VoiceState};
 type Result<T> = std::result::Result<T, ApiError>;
 
 impl Client {
-    fn voice(&self) -> Result<pb::VoiceServiceClient<HttpClient>> {
+    fn voice(&self) -> Result<pb::VoiceServiceClient<Transport>> {
         Ok(pb::VoiceServiceClient::new(self.http.clone(), self.config()?))
     }
 

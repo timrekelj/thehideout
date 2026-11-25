@@ -1,0 +1,234 @@
+# thehideout for Dokploy (Docker Compose service). See README.md in this directory.
+#
+# Dokploy's Traefik terminates TLS and routes the domains, so there is no Caddy
+# here and no port 8080/7880 is published on the host. Add the two domains in
+# the Dokploy UI (Domains tab):
+#   thehideout.zabit.si        -> service `server`,  port 8080
+#   voice.thehideout.zabit.si  -> service `livekit`, port 7880
+# and enable "Isolated Deployments" (Advanced tab) so every service shares one
+# private network and `server`, `scylla` and `livekit` resolve by service name.
+#
+# Variables come from Dokploy's Environment tab (written to a .env next to this
+# file); see .env.example. Every value used here is referenced as ${VAR}, since
+# Dokploy does not inject the .env into the containers by itself.
+#
+# Network layout
+#   - server   `expose` 8080 only; reached through Traefik.
+#   - scylla:  compose network only, nothing is published.
+#   - livekit  `expose` 7880 (signalling, via Traefik) and publishes 7881/tcp and
+#              7882/udp on the host for media. Single-port UDP mux, so no big UDP
+#              range and no host networking.
+#   - object storage is Cloudflare R2 (external, configured in the environment).
+
+services:
+  # Single node with PasswordAuthenticator on. --developer-mode defaults to 1 here
+  # (it skips the host I/O tuning checks, which fail on most VPSes); set
+  # SCYLLA_DEVELOPER_MODE=0 on a tuned host. Size with SCYLLA_SMP / SCYLLA_MEMORY.
+  scylla:
+    image: scylladb/scylla:2025.4
+    restart: unless-stopped
+    command: >-
+      --smp ${SCYLLA_SMP:-1}
+      --memory ${SCYLLA_MEMORY:-1G}
+      --overprovisioned ${SCYLLA_OVERPROVISIONED:-1}
+      --developer-mode ${SCYLLA_DEVELOPER_MODE:-1}
+      --authenticator PasswordAuthenticator
+      --authorizer CassandraAuthorizer
+    volumes:
+      - scylla-data:/var/lib/scylla
+    healthcheck:
+      # Healthy once the node is up and the native (CQL) transport is running.
+      test: ["CMD-SHELL", "nodetool status | grep -q '^UN' && nodetool statusbinary | grep -q running"]
+      interval: 15s
+      timeout: 15s
+      retries: 40
+      start_period: 60s
+
+  # One-shot: creates the application role on first boot and replaces the default
+  # `cassandra/cassandra` superuser password (same script as deploy/scylla-init.sh,
+  # inlined below). Idempotent; a redeploy re-applies the passwords from the
+  # environment, which is also how you rotate them.
+  scylla-init:
+    image: scylladb/scylla:2025.4
+    restart: "no"
+    depends_on:
+      scylla:
+        condition: service_healthy
+    environment:
+      SCYLLA_SUPERUSER_PASSWORD: ${SCYLLA_SUPERUSER_PASSWORD:?set SCYLLA_SUPERUSER_PASSWORD in the environment}
+      THEHIDEOUT_SCYLLA_USERNAME: ${THEHIDEOUT_SCYLLA_USERNAME:-thehideout}
+      THEHIDEOUT_SCYLLA_PASSWORD: ${THEHIDEOUT_SCYLLA_PASSWORD:?set THEHIDEOUT_SCYLLA_PASSWORD in the environment}
+    entrypoint: ["/bin/bash", "/scylla-init.sh"]
+    configs:
+      - source: scylla-init
+        target: /scylla-init.sh
+
+  server:
+    image: ghcr.io/timrekelj/thehideout-server:${THEHIDEOUT_VERSION:-latest}
+    # Pull on every deploy so a redeploy picks up a new `latest`.
+    pull_policy: always
+    restart: unless-stopped
+    # To build from the repo instead of pulling the image (README, "Build on
+    # Dokploy"), replace `image` and `pull_policy` with:
+    #   build:
+    #     context: ../..
+    #     dockerfile: Dockerfile
+    depends_on:
+      scylla:
+        condition: service_healthy
+      scylla-init:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+    expose:
+      - "8080"
+    environment:
+      THEHIDEOUT_LISTEN_ADDR: 0.0.0.0:8080
+      THEHIDEOUT_SCYLLA_NODES: scylla:9042
+      THEHIDEOUT_KEYSPACE: ${THEHIDEOUT_KEYSPACE:-thehideout}
+      THEHIDEOUT_SCYLLA_USERNAME: ${THEHIDEOUT_SCYLLA_USERNAME:-thehideout}
+      THEHIDEOUT_SCYLLA_PASSWORD: ${THEHIDEOUT_SCYLLA_PASSWORD:?set THEHIDEOUT_SCYLLA_PASSWORD in the environment}
+      THEHIDEOUT_SCYLLA_REPLICATION: ${THEHIDEOUT_SCYLLA_REPLICATION:-}
+      THEHIDEOUT_WORKER_ID: "0"
+      # Traefik's address on the Docker network: set it so rate limits and audit
+      # logs see real client IPs (see README). Empty trusts no proxy.
+      THEHIDEOUT_TRUSTED_PROXIES: ${THEHIDEOUT_TRUSTED_PROXIES:-}
+      THEHIDEOUT_LOG_FORMAT: ${THEHIDEOUT_LOG_FORMAT:-json}
+      THEHIDEOUT_HEARTBEAT_SECS: ${THEHIDEOUT_HEARTBEAT_SECS:-30}
+      THEHIDEOUT_MAX_UPLOAD_BYTES: ${THEHIDEOUT_MAX_UPLOAD_BYTES:-52428800}
+      THEHIDEOUT_ADMINS: ${THEHIDEOUT_ADMINS:-}
+      RUST_LOG: ${RUST_LOG:-info}
+      THEHIDEOUT_EMBEDS: ${THEHIDEOUT_EMBEDS:-on}
+      THEHIDEOUT_EMBEDS_CONTACT: ${THEHIDEOUT_EMBEDS_CONTACT:-}
+      THEHIDEOUT_EMBED_MAX_VIDEO_BYTES: ${THEHIDEOUT_EMBED_MAX_VIDEO_BYTES:-52428800}
+      THEHIDEOUT_EMBED_MIRRORS: ${THEHIDEOUT_EMBED_MIRRORS:-}
+      THEHIDEOUT_S3_ENDPOINT: ${THEHIDEOUT_S3_ENDPOINT:?set THEHIDEOUT_S3_ENDPOINT in the environment}
+      THEHIDEOUT_S3_REGION: ${THEHIDEOUT_S3_REGION:-auto}
+      THEHIDEOUT_S3_BUCKET: ${THEHIDEOUT_S3_BUCKET:?set THEHIDEOUT_S3_BUCKET in the environment}
+      THEHIDEOUT_S3_ACCESS_KEY: ${THEHIDEOUT_S3_ACCESS_KEY:?set THEHIDEOUT_S3_ACCESS_KEY in the environment}
+      THEHIDEOUT_S3_SECRET_KEY: ${THEHIDEOUT_S3_SECRET_KEY:?set THEHIDEOUT_S3_SECRET_KEY in the environment}
+      THEHIDEOUT_S3_PATH_STYLE: ${THEHIDEOUT_S3_PATH_STYLE:-true}
+      THEHIDEOUT_PUBLIC_URL: https://${THEHIDEOUT_DOMAIN:?set THEHIDEOUT_DOMAIN in the environment}
+      THEHIDEOUT_EMAIL_FROM: ${THEHIDEOUT_EMAIL_FROM:-thehideout <noreply@thehideout.zabit.si>}
+      THEHIDEOUT_RESEND_API_KEY: ${THEHIDEOUT_RESEND_API_KEY:?set THEHIDEOUT_RESEND_API_KEY in the environment}
+      THEHIDEOUT_BOOTSTRAP_ADMIN_EMAIL: ${THEHIDEOUT_BOOTSTRAP_ADMIN_EMAIL:-}
+      # Privacy policy and terms pages; the contact address is required.
+      THEHIDEOUT_CONTACT_EMAIL: ${THEHIDEOUT_CONTACT_EMAIL:?set THEHIDEOUT_CONTACT_EMAIL in the environment}
+      THEHIDEOUT_OPERATOR_NAME: ${THEHIDEOUT_OPERATOR_NAME:-}
+      # Version gate: clients older than this must update. Empty = no gate.
+      THEHIDEOUT_MIN_CLIENT_VERSION: ${THEHIDEOUT_MIN_CLIENT_VERSION:-}
+      THEHIDEOUT_MIN_CLIENT_VERSION_DESKTOP: ${THEHIDEOUT_MIN_CLIENT_VERSION_DESKTOP:-}
+      THEHIDEOUT_MIN_CLIENT_VERSION_IOS: ${THEHIDEOUT_MIN_CLIENT_VERSION_IOS:-}
+      THEHIDEOUT_MIN_CLIENT_VERSION_ANDROID: ${THEHIDEOUT_MIN_CLIENT_VERSION_ANDROID:-}
+      # Web client: unset = no gate (the bundle ships with the server).
+      THEHIDEOUT_MIN_CLIENT_VERSION_WEB: ${THEHIDEOUT_MIN_CLIENT_VERSION_WEB:-}
+      # Folder of the web client bundle served at /app/; unset = not served.
+      THEHIDEOUT_WEB_DIR: ${THEHIDEOUT_WEB_DIR:-/usr/share/thehideout/web}
+      THEHIDEOUT_S3_PUBLIC_BASE: ${THEHIDEOUT_S3_PUBLIC_BASE:-}
+      # Push notifications; empty = that provider is off.
+      THEHIDEOUT_APNS_KEY: ${THEHIDEOUT_APNS_KEY:-}
+      THEHIDEOUT_APNS_KEY_ID: ${THEHIDEOUT_APNS_KEY_ID:-}
+      THEHIDEOUT_APNS_TEAM_ID: ${THEHIDEOUT_APNS_TEAM_ID:-}
+      THEHIDEOUT_APNS_TOPIC: ${THEHIDEOUT_APNS_TOPIC:-}
+      THEHIDEOUT_APNS_SANDBOX: ${THEHIDEOUT_APNS_SANDBOX:-false}
+      THEHIDEOUT_FCM_SERVICE_ACCOUNT: ${THEHIDEOUT_FCM_SERVICE_ACCOUNT:-}
+      # Clients connect here (Traefik proxies the domain to livekit:7880).
+      LIVEKIT_URL: wss://${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN in the environment}
+      # The server calls LiveKit's API directly over the compose network.
+      LIVEKIT_API_URL: http://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in the environment}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in the environment}
+
+  # LiveKit runs on the normal bridge network. All media goes through one UDP
+  # port (rtc.udp_port, the "ICE/UDP mux" in LiveKit's port table) plus TCP
+  # 7881; both are published on the host and must be open in the firewall.
+  # use_external_ip makes LiveKit discover and advertise the host's public IP.
+  # No healthcheck: the image has no shell or wget.
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    expose:
+      - "7880"
+    ports:
+      - "7881:7881/tcp"
+      - "7882:7882/udp"
+    configs:
+      - source: livekit-config
+        target: /etc/livekit.yaml
+
+configs:
+  scylla-init:
+    content: |
+      #!/bin/bash
+      # One-shot Scylla role bootstrap, run by the `scylla-init` compose service.
+      #
+      # A fresh Scylla with PasswordAuthenticator has one superuser, cassandra /
+      # cassandra (created a short while after startup). This script:
+      #   1. waits until it can log in (default password, or the configured one),
+      #   2. creates / updates the application role (THEHIDEOUT_SCYLLA_USERNAME) with
+      #      the right to create and use keyspaces (the server runs its migrations as
+      #      this role, which includes CREATE KEYSPACE),
+      #   3. replaces the default superuser password.
+      # Safe to re-run; re-running re-applies the passwords from the env file.
+      set -euo pipefail
+
+      HOST=scylla
+      APP_USER=$${THEHIDEOUT_SCYLLA_USERNAME}
+      APP_PASS=$${THEHIDEOUT_SCYLLA_PASSWORD}
+      SU_PASS=$${SCYLLA_SUPERUSER_PASSWORD}
+
+      for v in "$$APP_USER" "$$APP_PASS" "$$SU_PASS"; do
+        # Values are interpolated into CQL: keep them to a safe alphabet.
+        if [[ ! "$$v" =~ ^[A-Za-z0-9_.@+=-]+$$ ]]; then
+          echo "scylla-init: credentials may only contain letters, digits and _.@+=- (use: openssl rand -hex 32)" >&2
+          exit 1
+        fi
+      done
+      if [[ "$$APP_USER" == "cassandra" ]]; then
+        echo "scylla-init: THEHIDEOUT_SCYLLA_USERNAME must not be the superuser 'cassandra'" >&2
+        exit 1
+      fi
+
+      cql() { # cql <password> <statement>
+        cqlsh "$$HOST" 9042 -u cassandra -p "$$1" -e "$$2" >/dev/null 2>&1
+      }
+
+      pass=""
+      for i in $$(seq 1 60); do
+        if cql "$$SU_PASS" "SELECT now() FROM system.local"; then pass=$$SU_PASS; break; fi
+        if cql cassandra "SELECT now() FROM system.local"; then pass=cassandra; break; fi
+        echo "scylla-init: waiting for the superuser role ($$i/60)"
+        sleep 5
+      done
+      if [[ -z "$$pass" ]]; then
+        echo "scylla-init: could not log in as cassandra with the default or the configured password" >&2
+        exit 1
+      fi
+
+      cqlsh "$$HOST" 9042 -u cassandra -p "$$pass" <<CQL
+      CREATE ROLE IF NOT EXISTS '$${APP_USER}' WITH PASSWORD = '$${APP_PASS}' AND LOGIN = true AND SUPERUSER = false;
+      ALTER ROLE '$${APP_USER}' WITH PASSWORD = '$${APP_PASS}';
+      GRANT ALL PERMISSIONS ON ALL KEYSPACES TO '$${APP_USER}';
+      ALTER ROLE cassandra WITH PASSWORD = '$${SU_PASS}';
+      CQL
+      echo "scylla-init: role '$${APP_USER}' ready, superuser password set"
+
+  # Compose interpolates the ${...} values from the environment into this file.
+  # Inline content (not a bind mount from the repo) survives Dokploy redeploys.
+  livekit-config:
+    content: |
+      port: 7880
+      rtc:
+        tcp_port: 7881
+        udp_port: 7882
+        use_external_ip: true
+      keys:
+        ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+      webhook:
+        api_key: ${LIVEKIT_API_KEY}
+        urls:
+          - http://server:8080/livekit/webhook
+
+volumes:
+  scylla-data:
