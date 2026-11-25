@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>thehideout - a cozy chat for you and your friends</title>
+<meta name="description" content="thehideout is a small, invite-only chat app for a group of friends: servers and channels, DMs, voice and video, screen sharing.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#16120e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f3ef" media="(prefers-color-scheme: light)">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/landing/site.css?v=@CSS_VERSION@">
+<script src="/landing/site.js?v=@JS_VERSION@" defer></script>
+</head>
+<body>
+<a class="skip" href="#download">Skip to downloads</a>
+
+<header class="top">
+  <a class="brand" href="/" aria-label="thehideout home">
+    <img src="/landing/icon.png" width="32" height="32" alt="">
+    <span>thehideout</span>
+  </a>
+  <nav aria-label="Primary">
+    <a href="#features">Features</a>
+    <a href="#download">Download</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Invite-only &middot; made for friends</p>
+      <h1>Your own cozy corner of the internet.</h1>
+      <p class="lead">thehideout is a small chat app for a group of friends: servers and channels, direct messages, voice and video, all in a warm, quiet place that is yours.</p>
+      <div class="cta">
+        <a class="btn primary" href="#download">Download the app</a>
+        <a class="btn" href="#features">See what&rsquo;s inside</a>
+      </div>
+      <p class="note">Accounts are by invitation only. Ask a friend who is already inside for an invite link.</p>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <img class="hero-icon" src="/landing/icon.png" width="640" height="640" alt="">
+      <div class="mock">
+        <div class="mock-bar"><i></i><i></i><i></i></div>
+        <div class="mock-body">
+          <div class="mock-side"><b># general</b><span># camp-ideas</span><span># music</span><span class="voice">&#9679; Campfire</span></div>
+          <div class="mock-chat">
+            <p><b>mia</b> found a spot for the weekend, look at this view</p>
+            <p><b>jonas</b> <em>bringing the tent</em> and a <code>speaker</code></p>
+            <p><b>ana</b> hop in voice, we&rsquo;re planning it now</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" class="section" aria-labelledby="features-h">
+    <h2 id="features-h">Everything a friend group needs</h2>
+    <p class="sub">No ads, no crowds. Just the people you invited.</p>
+    <ul class="grid">
+      <li class="card"><h3>Servers and channels</h3><p>Give every group its own server, with text and voice channels, roles and permissions.</p></li>
+      <li class="card"><h3>Direct messages</h3><p>Talk one-on-one or in small groups, right next to your servers.</p></li>
+      <li class="card"><h3>Voice, video, screen share</h3><p>Hop into a voice channel, turn on your camera or share your screen.</p></li>
+      <li class="card"><h3>Markdown and custom emoji</h3><p>Format messages with markdown, react to them, and add your own emoji to a server.</p></li>
+      <li class="card"><h3>Files and link previews</h3><p>Attach images and files, and get a preview of the links you share.</p></li>
+      <li class="card"><h3>Secure sign-in</h3><p>Protect your account with passkeys or an authenticator app (two-factor).</p></li>
+    </ul>
+  </section>
+
+  <section id="download" class="section" aria-labelledby="download-h">
+    <h2 id="download-h">Get thehideout</h2>
+    <p class="sub">Download the desktop app, or wait for the rest to land.</p>
+
+    <div class="dl-grid">
+      <article class="card dl" data-os-group="macos">
+        <h3>macOS</h3>
+        <p class="muted">Apple silicon and Intel</p>
+        <div class="btns">
+          <a class="btn" data-asset="macos-arm64.dmg" href="https://github.com/timrekelj/thehideout/releases/latest">Apple silicon (.dmg)</a>
+          <a class="btn" data-asset="macos-x86_64.dmg" href="https://github.com/timrekelj/thehideout/releases/latest">Intel (.dmg)</a>
+        </div>
+      </article>
+      <article class="card dl" data-os-group="windows">
+        <h3>Windows</h3>
+        <p class="muted">64-bit (x86_64)</p>
+        <div class="btns">
+          <a class="btn" data-asset="windows-x86_64.zip" href="https://github.com/timrekelj/thehideout/releases/latest">Download (.zip)</a>
+        </div>
+      </article>
+      <article class="card dl" data-os-group="linux">
+        <h3>Linux</h3>
+        <p class="muted">64-bit (x86_64)</p>
+        <div class="btns">
+          <a class="btn" data-asset="linux-x86_64.tar.gz" href="https://github.com/timrekelj/thehideout/releases/latest">Download (.tar.gz)</a>
+        </div>
+      </article>
+    </div>
+
+    <div class="brew card">
+      <div>
+        <h3>Homebrew</h3>
+        <p class="muted">On macOS you can also install with Homebrew.</p>
+      </div>
+      <code tabindex="0" aria-label="Homebrew install command">brew install --cask timrekelj/tap/thehideout</code>
+    </div>
+
+    <div class="dl-grid soon">
+      <article class="card dl unavailable" aria-disabled="true">
+        <h3>iOS</h3>
+        <p class="muted">The iPhone app is on its way.</p>
+        <span class="btn disabled" role="note">Coming soon</span>
+      </article>
+      <article class="card dl unavailable" aria-disabled="true">
+        <h3>Android</h3>
+        <p class="muted">The Android app is on its way.</p>
+        <span class="btn disabled" role="note">Coming soon</span>
+      </article>
+      <article class="card dl unavailable" id="web-app" aria-disabled="true">
+        <h3>Web</h3>
+        <p class="muted">Use it right in your browser.</p>
+        <span class="btn disabled" role="note" data-web-slot>Coming soon</span>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <a class="brand" href="/" aria-label="thehideout home">
+    <img src="/landing/icon.png" width="24" height="24" alt="">
+    <span>thehideout</span>
+  </a>
+  <nav aria-label="Legal">
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+    <a href="https://github.com/timrekelj/thehideout">GitHub</a>
+  </nav>
+</footer>
+</body>
+</html>

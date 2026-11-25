@@ -70,6 +70,7 @@ pub struct Builder {
     connect_grace: Option<Duration>,
     message_rate: (u32, f64),
     policy: thehideout_server::policy::Policy,
+    web_dir: Option<std::path::PathBuf>,
     push: Option<(Arc<dyn thehideout_server::push::Transport>, thehideout_server::push::Tuning)>,
 }
 
@@ -77,6 +78,12 @@ impl Builder {
     /// Push notifications through `transport` (a recording fake) with the given tuning.
     pub fn push(mut self, transport: Arc<dyn thehideout_server::push::Transport>, tuning: thehideout_server::push::Tuning) -> Self {
         self.push = Some((transport, tuning));
+        self
+    }
+
+    /// Serves the web client bundle in `dir` at `/app/`.
+    pub fn web_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.web_dir = Some(dir);
         self
     }
 
@@ -169,6 +176,7 @@ impl TestApp {
             connect_grace: None,
             message_rate: (100_000, 1_000.0),
             policy: Default::default(),
+            web_dir: None,
             push: None,
         }
     }
@@ -251,7 +259,8 @@ impl TestApp {
         // `localhost` (not the IP): WebAuthn needs a domain name as RP id.
         let state = state
             .with_public_url(format!("http://localhost:{}", addr.port()).parse().unwrap())
-            .with_policy(options.policy.clone());
+            .with_policy(options.policy.clone())
+            .with_web_dir(options.web_dir.clone());
         let state = match options.push.clone() {
             Some((transport, tuning)) => state.with_push(Some(transport), tuning),
             None => state,

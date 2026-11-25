@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use rune::Waker;
 use rune::prefs::Prefs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use thehideout_api::{
@@ -30,21 +31,29 @@ use crate::backend::{
 pub const DEV_SERVER: &str = "http://127.0.0.1:8080";
 /// The server a release build talks to by default.
 pub const PRODUCTION_SERVER: &str = "https://thehideout.zabit.si";
+/// Developer and testing override of the server; not offered anywhere in the UI.
 pub const SERVER_ENV: &str = "THEHIDEOUT_SERVER_URL";
 pub const APP_ID: &str = "thehideout";
 const PAGE: u32 = 50;
 /// A passkey ceremony is polled once a second for up to two minutes (and at once when the
 /// ceremony page redirects to the app's loopback address).
+#[cfg(not(target_arch = "wasm32"))]
 const PASSKEY_POLL: Duration = Duration::from_secs(1);
+#[cfg(not(target_arch = "wasm32"))]
 const PASSKEY_WAIT: Duration = Duration::from_secs(120);
 /// What the browser shows after the ceremony page redirects to the app.
+#[cfg(not(target_arch = "wasm32"))]
 const LOOPBACK_PAGE: &str = "<!doctype html><meta charset=\"utf-8\"><title>thehideout</title>\
 <body style=\"font-family:-apple-system,Segoe UI,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px\">\
 <h2>All set</h2><p>You can close this tab and return to thehideout.</p></body>";
 
-/// The server to talk to when the auth form's field is empty: the environment, else the default.
-pub fn default_server() -> String {
-    pick_server(std::env::var(SERVER_ENV).ok().as_deref(), cfg!(debug_assertions))
+/// The one server the app talks to: the environment override, else the build's default.
+pub fn server_url() -> String {
+    // The web client is served by its server: it talks to the origin it came from.
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::origin();
+    #[cfg(not(target_arch = "wasm32"))]
+    normalize(&pick_server(std::env::var(SERVER_ENV).ok().as_deref(), cfg!(debug_assertions)))
 }
 
 /// The environment's value if it is non-blank, else the production server (release builds) or the
@@ -89,6 +98,11 @@ pub type SharedPrefs = Arc<Mutex<Prefs>>;
 
 /// Opens the app's prefs file. Read once at launch (before the first frame), never in a frame.
 pub fn open_prefs() -> SharedPrefs {
+    // Rune's prefs have no file on web: the store is in memory, filled from `localStorage` here
+    // and written back by `with_prefs`.
+    #[cfg(target_arch = "wasm32")]
+    let prefs = Arc::new(Mutex::new(crate::web::load_prefs()));
+    #[cfg(not(target_arch = "wasm32"))]
     let prefs = Arc::new(Mutex::new(Prefs::open(APP_ID)));
     restrict_prefs_file(&prefs);
     prefs
@@ -104,11 +118,13 @@ pub fn with_prefs<T>(prefs: &SharedPrefs, f: impl FnOnce(&mut Prefs) -> T) -> T 
         f(&mut p)
     };
     restrict_prefs_file(prefs);
+    #[cfg(target_arch = "wasm32")]
+    crate::web::save_prefs(&prefs.lock().unwrap_or_else(|e| e.into_inner()));
     out
 }
 
 /// Keeps the prefs file (and its directory) owner-only on Unix.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn restrict_prefs_file(prefs: &SharedPrefs) {
     use std::os::unix::fs::PermissionsExt;
     let p = prefs.lock().unwrap_or_else(|e| e.into_inner());
@@ -121,7 +137,8 @@ fn restrict_prefs_file(prefs: &SharedPrefs) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), target_arch = "wasm32"))]
+#[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
 fn restrict_prefs_file(_prefs: &SharedPrefs) {}
 
 struct Store(SharedPrefs);
@@ -154,14 +171,14 @@ struct Shared {
     queue: Mutex<Vec<Reply>>,
     waker: Mutex<Option<Waker>>,
     client: Mutex<Client>,
-    /// The server URL the next login uses (the auth form's field).
-    server: Mutex<String>,
+    /// The server this backend talks to: fixed at construction.
+    server: String,
     /// Bumped by sign-in and sign-out: answers and gateway updates of an older session are dropped.
     generation: AtomicU64,
     gateway: Mutex<Option<(u64, GatewayHandle)>>,
     store: Store,
     /// Uploads under way by the client's id, so one can be stopped.
-    uploads: Mutex<HashMap<u64, tokio::task::AbortHandle>>,
+    uploads: Mutex<HashMap<u64, crate::rt::Task>>,
     /// Bumped by every passkey ceremony and by `CancelPasskey`: a poll of an older one stops.
     passkey: AtomicU64,
 }
@@ -209,9 +226,9 @@ impl Shared {
         self.push(Reply::Suspended { reason, until });
     }
 
-    /// The form's server, normalised, and a client for it without a token (sign-in calls).
-    fn signed_out_client(&self) -> (String, Client) {
-        let url = normalize(&self.server.lock().unwrap());
+    /// The app's server and a client for it without a token (sign-in calls).
+   fn signed_out_client(&self) -> (String, Client) {
+        let url = self.server.clone();
         (url.clone(), Client::new(url))
     }
 
@@ -224,6 +241,7 @@ impl Shared {
         Session { token, me }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Polls a passkey ceremony page's result once a second (or as soon as the page redirects to
     /// `loopback`), until it is there, fails, is cancelled (`None`) or two minutes pass.
     async fn wait_ceremony<T, Fut>(
@@ -289,7 +307,7 @@ impl Shared {
 }
 
 pub struct RealBackend {
-    runtime: Option<tokio::runtime::Runtime>,
+    rt: crate::rt::Rt,
     shared: Arc<Shared>,
     sent: Vec<Command>,
 }
@@ -298,24 +316,24 @@ impl RealBackend {
     /// Sessions are kept in `prefs`, the store the rest of the app shares.
     #[allow(dead_code)]
     pub fn with_shared(prefs: SharedPrefs) -> RealBackend {
-        RealBackend::with_store(Store(prefs))
+        RealBackend::with_store(Store(prefs), server_url())
     }
 
-    /// Sessions are kept in `prefs` (tests give it a temporary file or none).
+    /// Sessions are kept in `prefs`, talking to `url`: for tests, whose servers each run on their
+    /// own port. The app itself never calls this; it uses `with_shared` and `server_url()`.
     #[allow(dead_code)]
-    pub fn with_prefs(prefs: Prefs) -> RealBackend {
-        RealBackend::with_store(Store(Arc::new(Mutex::new(prefs))))
+    pub fn for_server(prefs: Prefs, url: &str) -> RealBackend {
+        RealBackend::with_store(Store(Arc::new(Mutex::new(prefs))), normalize(url))
     }
 
-    fn with_store(store: Store) -> RealBackend {
-        let server = default_server();
+    fn with_store(store: Store, server: String) -> RealBackend {
         RealBackend {
-            runtime: None,
+            rt: Default::default(),
             shared: Arc::new(Shared {
                 queue: Mutex::new(Vec::new()),
                 waker: Mutex::new(None),
-                client: Mutex::new(Client::new(normalize(&server))),
-                server: Mutex::new(server),
+                client: Mutex::new(Client::new(server.clone())),
+                server,
                 generation: AtomicU64::new(0),
                 gateway: Mutex::new(None),
                 store,
@@ -324,17 +342,6 @@ impl RealBackend {
             }),
             sent: Vec::new(),
         }
-    }
-
-    fn runtime(&mut self) -> &tokio::runtime::Runtime {
-        self.runtime.get_or_insert_with(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_name("thehideout-net")
-                .enable_all()
-                .build()
-                .expect("start the network runtime")
-        })
     }
 
     /// Runs `fut` and queues `make(result)`, unless the session changed meanwhile. A refused
@@ -346,7 +353,7 @@ impl RealBackend {
     ) {
         let shared = Arc::clone(&self.shared);
         let generation = shared.generation();
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let result = fut.await;
             if shared.generation() != generation {
                 return;
@@ -365,7 +372,7 @@ impl RealBackend {
         let shared = Arc::clone(&self.shared);
         let generation = shared.generation();
         let client = shared.client();
-        let handle = self.runtime().spawn({
+        let task = self.rt.spawn({
             let shared = Arc::clone(&shared);
             async move {
                 let steps = Arc::new(AtomicU64::new(u64::MAX));
@@ -381,17 +388,34 @@ impl RealBackend {
                 let result = match source {
                     UploadSource::Bytes(bytes) => client.upload_attachment(channel, &filename, &content_type, bytes, report).await,
                     UploadSource::Path { path, size } => {
-                        // The thumbnail of a picture is read beside the upload, off the UI thread.
-                        if content_type.starts_with("image/") && size <= thehideout_api::MAX_MEDIA_BYTES as u64 {
-                            let p = path.clone();
-                            if let Ok(Ok(bytes)) = tokio::task::spawn_blocking(move || std::fs::read(p)).await {
-                                shared.push(Reply::UploadPreview { id, bytes });
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            // The thumbnail of a picture is read beside the upload, off the UI thread.
+                            if content_type.starts_with("image/") && size <= thehideout_api::MAX_MEDIA_BYTES as u64 {
+                                let p = path.clone();
+                                if let Ok(Ok(bytes)) = crate::rt::blocking(move || std::fs::read(p)).await {
+                                    shared.push(Reply::UploadPreview { id, bytes });
+                                }
+                            }
+                            match crate::rt::blocking(move || std::fs::File::open(path)).await {
+                                Ok(Ok(file)) => client.upload_attachment_reader(channel, &filename, &content_type, size, file, report).await,
+                                Ok(Err(e)) => Err(ApiError::InvalidArgument(format!("can't read that file: {e}"))),
+                                Err(e) => Err(ApiError::Other(e)),
                             }
                         }
-                        match tokio::task::spawn_blocking(move || std::fs::File::open(path)).await {
-                            Ok(Ok(file)) => client.upload_attachment_reader(channel, &filename, &content_type, size, file, report).await,
-                            Ok(Err(e)) => Err(ApiError::InvalidArgument(format!("can't read that file: {e}"))),
-                            Err(e) => Err(ApiError::Other(e.to_string())),
+                        // A picked `File` goes to the server as it is (XHR reports the progress).
+                        #[cfg(target_arch = "wasm32")]
+                        match crate::web::file_blob(&path) {
+                            Some(blob) => {
+                                if content_type.starts_with("image/")
+                                    && size <= thehideout_api::MAX_MEDIA_BYTES as u64
+                                    && let Ok(bytes) = crate::web::read_blob(&blob).await
+                                {
+                                    shared.push(Reply::UploadPreview { id, bytes });
+                                }
+                                client.upload_attachment_blob(channel, &filename, &content_type, blob, report).await
+                            }
+                            None => Err(ApiError::InvalidArgument("can't read that file".into())),
                         }
                     }
                 };
@@ -406,17 +430,17 @@ impl RealBackend {
                 }
             }
         });
-        self.shared.uploads.lock().unwrap().insert(id, handle.abort_handle());
+        self.shared.uploads.lock().unwrap().insert(id, task);
     }
 
-    /// A sign-in step on a fresh client for the form's server: a session (saved, and the client
+    /// A sign-in step on a fresh client for the app's server: a session (saved, and the client
     /// becomes the session's), a second-factor challenge, or the error.
     fn sign_in<Fut>(&mut self, run: impl FnOnce(Client) -> Fut + Send + 'static)
     where
         Fut: Future<Output = Result<LoginOutcome, ApiError>> + Send + 'static,
     {
         let shared = Arc::clone(&self.shared);
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let (url, client) = shared.signed_out_client();
             let reply = match run(client.clone()).await {
                 Ok(LoginOutcome::Session { token, user }) => Reply::Auth(Ok(shared.establish(client, &url, token, user))),
@@ -427,7 +451,7 @@ impl RealBackend {
         });
     }
 
-    /// A call that needs no session (codes, invites) on the form's server.
+    /// A call that needs no session (codes, invites) on the app's server.
     fn signed_out<T: Send + 'static, Fut>(
         &mut self,
         run: impl FnOnce(Client) -> Fut + Send + 'static,
@@ -436,17 +460,18 @@ impl RealBackend {
         Fut: Future<Output = Result<T, ApiError>> + Send + 'static,
     {
         let shared = Arc::clone(&self.shared);
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let (_, client) = shared.signed_out_client();
             shared.push(make(run(client).await));
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// A passkey sign-in: the ceremony page goes to the app to open, then its result is polled.
     fn passkey_login(&mut self, username: String) {
         let shared = Arc::clone(&self.shared);
         let ticket = shared.passkey.fetch_add(1, Ordering::SeqCst) + 1;
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let (url, client) = shared.signed_out_client();
             let loopback = Loopback::start().await;
             let port = loopback.as_ref().map(|l| l.port);
@@ -469,11 +494,12 @@ impl RealBackend {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// A second factor answered with a passkey: like `passkey_login`, bound to the challenge.
     fn second_factor_passkey(&mut self, challenge: String) {
         let shared = Arc::clone(&self.shared);
         let ticket = shared.passkey.fetch_add(1, Ordering::SeqCst) + 1;
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let (url, client) = shared.signed_out_client();
             let loopback = Loopback::start().await;
             let port = loopback.as_ref().map(|l| l.port);
@@ -496,13 +522,14 @@ impl RealBackend {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Adds a passkey to the signed-in account through the browser ceremony.
     fn passkey_register(&mut self, name: String) {
         let shared = Arc::clone(&self.shared);
         let ticket = shared.passkey.fetch_add(1, Ordering::SeqCst) + 1;
         let generation = shared.generation();
         let client = shared.client();
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let loopback = Loopback::start().await;
             let port = loopback.as_ref().map(|l| l.port);
             let ceremony = match client.begin_passkey_registration(&name, port).await {
@@ -525,19 +552,119 @@ impl RealBackend {
         });
     }
 
+    /// In the browser a passkey ceremony runs in this page: the server's options go to
+    /// `navigator.credentials` and the credential comes back to `Finish*` in the same breath.
+    /// There is no ceremony page to open, so the empty URL tells the app to open nothing.
+    #[cfg(target_arch = "wasm32")]
+    fn passkey_login(&mut self, username: String) {
+        let shared = Arc::clone(&self.shared);
+        let ticket = shared.passkey.fetch_add(1, Ordering::SeqCst) + 1;
+        self.rt.spawn(async move {
+            let (url, client) = shared.signed_out_client();
+            let ceremony = match client.begin_passkey_login(&username, &device_label(), None).await {
+                Ok(c) => c,
+                Err(e) => return shared.push(Reply::PasskeyCeremony(Err(e))),
+            };
+            shared.push(Reply::PasskeyCeremony(Ok(String::new())));
+            let credential = crate::web::passkey(ceremony.options_json.clone(), false).await;
+            if shared.passkey.load(Ordering::SeqCst) != ticket {
+                return;
+            }
+            let done = match credential {
+                Ok(json) => client.finish_passkey_login(&ceremony.id, Some(&json)).await,
+                Err(e) => Err(ApiError::Other(e)),
+            };
+            match done {
+                Ok(Some((token, me))) => {
+                    let session = shared.establish(client.clone(), &url, token, me);
+                    shared.push(Reply::Auth(Ok(session)));
+                }
+                Ok(None) => shared.push(Reply::Auth(Err(ApiError::Other("the passkey wasn't confirmed".into())))),
+                Err(e) => shared.push(Reply::Auth(Err(e))),
+            }
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn second_factor_passkey(&mut self, challenge: String) {
+        let shared = Arc::clone(&self.shared);
+        let ticket = shared.passkey.fetch_add(1, Ordering::SeqCst) + 1;
+        self.rt.spawn(async move {
+            let (url, client) = shared.signed_out_client();
+            let ceremony = match client.begin_second_factor_passkey(&challenge, None).await {
+                Ok(c) => c,
+                Err(e) => return shared.push(Reply::PasskeyCeremony(Err(e))),
+            };
+            shared.push(Reply::PasskeyCeremony(Ok(String::new())));
+            let credential = crate::web::passkey(ceremony.options_json.clone(), false).await;
+            if shared.passkey.load(Ordering::SeqCst) != ticket {
+                return;
+            }
+            let done = match credential {
+                Ok(json) => client.finish_second_factor_passkey(&ceremony.id, Some(&json)).await,
+                Err(e) => Err(ApiError::Other(e)),
+            };
+            match done {
+                Ok(Some((token, me))) => {
+                    let session = shared.establish(client.clone(), &url, token, me);
+                    shared.push(Reply::Auth(Ok(session)));
+                }
+                Ok(None) => shared.push(Reply::Auth(Err(ApiError::Other("the passkey wasn't confirmed".into())))),
+                Err(e) => shared.push(Reply::Auth(Err(e))),
+            }
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn passkey_register(&mut self, name: String) {
+        let shared = Arc::clone(&self.shared);
+        let ticket = shared.passkey.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = shared.generation();
+        let client = shared.client();
+        self.rt.spawn(async move {
+            let ceremony = match client.begin_passkey_registration(&name, None).await {
+                Ok(c) => c,
+                Err(ApiError::Unauthenticated) => return shared.expire(),
+                Err(e) => return shared.push(Reply::PasskeyCeremony(Err(e))),
+            };
+            shared.push(Reply::PasskeyCeremony(Ok(String::new())));
+            let credential = crate::web::passkey(ceremony.options_json.clone(), true).await;
+            if shared.passkey.load(Ordering::SeqCst) != ticket || shared.generation() != generation {
+                return;
+            }
+            let done = match credential {
+                Ok(json) => client.finish_passkey_registration(&ceremony.id, Some(&json)).await,
+                Err(e) => Err(ApiError::Other(e)),
+            };
+            match done {
+                Err(ApiError::Unauthenticated) => shared.expire(),
+                Ok(Some(passkey)) => shared.push(Reply::PasskeyAdded(Ok(passkey))),
+                Ok(None) => shared.push(Reply::PasskeyAdded(Err(ApiError::Other("the passkey wasn't confirmed".into())))),
+                Err(e) => shared.push(Reply::PasskeyAdded(Err(e))),
+            }
+        });
+    }
+
     /// Launch: validate the saved session (if any) with `GetMe`.
     fn resume(&mut self) {
         let shared = Arc::clone(&self.shared);
-        self.runtime().spawn(async move {
-            let Some((url, token)) = shared.store.load() else {
+        self.rt.spawn(async move {
+            let server = shared.server.clone();
+            // A session saved for another server is not ours: sign in again.
+            let Some(token) = shared
+                .store
+                .load()
+                .filter(|(url, _)| normalize(url) == server)
+                .map(|(_, token)| token)
+            else {
                 return shared.push(Reply::Resume(Ok(None)));
             };
-            let client = Client::new(normalize(&url)).with_token(token.clone());
+            let client = Client::new(server).with_token(token.clone());
             match client.get_me().await {
                 Ok(me) => {
                     shared.new_generation();
                     *shared.client.lock().unwrap() = client;
-                    shared.push(Reply::Resume(Ok(Some((url, Session { token, me })))));
+                    shared.push(Reply::Resume(Ok(Some(Session { token, me }))));
                 }
                 Err(e) => {
                     // Only a refused token ends the saved session; an unreachable server doesn't.
@@ -554,7 +681,7 @@ impl RealBackend {
         let shared = Arc::clone(&self.shared);
         let generation = shared.generation();
         let client = shared.client();
-        self.runtime().spawn(async move {
+        self.rt.spawn(async move {
             let result = fetch_initial(&client).await;
             if shared.generation() != generation {
                 return;
@@ -575,15 +702,11 @@ impl RealBackend {
 async fn fetch_initial(client: &Client) -> Result<Initial, ApiError> {
     let (me, guilds, dms) = tokio::join!(client.get_me(), client.list_guilds(), client.list_dms());
     let (me, guilds, dms) = (me?, guilds?, dms?);
-    let mut lists = tokio::task::JoinSet::new();
-    for (i, g) in guilds.iter().enumerate() {
-        let (client, id) = (client.clone(), g.id);
-        lists.spawn(async move { (i, client.list_channels_with_layout(id).await) });
-    }
+    // One request per guild, all in flight at once.
+    let lists = futures::future::join_all(guilds.iter().map(|g| client.list_channels_with_layout(g.id))).await;
     let mut by_guild = vec![Vec::new(); guilds.len()];
     let mut layouts = HashMap::new();
-    while let Some(done) = lists.join_next().await {
-        let (i, list) = done.map_err(|e| ApiError::Other(e.to_string()))?;
+    for (i, list) in lists.into_iter().enumerate() {
         let (channels, layout) = list?;
         by_guild[i] = channels;
         layouts.insert(guilds[i].id, layout);
@@ -600,12 +723,14 @@ async fn fetch_initial(client: &Client) -> Result<Initial, ApiError> {
 /// A loopback listener for a passkey ceremony: the server's page redirects the browser to
 /// `http://127.0.0.1:<port>/done` once it has posted the result, which wakes the poll at once.
 /// Polling still runs as the fallback (a browser that blocks the redirect, a busy port).
+#[cfg(not(target_arch = "wasm32"))]
 struct Loopback {
     port: u16,
     done: Arc<tokio::sync::Notify>,
     task: tokio::task::AbortHandle,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Loopback {
     async fn start() -> Option<Loopback> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -641,6 +766,7 @@ impl Loopback {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Loopback {
     fn drop(&mut self) {
         self.task.abort();
@@ -829,10 +955,11 @@ impl Backend for RealBackend {
                     h.abort();
                 }
             }
+            #[cfg(not(target_arch = "wasm32"))]
             Command::Download { key, path } => {
                 let shared = Arc::clone(&self.shared);
                 let generation = shared.generation();
-                self.runtime().spawn(async move {
+                self.rt.spawn(async move {
                     let steps = AtomicU64::new(u64::MAX);
                     let result = match std::fs::File::create(&path) {
                         Ok(file) => {
@@ -855,6 +982,12 @@ impl Backend for RealBackend {
                         shared.push(Reply::Downloaded { key, path, result });
                     }
                 });
+            }
+            // The browser saves through `<a download>` (the UI never sends this there).
+            #[cfg(target_arch = "wasm32")]
+            Command::Download { key, path } => {
+                let result = Err(ApiError::Other("downloads are started by the page on the web".into()));
+                self.shared.push(Reply::Downloaded { key, path, result });
             }
             Command::CreateGuild { name } => {
                 self.call(
@@ -1115,9 +1248,11 @@ impl Backend for RealBackend {
                 // The file is read on a blocking thread of the runtime, never where frames are drawn.
                 self.call(
                     async move {
-                        tokio::task::spawn_blocking(move || crate::media::read_image(&path))
-                            .await
-                            .map_err(|e| ApiError::Other(e.to_string()))?
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let read = crate::rt::blocking(move || crate::media::read_image(&path)).await.map_err(ApiError::Other)?;
+                        #[cfg(target_arch = "wasm32")]
+                        let read = crate::media::read_web_image(&path).await;
+                        read
                     },
                     move |result| Reply::ImageRead { purpose, result },
                 );
@@ -1431,7 +1566,7 @@ impl Backend for RealBackend {
                 client.set_token(None);
                 // On the runtime: the prefs file is written there, not on the caller's thread.
                 let shared = Arc::clone(&self.shared);
-                self.runtime().spawn(async move {
+                self.rt.spawn(async move {
                     shared.store.clear();
                     shared.push(Reply::SignedOut);
                 });
@@ -1445,15 +1580,6 @@ impl Backend for RealBackend {
 
     fn set_waker(&mut self, waker: Waker) {
         *self.shared.waker.lock().unwrap() = Some(waker);
-    }
-
-    fn set_server(&mut self, url: &str) {
-        let url = url.trim();
-        *self.shared.server.lock().unwrap() = if url.is_empty() {
-            default_server()
-        } else {
-            url.to_owned()
-        };
     }
 
     fn sent(&self) -> Vec<Command> {

@@ -11,7 +11,7 @@ use rune::Runtime;
 use serde_json::Value;
 use thehideout_api::VoiceState;
 use thehideout_design::components::ToastKind;
-use thehideout_voice::{ScreenKind, ScreenSource, VideoKind, VoiceEvent};
+use thehideout_voice_types::{AudioDevice, ScreenKind, ScreenSource, VideoKind, VoiceEvent};
 
 use crate::app::App;
 use crate::backend::{Backend, Command};
@@ -616,6 +616,7 @@ enum Call {
     List,
     Subscribe(String),
     Release(String),
+    CameraDevice(Option<String>),
 }
 
 #[derive(Clone, Default)]
@@ -636,7 +637,10 @@ impl Engine for Fake {
     fn list_screen_sources(&self) {
         self.0.borrow_mut().push(Call::List);
     }
-    fn video_frames(&self, track: &str) -> Option<thehideout_voice::VideoSink> {
+    fn set_camera_device(&self, id: Option<String>) {
+        self.0.borrow_mut().push(Call::CameraDevice(id));
+    }
+    fn video_frames(&self, track: &str) -> Option<thehideout_voice_types::VideoSink> {
         self.0.borrow_mut().push(Call::Subscribe(track.into()));
         None
     }
@@ -753,11 +757,167 @@ fn the_sink_subscribes_on_watch_and_releases_on_unwatch() {
 }
 
 #[test]
+fn an_ended_track_and_a_teardown_release_what_the_engine_kept() {
+    let (mut sink, calls, events) = engine_sink();
+    connect_sink(&mut sink);
+    for t in ["t2", "t3"] {
+        sink.intent(VoiceIntent::WatchVideo { track: t.into(), mirror: false });
+    }
+    calls.0.take();
+    // The track ends: the sink drops the watch itself, so it must release it too.
+    events.send(VoiceEvent::VideoTrackEnded { identity: "2".into(), track_id: "t2".into() }).unwrap();
+    sink.events();
+    assert_eq!(calls.0.take(), [Call::Release("t2".into())]);
+    // The app's later unwatch finds nothing and releases nothing a second time.
+    sink.intent(VoiceIntent::UnwatchVideo { track: "t2".into() });
+    assert_eq!(calls.0.take(), []);
+    // Leaving releases every track still watched.
+    sink.intent(VoiceIntent::Disconnect);
+    assert_eq!(calls.0.take(), [Call::Release("t3".into())]);
+    // And an ended track nobody watches releases nothing.
+    events.send(VoiceEvent::VideoTrackEnded { identity: "2".into(), track_id: "t9".into() }).unwrap();
+    sink.events();
+    assert_eq!(calls.0.take(), []);
+}
+
+// ---- the camera picker (web) and the share toggle without the app's picker -----------------------
+
+fn cameras(list: &[(&str, &str)], default: Option<&str>) -> VoiceEvent {
+    VoiceEvent::Cameras {
+        cameras: list.iter().map(|(i, n)| AudioDevice { id: (*i).into(), name: (*n).into() }).collect(),
+        default: default.map(Into::into),
+    }
+}
+
+fn audio(inputs: &[(&str, &str)], outputs: &[(&str, &str)]) -> VoiceEvent {
+    let devs = |l: &[(&str, &str)]| l.iter().map(|(i, n)| AudioDevice { id: (*i).into(), name: (*n).into() }).collect();
+    VoiceEvent::Devices { inputs: devs(inputs), outputs: devs(outputs), default_input: None, default_output: None }
+}
+
+/// The engine's report, then the flush that hands the intents it caused to the sink.
+fn feed(app: &mut App, ev: VoiceEvent) {
+    app.act(|s| {
+        s.voice_event(ev);
+    });
+}
+
+fn camera_intents(rec: &Recorder) -> Vec<Option<String>> {
+    rec.take()
+        .into_iter()
+        .filter_map(|i| match i {
+            VoiceIntent::SetCameraDevice(id) => Some(id),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_saved_camera_that_is_gone_falls_back_to_the_default_and_stays_chosen() {
+    let (mut app, _fake, rec) = connected();
+    app.act(|s| s.voice_set_camera(Some("cam-gone".into())));
+    assert_eq!(camera_intents(&rec), [Some("cam-gone".into())], "chosen: sent");
+    // The list arrives without it: the engine gets the default, the choice stays saved.
+    feed(&mut app, cameras(&[("cam-1", "Built-in")], Some("cam-1")));
+    assert_eq!(app.state.effective_camera(), None);
+    assert_eq!(camera_intents(&rec), [None]);
+    assert_eq!(app.state.voice.prefs.camera.as_deref(), Some("cam-gone"));
+    // Back again: used again, and named as it is called now.
+    feed(&mut app, cameras(&[("cam-1", "Built-in"), ("cam-gone", "USB cam")], None));
+    assert_eq!(camera_intents(&rec), [Some("cam-gone".into())]);
+    assert_eq!(app.state.voice.prefs.camera_name.as_deref(), Some("USB cam"));
+}
+
+#[test]
+fn an_empty_camera_list_keeps_the_saved_camera() {
+    let (mut app, _fake, rec) = connected();
+    app.act(|s| s.voice_set_camera(Some("cam-1".into())));
+    rec.take();
+    // No permission yet: placeholders without an id, or nothing at all.
+    feed(&mut app, cameras(&[("", "")], None));
+    assert_eq!(app.state.effective_camera().as_deref(), Some("cam-1"));
+    assert!(app.state.voice.devices.as_ref().unwrap().cameras.is_empty(), "placeholders are not cameras");
+    assert_eq!(camera_intents(&rec), [Some("cam-1".into())]);
+}
+
+#[test]
+fn choosing_a_camera_pushes_an_intent_only_on_change_and_never_an_empty_id() {
+    let (mut app, _fake, rec) = connected();
+    feed(&mut app, cameras(&[("cam-1", "Built-in")], None));
+    rec.take();
+    app.act(|s| s.voice_set_camera(Some("cam-1".into())));
+    assert_eq!(camera_intents(&rec), [Some("cam-1".into())]);
+    assert_eq!(app.state.voice.prefs.camera_name.as_deref(), Some("Built-in"));
+    app.act(|s| s.voice_set_camera(Some("cam-1".into())));
+    assert_eq!(camera_intents(&rec), [], "the same choice is not sent again");
+    // An empty id means the default and is never saved as a camera.
+    app.act(|s| s.voice_set_camera(Some(String::new())));
+    assert_eq!(app.state.voice.prefs.camera, None);
+    assert_eq!(camera_intents(&rec), [None]);
+}
+
+#[test]
+fn the_camera_and_audio_lists_arrive_in_either_order_without_blanking_each_other() {
+    for camera_first in [true, false] {
+        let (mut app, _fake, _rec) = connected();
+        app.act(|s| s.voice_set_input(Some("mic-1".into())));
+        let (a, c) = (audio(&[("mic-1", "Mic")], &[("out-1", "Speakers")]), cameras(&[("cam-1", "Cam")], None));
+        let order = if camera_first { [c, a] } else { [a, c] };
+        for (i, ev) in order.into_iter().enumerate() {
+            feed(&mut app, ev);
+            if camera_first && i == 0 {
+                // Only the cameras are in: the saved microphone must not look unplugged.
+                assert_eq!(app.state.effective_input().as_deref(), Some("mic-1"), "camera list first");
+            }
+        }
+        let d = app.state.voice.devices.as_ref().unwrap();
+        assert_eq!((d.inputs.len(), d.outputs.len(), d.cameras.len()), (1, 1, 1), "camera_first={camera_first}");
+        assert_eq!(app.state.effective_input().as_deref(), Some("mic-1"));
+    }
+}
+
+#[test]
+fn the_browser_share_starts_directly_from_the_click_and_a_cancel_is_quiet() {
+    let (mut app, _fake, rec) = connected();
+    // No app picker (the web build): one press sends the share request, no picker state.
+    app.act(|s| s.toggle_screen_share_with(false));
+    assert!(matches!(rec.take().as_slice(), [VoiceIntent::SetScreenShare(Some(_))]));
+    assert!(app.state.voice.sharing.is_some() && !app.state.voice.picker);
+    // The browser's picker was closed: an empty error reverts it without a toast.
+    let toasts = app.state.ui.toasts.len();
+    feed(&mut app, VoiceEvent::Error(String::new()));
+    assert!(app.state.voice.sharing.is_none());
+    assert_eq!(app.state.ui.toasts.len(), toasts, "no toast for a cancelled picker");
+    // A real error still says so.
+    app.act(|s| s.toggle_screen_share_with(false));
+    rec.take();
+    feed(&mut app, VoiceEvent::Error("Screen sharing problem: boom".into()));
+    assert!(app.state.voice.sharing.is_none());
+    assert_eq!(last_toast(&app.state).0, ToastKind::Danger);
+    // With the app's picker the same press opens it instead.
+    app.act(|s| s.toggle_screen_share_with(true));
+    assert!(app.state.voice.picker);
+}
+
+#[test]
+fn the_sink_remembers_the_camera_and_replays_it_on_a_later_engine() {
+    let (mut sink, calls, _events) = engine_sink();
+    // Chosen before any room (the engine is not built yet): kept in the config, nothing called.
+    sink.intent(VoiceIntent::SetCameraDevice(Some("cam-2".into())));
+    assert!(!sink.built());
+    assert_eq!(calls.0.take(), []);
+    connect_sink(&mut sink);
+    assert_eq!(calls.0.take(), [Call::CameraDevice(Some("cam-2".into()))], "replayed on the engine built by the join");
+    // Later changes reach the live engine, including back to the default.
+    sink.intent(VoiceIntent::SetCameraDevice(None));
+    assert_eq!(calls.0.take(), [Call::CameraDevice(None)]);
+}
+
+#[test]
 fn mirroring_flips_every_row() {
     let rgba: Vec<u8> = (0..2u8)
         .flat_map(|row| (0..3u8).flat_map(move |x| [row, x, 0, 255]))
         .collect();
-    let frame = thehideout_voice::VideoFrame {
+    let frame = thehideout_voice_types::VideoFrame {
         width: 3,
         height: 2,
         rgba: rgba.clone().into(),

@@ -424,7 +424,7 @@ public object InviteKt {
 
     /**
      * ```
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * ```
      *
@@ -439,7 +439,7 @@ public object InviteKt {
       }
     /**
      * ```
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * ```
      *
@@ -450,7 +450,7 @@ public object InviteKt {
     }
     /**
      * ```
-     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+     * The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
      * only returned by CreateInvite and ResendInvite.
      * ```
      *

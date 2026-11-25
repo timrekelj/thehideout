@@ -726,7 +726,7 @@ pub fn dialogs(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
                 .size(Size::Sm)
                 .build(k)
                 .key("recovery-save")
-                .on_press_tx(move |_: &mut App, tx: &mut Tx| save_codes(tx, to_save.clone()));
+                .on_press_tx(move |a: &mut App, tx: &mut Tx| save_codes(a, tx, to_save.clone()));
             let saved = row()
                 .key("recovery-saved")
                 .gap(8.0)
@@ -818,8 +818,12 @@ pub fn dialogs(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
                 .children(error(k, d));
             (
                 "Add a passkey".into(),
-                "Your browser opens to make it with your fingerprint, face or a security key."
-                    .into(),
+                if cfg!(target_arch = "wasm32") {
+                    "Follow your browser's prompt to make it with your fingerprint, face or a security key."
+                } else {
+                    "Your browser opens to make it with your fingerprint, face or a security key."
+                }
+                .into(),
                 body,
                 vec![
                     cancel(
@@ -949,7 +953,15 @@ pub fn dialogs(a: &App, k: &Kit, layer: &mut Vec<El>, window_h: f32) {
 
 /// The save dialog for the recovery codes; the text is written where the user chose (a few
 /// hundred bytes, written in the answer).
-fn save_codes(tx: &mut Tx, codes: String) {
+#[cfg(target_arch = "wasm32")]
+fn save_codes(a: &mut App, _tx: &mut Tx, codes: String) {
+    let body = format!("thehideout recovery codes\nEach code works once.\n\n{codes}\n");
+    crate::web::save_text("thehideout-recovery-codes.txt", &body);
+    a.state.toast(ToastKind::Success, "Recovery codes saved");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_codes(_a: &mut App, tx: &mut Tx, codes: String) {
     let options = rune::FileDialogOptions {
         title: "Save recovery codes".into(),
         file_name: Some("thehideout-recovery-codes.txt".into()),

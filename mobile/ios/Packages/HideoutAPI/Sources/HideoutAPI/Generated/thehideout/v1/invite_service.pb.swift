@@ -163,7 +163,7 @@ public nonisolated struct Thehideout_V1_Invite: @unchecked Sendable {
     set {_uniqueStorage()._makeAdmin = newValue}
   }
 
-  /// The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{token}`); like `code`,
+  /// The invite link (`{THEHIDEOUT_PUBLIC_URL}/invite/{code}`); like `code`,
   /// only returned by CreateInvite and ResendInvite.
   public var link: String {
     get {_storage._link ?? String()}
@@ -364,7 +364,7 @@ public nonisolated struct Thehideout_V1_LookupInviteRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The link token or the short code (dashes and case ignored).
+  /// The short code (dashes and case ignored).
   public var tokenOrCode: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -428,7 +428,7 @@ public nonisolated struct Thehideout_V1_AcceptInviteRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The link token or the short code.
+  /// The short code (dashes and case ignored).
   public var tokenOrCode: String = String()
 
   /// Desired username (`^[a-z0-9_.]{2,32}$`, case-insensitive); ALREADY_EXISTS if taken.

@@ -7,7 +7,9 @@
 //! the session in the same file, so neither can overwrite the other's keys.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{self, Sender};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread::{self, JoinHandle};
 
 use serde::{Deserialize, Serialize};
@@ -87,6 +89,7 @@ pub fn load_embeds(prefs: &SharedPrefs) -> std::collections::VecDeque<(u64, u32)
     saved.into_iter().skip(skip).collect()
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 enum Save {
     Look(Look),
     Embeds(Vec<(u64, u32)>),
@@ -97,11 +100,13 @@ enum Save {
 
 /// Writes looks and folded sections to the prefs on its own thread; a burst of changes is
 /// written as its last one of each kind.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Saver {
     tx: Option<Sender<Save>>,
     thread: Option<JoinHandle<()>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Saver {
     pub fn spawn(prefs: SharedPrefs) -> Saver {
         let (tx, rx) = mpsc::channel::<Save>();
@@ -181,6 +186,7 @@ impl Saver {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Saver {
     /// Finishes what was queued before the app goes.
     fn drop(&mut self) {
@@ -188,5 +194,48 @@ impl Drop for Saver {
         if let Some(t) = self.thread.take() {
             t.join().ok();
         }
+    }
+}
+
+/// The browser's saver: `localStorage` is synchronous and tiny, so each change is written at
+/// once (there is no thread to hand it to).
+#[cfg(target_arch = "wasm32")]
+pub struct Saver {
+    prefs: SharedPrefs,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Saver {
+    pub fn spawn(prefs: SharedPrefs) -> Saver {
+        Saver { prefs }
+    }
+
+    fn put<T: Serialize + ?Sized>(&self, key: &str, value: &T) {
+        crate::real::with_prefs(&self.prefs, |p| p.set(key, value).ok());
+    }
+
+    pub fn save(&self, look: Look) {
+        self.put(KEY, &look);
+    }
+
+    pub fn save_voice(&self, voice: crate::voice::VoicePrefs) {
+        self.put(VOICE_KEY, &voice);
+    }
+
+    pub fn save_embeds(&self, embeds: &std::collections::VecDeque<(u64, u32)>) {
+        self.put(EMBEDS_KEY, &embeds.iter().copied().collect::<Vec<_>>());
+    }
+
+    pub fn save_recents(&self, recents: &[String]) {
+        self.put(RECENTS_KEY, recents);
+    }
+
+    pub fn save_collapsed(&self, collapsed: &HashSet<(u64, u64)>) {
+        let mut by_guild: HashMap<String, Vec<u64>> = HashMap::new();
+        for (g, s) in collapsed {
+            by_guild.entry(g.to_string()).or_default().push(*s);
+        }
+        by_guild.values_mut().for_each(|v| v.sort_unstable());
+        self.put(COLLAPSED_KEY, &by_guild);
     }
 }

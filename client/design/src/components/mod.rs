@@ -9,6 +9,7 @@
 //! | Checkbox | own (accent fill when on) |
 //! | Avatar, Badge, UnreadDot, MentionPill, Kbd | own |
 //! | Tooltip | `rune_kit::Tooltip`, standard appearance, via [`tooltip::tooltip`] |
+//! | InviteCodeInput | own (an `XXXX-XXXX` invite code, one box per character) |
 //! | CodeInput, QrCode | own (one-time codes; authenticator setup) |
 //! | Slider, LevelMeter | own (a 0..1 control; a live level bar with an optional threshold marker) |
 
@@ -20,6 +21,7 @@ pub mod chat;
 pub mod checkbox;
 pub mod code_input;
 pub mod icon_button;
+pub mod invite_code_input;
 pub mod kbd;
 pub mod level_meter;
 pub mod preview;
@@ -39,6 +41,7 @@ pub use chart::{
 pub use checkbox::Checkbox;
 pub use code_input::{CodeInput, digits_only};
 pub use icon_button::IconButton;
+pub use invite_code_input::{CODE_ALPHABET, InviteCodeInput, accept_code_input, normalize_code};
 pub use kbd::Kbd;
 pub use level_meter::LevelMeter;
 pub use preview::ThemePreview;

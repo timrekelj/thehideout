@@ -945,19 +945,6 @@ fn the_guild_menu_shows_the_invite_code_and_copy_toasts() {
 }
 
 #[test]
-fn the_server_url_field_expands_from_the_server_line() {
-    let state = AppState::new(fake_now, Tz::Fixed(0));
-    let mut rt = runtime(App::new(Box::new(FakeBackend::new()), state));
-    assert!(!has(&rt, "auth-server"));
-    click(&mut rt, "auth-server-toggle");
-    settle(&mut rt, 4);
-    assert!(has(&rt, "auth-server"));
-    rt.update(|a, _| a.state.auth.server.replace_text("http://10.0.0.5:9000"));
-    settle(&mut rt, 2);
-    assert_eq!(rt.state.state.server_url(), "http://10.0.0.5:9000");
-}
-
-#[test]
 fn headers_and_footers_line_up_across_sidebar_and_panel() {
     // Deliberate geometry: sidebar header == channel header == member header (HEADER_H) and user
     // strip == composer zone (FOOTER_H), so titles share a baseline and the scroll-edge lines of

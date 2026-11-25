@@ -45,7 +45,7 @@ fn list(items: &[String]) -> String {
     }
 }
 
-/// Invitation with the link and the short code.
+/// Invitation with the short code and the link that opens the join flow.
 pub fn invite(
     to: &str,
     key: String,
@@ -67,18 +67,18 @@ pub fn invite(
     let lead = format!("{invited} to create an account on thehideout{into}.");
     let text = format!(
         "{lead}\n\n\
-         Accept the invite: {link}\n\nOr enter this code in the app: {code}\n\n\
+         Your invite code: {code}\n\nJoin here: {link}\n\n\
          The invite expires in 7 days. If you weren't expecting it, ignore this email."
     );
     let html = html(
         "You're invited to thehideout",
         &[
             encode_text(&lead).into_owned(),
+            format!("Your invite code: {}", code_html(code)),
             format!(
-                "<a href=\"{0}\">Accept the invite</a> &middot; {0}",
+                "<a href=\"{0}\">Join thehideout</a> &middot; {0}",
                 encode_text(link)
             ),
-            format!("Or enter this code in the app: {}", code_html(code)),
             "The invite expires in 7 days. If you weren't expecting it, ignore this email.".into(),
         ],
     );
@@ -267,13 +267,16 @@ mod tests {
             "k".into(),
             Some("<b>"),
             &["g".into()],
-            "https://h.example/invite/T",
+            "https://h.example/invite/ABCD-EFGH",
             "ABCD-EFGH",
         );
         for part in [&e.text, &e.html] {
-            assert!(part.contains("https://h.example/invite/T"));
+            assert!(part.contains("https://h.example/invite/ABCD-EFGH"));
             assert!(part.contains("ABCD-EFGH"));
+            assert!(!part.to_lowercase().contains("token"));
         }
+        assert!(e.text.contains("Your invite code: ABCD-EFGH\n\nJoin here: https://h.example/invite/ABCD-EFGH\n"));
+        assert!(e.html.contains("Join thehideout"));
         assert!(e.html.contains("&lt;b&gt;") && !e.html.contains("<b> has"));
     }
 
@@ -284,7 +287,7 @@ mod tests {
             "k".into(),
             inviter,
             &guilds,
-            "https://h.example/invite/T",
+            "https://h.example/invite/ABCD-EFGH",
             "ABCD-EFGH",
         )
     }

@@ -494,17 +494,17 @@ impl World {
 
 /// The devices the fake world's audio engine lists: a laptop's own, a monitor's and a headset.
 /// The first of each is the system default.
-pub fn fake_devices_event() -> thehideout_voice::VoiceEvent {
-    let list = |names: &[(&str, &str)]| -> Vec<thehideout_voice::AudioDevice> {
+pub fn fake_devices_event() -> thehideout_voice_types::VoiceEvent {
+    let list = |names: &[(&str, &str)]| -> Vec<thehideout_voice_types::AudioDevice> {
         names
             .iter()
-            .map(|(id, name)| thehideout_voice::AudioDevice {
+            .map(|(id, name)| thehideout_voice_types::AudioDevice {
                 id: (*id).into(),
                 name: (*name).into(),
             })
             .collect()
     };
-    thehideout_voice::VoiceEvent::Devices {
+    thehideout_voice_types::VoiceEvent::Devices {
         inputs: list(&[
             ("mic-builtin", "MacBook Pro Microphone"),
             ("mic-display", "Studio Display Microphone"),
@@ -530,9 +530,9 @@ pub const FAKE_MIC_LEVEL: f32 = 0.55;
 /// `--fake` window uses [`FakeAudio::demo`], scenes and tests install the one they need.
 #[derive(Default)]
 pub struct FakeAudio {
-    events: Vec<thehideout_voice::VoiceEvent>,
+    events: Vec<thehideout_voice_types::VoiceEvent>,
     /// Who else has video once we connect.
-    remote: Vec<(u64, thehideout_voice::VideoKind)>,
+    remote: Vec<(u64, thehideout_voice_types::VideoKind)>,
     /// Redraw watched tracks about ten times a second (the window); off, a track gets its first
     /// picture only (scenes and tests: the same pixels every run).
     animate: bool,
@@ -551,17 +551,17 @@ impl Drop for FakeWatch {
 }
 
 /// The track id the fake engine gives `user`'s camera or screen.
-pub fn fake_track(user: u64, kind: thehideout_voice::VideoKind) -> String {
+pub fn fake_track(user: u64, kind: thehideout_voice_types::VideoKind) -> String {
     let k = match kind {
-        thehideout_voice::VideoKind::Camera => "camera",
-        thehideout_voice::VideoKind::Screen => "screen",
+        thehideout_voice_types::VideoKind::Camera => "camera",
+        thehideout_voice_types::VideoKind::Screen => "screen",
     };
     format!("fake-{user}-{k}")
 }
 
 /// What can be shared on the fake machine: the display (the system picker on macOS) and windows.
-pub fn fake_screen_sources() -> Vec<thehideout_voice::ScreenSource> {
-    use thehideout_voice::{ScreenKind, ScreenSource};
+pub fn fake_screen_sources() -> Vec<thehideout_voice_types::ScreenSource> {
+    use thehideout_voice_types::{ScreenKind, ScreenSource};
     let w = |id, title: &str| ScreenSource { id, title: title.into(), kind: ScreenKind::Window };
     vec![
         ScreenSource { id: 1, title: "Entire screen".into(), kind: ScreenKind::Screen },
@@ -575,24 +575,24 @@ impl FakeAudio {
     /// The window's fake audio: Ana has her camera on, and pictures move.
     pub fn demo() -> FakeAudio {
         FakeAudio {
-            remote: vec![(ANA, thehideout_voice::VideoKind::Camera)],
+            remote: vec![(ANA, thehideout_voice_types::VideoKind::Camera)],
             animate: true,
             ..FakeAudio::default()
         }
     }
 
     /// The track id the fake engine gives `user`'s camera or screen.
-    pub fn track(user: u64, kind: thehideout_voice::VideoKind) -> String {
+    pub fn track(user: u64, kind: thehideout_voice_types::VideoKind) -> String {
         fake_track(user, kind)
     }
 
     /// People with video when we connect (scenes and tests).
-    pub fn with_remote(remote: Vec<(u64, thehideout_voice::VideoKind)>) -> FakeAudio {
+    pub fn with_remote(remote: Vec<(u64, thehideout_voice_types::VideoKind)>) -> FakeAudio {
         FakeAudio { remote, ..FakeAudio::default() }
     }
 
-    fn mine(&mut self, kind: thehideout_voice::VideoKind, on: bool) {
-        use thehideout_voice::VoiceEvent;
+    fn mine(&mut self, kind: thehideout_voice_types::VideoKind, on: bool) {
+        use thehideout_voice_types::VoiceEvent;
         let (identity, track_id) = (TIM.to_string(), fake_track(TIM, kind));
         self.events.push(if on {
             VoiceEvent::VideoTrack { identity, source: kind, track_id }
@@ -605,7 +605,7 @@ impl FakeAudio {
 impl crate::voice::VoiceSink for FakeAudio {
     fn intent(&mut self, intent: crate::voice::VoiceIntent) {
         use crate::voice::VoiceIntent;
-        use thehideout_voice::{VideoKind, VoiceEvent};
+        use thehideout_voice_types::{VideoKind, VoiceEvent};
         match intent {
             VoiceIntent::ListDevices => self.events.push(fake_devices_event()),
             VoiceIntent::MicTest(on) => self.events.push(VoiceEvent::Levels(vec![(
@@ -650,7 +650,7 @@ impl crate::voice::VoiceSink for FakeAudio {
         }
     }
 
-    fn events(&mut self) -> Vec<thehideout_voice::VoiceEvent> {
+    fn events(&mut self) -> Vec<thehideout_voice_types::VoiceEvent> {
         std::mem::take(&mut self.events)
     }
 

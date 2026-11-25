@@ -1,0 +1,24 @@
+cask "thehideout" do
+  version "@VERSION@"
+
+  on_arm do
+    sha256 "@SHA256_ARM64@"
+
+    url "https://github.com/timrekelj/thehideout/releases/download/v#{version}/thehideout-#{version}-macos-arm64.dmg"
+  end
+  on_intel do
+    sha256 "@SHA256_X86_64@"
+
+    url "https://github.com/timrekelj/thehideout/releases/download/v#{version}/thehideout-#{version}-macos-x86_64.dmg"
+  end
+
+  name "thehideout"
+  desc "Chat and voice client for thehideout"
+  homepage "https://github.com/timrekelj/thehideout"
+
+  depends_on macos: ">= :big_sur"
+
+  app "thehideout.app"
+
+  zap trash: "~/Library/Application Support/thehideout"
+end

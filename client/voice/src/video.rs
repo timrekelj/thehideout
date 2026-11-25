@@ -4,19 +4,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use thehideout_voice_types::VideoFrame;
 use livekit::webrtc::native::yuv_helper;
 use livekit::webrtc::video_frame::{BoxVideoBuffer, VideoBuffer as _};
-
-/// One decoded picture, tightly packed RGBA8 (`width * height * 4` bytes, no row padding).
-#[derive(Clone, Debug)]
-pub struct VideoFrame {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Arc<[u8]>,
-    /// Increases with every new picture on the track, so the UI can skip a texture upload
-    /// when it has already seen this one.
-    pub seq: u64,
-}
 
 pub(crate) enum Pending {
     /// A buffer straight from the SDK (decoded remote video).
@@ -49,7 +39,7 @@ impl VideoCell {
         s.pending = Some(frame);
     }
 
-    fn latest(&self) -> Option<VideoFrame> {
+    pub(crate) fn latest(&self) -> Option<VideoFrame> {
         let mut s = self.0.lock().unwrap();
         if let Some(p) = s.pending.take() {
             let seq = s.seq;
@@ -79,20 +69,6 @@ impl VideoCell {
             });
         }
         s.converted.clone()
-    }
-}
-
-/// A handle on one video track's newest frame. Cheap to clone; all clones see the same frame.
-#[derive(Clone)]
-pub struct VideoSink {
-    pub(crate) cell: Arc<VideoCell>,
-}
-
-impl VideoSink {
-    /// The newest frame as RGBA8, or `None` before the first one arrives. Calling again
-    /// without a new frame returns the same `Arc` (same `seq`) without redoing the conversion.
-    pub fn latest_frame(&self) -> Option<VideoFrame> {
-        self.cell.latest()
     }
 }
 
@@ -219,7 +195,10 @@ mod tests {
     #[test]
     fn only_the_newest_frame_is_kept() {
         let cell = Arc::new(VideoCell::default());
-        let sink = VideoSink { cell: cell.clone() };
+        let sink = {
+            let cell = cell.clone();
+            thehideout_voice_types::VideoSink::new(move || cell.latest())
+        };
         assert!(sink.latest_frame().is_none());
         for i in 0..5u8 {
             cell.put(Pending::Rgba {

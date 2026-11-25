@@ -561,25 +561,58 @@ fn the_invite_field_takes_the_code_as_typed_without_padding() {
 }
 
 #[test]
-fn a_pasted_link_is_refused_in_the_invite_field_without_asking_the_server() {
-    for link in [
-        "https://hideout.example/invite/tok-wxyz",
-        "thehideout://invite/tok-wxyz",
-        "hideout.example/invite/tok-wxyz",
-    ] {
-        let (app, fake) = looked_up(link);
-        assert_eq!(app.state.auth.step, AuthStep::InviteCode, "{link}");
-        assert_eq!(
-            error(&app, AuthField::Invite).unwrap(),
-            "Paste just the code from your invite email, not the link."
-        );
-        assert_eq!(
-            sent(&fake, |c| matches!(c, Command::LookupInvite { .. })),
-            0,
-            "{link}"
-        );
+fn a_short_code_says_so_and_asks_the_server_nothing() {
+    for code in ["", "WXYZ-234", "WXYZ"] {
+        let (app, fake) = looked_up(code);
+        assert_eq!(app.state.auth.step, AuthStep::InviteCode, "{code}");
+        let says = if code.is_empty() { "Enter the code from your invite email." } else { "Invite codes have 8 characters." };
+        assert_eq!(error(&app, AuthField::Invite).unwrap(), says, "{code}");
+        assert_eq!(sent(&fake, |c| matches!(c, Command::LookupInvite { .. })), 0, "{code}");
         assert_eq!(app.state.auth.phase, Phase::Idle);
     }
+}
+
+#[test]
+fn a_pasted_link_becomes_its_code() {
+    for link in [
+        "https://hideout.example/invite/wxyz-2345",
+        "thehideout://invite/WXYZ2345",
+        "hideout.example/invite/wxyz-2345",
+    ] {
+        let (app, fake) = looked_up(link);
+        assert!(matches!(app.state.auth.step, AuthStep::InviteAccept { .. }), "{link}");
+        assert_eq!(
+            sent(&fake, |c| matches!(c, Command::LookupInvite { code } if code == INVITE_PENDING)),
+            1,
+            "{link}"
+        );
+    }
+}
+
+#[test]
+fn the_eighth_character_looks_the_code_up_by_itself() {
+    let (app, _) = signed_out();
+    let mut rt = runtime(app);
+    rt.update(|a, _| a.act(|s| s.set_auth_mode(AuthMode::Invite)));
+    settle(&mut rt, 3);
+    click(&mut rt, "auth-invite/value/input");
+    type_text(&mut rt, "WXYZ234");
+    settle(&mut rt, 4);
+    assert!(!has(&rt, "auth-invite-summary"), "seven characters wait");
+    assert_eq!(rt.state.state.auth.step, AuthStep::InviteCode);
+    type_text(&mut rt, "5");
+    settle(&mut rt, 6);
+    assert!(has(&rt, "auth-invite-summary"), "no Enter needed");
+    // A pasted whole code does the same, and a wrong one is looked up once, not over and over.
+    let (app, fake) = signed_out();
+    let mut rt = runtime(app);
+    rt.update(|a, _| a.act(|s| s.set_auth_mode(AuthMode::Invite)));
+    settle(&mut rt, 3);
+    rt.update(|a, _| a.state.auth.invite.replace_text("NOPE-0000"));
+    settle(&mut rt, 8);
+    assert_eq!(rt.state.state.auth.step, AuthStep::InviteCode);
+    assert_eq!(sent(&fake, |c| matches!(c, Command::LookupInvite { .. })), 1);
+    assert!(error(&rt.state, AuthField::Invite).unwrap().starts_with("We couldn't find that invite"));
 }
 
 #[test]
@@ -1213,7 +1246,7 @@ fn inviting_by_email_shows_the_code_link_and_the_pending_invites() {
         .unwrap()
         .starts_with("RSND"));
     assert!(
-        app.state.ui.invites.created.as_ref().unwrap().link.as_deref().is_some_and(|l| l.ends_with("tok-rsnd-9005")),
+        app.state.ui.invites.created.as_ref().unwrap().link.as_deref().is_some_and(|l| l.ends_with("/invite/RSND-9005")),
         "a resend brings the new link"
     );
     app.act(|s| s.revoke_invite(id));
@@ -1422,13 +1455,24 @@ fn the_role_editor_has_an_invite_people_switch() {
 
 #[test]
 fn a_link_the_system_opens_the_app_with_goes_to_the_invite() {
-    let (mut app, _) = signed_out();
-    app.act(|s| s.open_link("thehideout://invite/tok-wxyz"));
-    app.pump();
-    assert!(matches!(app.state.auth.step, AuthStep::InviteAccept { .. }));
+    for link in ["thehideout://invite/WXYZ-2345", "https://hideout.example/invite/wxyz-2345"] {
+        let (mut app, _) = signed_out();
+        app.act(|s| s.open_link(link));
+        app.pump();
+        assert!(matches!(app.state.auth.step, AuthStep::InviteAccept { .. }), "{link}");
+        assert_eq!(app.state.auth.invite.text, "WXYZ2345", "{link}");
+    }
+    // A link without a whole code is ignored.
+    for link in ["thehideout://invite/WXYZ-23", "thehideout://invite/", "https://hideout.example/other/WXYZ-2345"] {
+        let (mut app, fake) = signed_out();
+        app.act(|s| s.open_link(link));
+        app.pump();
+        assert_eq!(app.state.auth.step, AuthStep::Password, "{link}");
+        assert_eq!(sent(&fake, |c| matches!(c, Command::LookupInvite { .. })), 0, "{link}");
+    }
     // Signed in, a link changes nothing.
     let (mut app, fake) = booted(true);
-    app.act(|s| s.open_link("thehideout://invite/tok-wxyz"));
+    app.act(|s| s.open_link("thehideout://invite/WXYZ-2345"));
     assert_eq!(
         sent(&fake, |c| matches!(c, Command::LookupInvite { .. })),
         0

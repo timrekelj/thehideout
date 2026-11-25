@@ -12,6 +12,7 @@ pub mod convert;
 pub mod email;
 pub mod embeds;
 pub mod events;
+pub mod landing;
 pub mod layout;
 pub mod legal;
 pub mod lifecycle;
@@ -35,6 +36,7 @@ pub mod ttl;
 pub mod validation;
 pub mod versions;
 pub mod voice;
+pub mod web;
 
 pub mod proto {
     connectrpc::include_generated!();

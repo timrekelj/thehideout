@@ -25,7 +25,6 @@ use crate::look::Look;
 use crate::media::MediaCache;
 use crate::server_settings::ServerSettings;
 
-pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 /// How long a loading placeholder waits before it shows, so a fast load never flashes it.
 pub const PLACEHOLDER_DELAY: f64 = 0.15;
 const TOAST_SECS: f64 = 3.5;
@@ -425,6 +424,9 @@ impl Ui {
 
 pub struct AppState {
     pub screen: Screen,
+    /// An invite link the page was opened at (web), applied once the saved session has been
+    /// checked and the sign-in form is up.
+    pub pending_link: Option<String>,
     pub auth: Auth,
     pub session: Option<Session>,
     pub data: Data,
@@ -446,7 +448,8 @@ impl AppState {
     pub fn new(now: fn() -> SystemTime, tz: Tz) -> AppState {
         AppState {
             screen: Screen::Auth,
-            auth: Auth::new(DEFAULT_SERVER),
+            pending_link: None,
+            auth: Auth::new(),
             session: None,
             data: Data::default(),
             ui: Ui::new(),
@@ -456,25 +459,27 @@ impl AppState {
             today: crate::format::day_of(tz, unix(now())),
             tz,
             now,
-            nonce: 0,
+            // Starts at the launch time, not 0: a nonce names a message in the transcript
+            // (`chat_id_of`) and the server treats a repeated one as a resend, and every launch
+            // (on the web, every page load) would otherwise reuse the last one's `<id>-1`.
+            nonce: now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
         }
     }
 
-    /// The URL in the "Server" field.
+    /// The one server the app talks to.
     pub fn server_url(&self) -> String {
-        self.auth.server.text.trim().to_owned()
+        crate::real::server_url()
     }
 
-    /// The URL a stored file's bytes are served at on the configured server (what
+    /// The URL a stored file's bytes are served at on the app's server (what
     /// `Client::media_url` builds from the same base URL).
     pub fn media_url(&self, key: &str) -> String {
         format!("{}/media/{key}", self.server_url().trim_end_matches('/'))
     }
 
-    /// Back to a fresh signed-out app, keeping the server URL and the look.
+    /// Back to a fresh signed-out app, keeping the look.
     pub fn reset(&mut self, error: Option<AuthError>) {
-        let (server, look, today, tz, now) = (
-            self.server_url(),
+        let (look, today, tz, now) = (
             self.ui.look,
             self.today,
             self.tz,
@@ -484,6 +489,8 @@ impl AppState {
         let recents = std::mem::take(&mut self.ui.recents);
         let folded = std::mem::take(&mut self.ui.attach.embeds_collapsed);
         let waker = self.ui.attach.waker.take();
+        // The link the page was opened at waits for the sign-in screen this leads to.
+        let link = self.pending_link.take();
         let was_in_voice = self.voice.session != crate::voice::VoiceSession::None;
         // The picture cache keeps its decoder (and the waker it was given); the pictures go.
         let mut media = std::mem::take(&mut self.data.media);
@@ -494,8 +501,9 @@ impl AppState {
         self.ui.recents = recents;
         self.ui.attach.embeds_collapsed = folded;
         self.ui.attach.waker = waker;
+        self.pending_link = link;
         self.today = today;
-        self.auth = Auth::new(&server);
+        self.auth = Auth::new();
         self.auth.error = error;
         self.ui.look = look;
         if was_in_voice {

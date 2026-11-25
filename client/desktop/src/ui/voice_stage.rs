@@ -16,7 +16,7 @@ use thehideout_design::components::{
 };
 use thehideout_design::icons::{APP_WINDOW, ARROW_LEFT, MONITOR};
 use thehideout_design::{icon as size, metrics_of, radius, theme_of, type_};
-use thehideout_voice::{ScreenKind, ScreenSource};
+use thehideout_voice_types::{ScreenKind, ScreenSource};
 
 use crate::app::App;
 use crate::voice::{Tile, TileKind};

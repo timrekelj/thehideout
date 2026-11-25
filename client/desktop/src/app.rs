@@ -12,8 +12,8 @@ use crate::backend::{Backend, Command, Reply};
 use crate::fake::{FakeBackend, now_unix};
 use crate::format::Tz;
 use crate::look::{self, Saver};
-use crate::real::{RealBackend, SharedPrefs, default_server, open_prefs};
-use crate::state::{AppState, Auth, Screen};
+use crate::real::{RealBackend, SharedPrefs, open_prefs};
+use crate::state::{AppState, Screen};
 use crate::ui;
 use crate::voice::{self, VoiceSink};
 
@@ -99,9 +99,6 @@ impl App {
             saver.save_embeds(&self.state.ui.attach.embeds_collapsed);
         }
         for cmd in std::mem::take(&mut self.state.outbox) {
-            if cmd.signed_out() {
-                self.backend.set_server(&self.state.server_url());
-            }
             self.backend.submit(cmd);
         }
     }
@@ -149,7 +146,15 @@ pub fn fake_now() -> SystemTime {
 
 /// The real wall clock, for the real backend.
 pub fn real_now() -> SystemTime {
-    SystemTime::now()
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+    }
+    // `SystemTime::now` panics on wasm32-unknown-unknown: ask the page.
+    #[cfg(target_arch = "wasm32")]
+    {
+        UNIX_EPOCH + Duration::from_millis(js_sys::Date::now() as u64)
+    }
 }
 
 /// Flags of the runs that draw without a window (scenes, snapshots, scripts).
@@ -206,8 +211,12 @@ pub fn init() -> App {
     }
     let prefs = open_prefs();
     let mut state = AppState::new(real_now, Tz::Local);
-    state.auth = Auth::new(&default_server());
     state.screen = Screen::Loading;
+    // The browser opened at an invite link: applied once the saved session has been checked.
+    #[cfg(target_arch = "wasm32")]
+    {
+        state.pending_link = crate::web::take_invite_link();
+    }
     let mut app = App::start(
         Box::new(RealBackend::with_shared(prefs.clone())),
         state,
@@ -216,7 +225,32 @@ pub fn init() -> App {
     app.boot = 1;
     // Only the network backend gets the audio engine (built on the first join); the fake world
     // and every scene stay silent.
+    #[cfg(not(target_arch = "wasm32"))]
     app.set_voice_sink(Box::new(crate::voice_engine::app_sink()));
+    #[cfg(target_arch = "wasm32")]
+    app.set_voice_sink(Box::new(crate::voice_web::web_sink()));
+    app
+}
+
+/// The window: the fonts, the handlers and the first state. Desktop `main` adds its titlebar
+/// and open-URL handler; the browser entry runs it as is.
+pub fn spec() -> rune::App<App> {
+    use rune::AppSpec;
+    use thehideout_design::{FAMILIES, FONTS};
+    let app = rune::App::new(AppSpec::<App> {
+        fonts: FONTS,
+        families: FAMILIES,
+        min_size: Some((800.0, 600.0)),
+        #[cfg(not(target_arch = "wasm32"))]
+        scenes: crate::scenes::SCENES,
+        setup: Some(setup),
+        poll: Some(poll),
+        on_key: Some(on_key),
+        ..AppSpec::new("thehideout", (1280.0, 800.0), init, view)
+    });
+    // Async browser work (a finished file chooser) reaches the app through this handle.
+    #[cfg(target_arch = "wasm32")]
+    crate::web::set_handle(app.handle());
     app
 }
 
@@ -246,6 +280,12 @@ pub fn poll(a: &mut App, clock: f64, tx: &mut Tx) -> bool {
     }
     let mut changed = false;
     loop {
+        // Checked on every pass, so a reply that ends the loading screen (the saved session's
+        // check) lets the page's invite link in, and its lookup goes out in this same poll.
+        // The 8th character of an invite code starts its lookup.
+        if a.state.apply_pending_link() | a.state.auto_submit_invite() {
+            changed = true;
+        }
         a.flush();
         let replies = a.backend.poll(clock);
         let heard = voice::take_events(&mut a.state, a.voice_sink.as_deref_mut());
@@ -282,6 +322,7 @@ pub fn poll(a: &mut App, clock: f64, tx: &mut Tx) -> bool {
 
 /// A link the system opened the app with (`thehideout://invite/<token>`, once the scheme is
 /// registered with the system): signed out, it opens that invite.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn on_open_url(a: &mut App, url: &str, _tx: &mut Tx) {
     a.act(|s| s.open_link(url));
 }

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use thehideout_server::config::{Config, LogFormat};
+use thehideout_server::config::{Config, LiveKitConfig, LogFormat};
 use thehideout_server::email::{self, EmailSender, Mailer, ResendSender, SmtpSender};
 use thehideout_server::services::invite;
 use thehideout_server::embeds::EmbedSettings;
 use thehideout_server::media::{self, attachments::AttachmentSettings};
 use thehideout_server::snowflake::Snowflake;
 use thehideout_server::storage::Storage;
+use thehideout_server::voice::LiveKit;
 use thehideout_server::{AppState, build_app, migrations, scylla_conn};
 use scylla::client::caching_session::CachingSession;
 use thehideout_server::server;
@@ -48,6 +49,20 @@ fn parse_args() -> Result<Option<Command>> {
             std::process::exit(0);
         }
         Some(other) => anyhow::bail!("unknown command {other:?}\n{USAGE}"),
+    }
+}
+
+/// Voice settings from `LIVEKIT_*`; voice stays off when they are unset.
+fn livekit(config: Option<&LiveKitConfig>) -> LiveKit {
+    match config {
+        Some(lk) => {
+            tracing::info!(url = %lk.url, api_url = %lk.api_url, "voice channels enabled (LiveKit)");
+            LiveKit::new(lk.clone())
+        }
+        None => {
+            tracing::warn!("voice channels are disabled: set LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET to enable them");
+            LiveKit::disabled()
+        }
     }
 }
 
@@ -136,8 +151,10 @@ async fn main() -> Result<()> {
     .with_admins(config.admins.clone())
     .with_public_url(config.public_url.clone())
     .with_policy(config.policy.clone())
+    .with_web_dir(config.web_dir.clone())
     .with_mailer(mailer(&config)?)
     .with_storage(storage)
+    .with_livekit(livekit(config.livekit.as_ref()))
     .with_push(
         thehideout_server::push::Providers::from_config(&config.push)?
             .map(|p| Arc::new(p) as Arc<dyn thehideout_server::push::Transport>),
@@ -160,7 +177,7 @@ async fn main() -> Result<()> {
     }
     let fail = |e: connectrpc::ConnectError| anyhow::anyhow!("{}", e.message.as_deref().unwrap_or("?"));
     if let Some(Command::Invite { email, admin }) = command {
-        let (invite, token, code) = invite::create(
+        let (invite, code) = invite::create(
             &state,
             invite::NewInvite { email, inviter_id: None, guild_id: None, guild_ids: Vec::new(), make_admin: admin },
         )
@@ -169,7 +186,7 @@ async fn main() -> Result<()> {
         state.mailer.flush().await;
         println!("invite {} for {}{}", invite.id, invite.email, if admin { " (site admin)" } else { "" });
         println!("code: {}", thehideout_server::codes::format_invite_code(&code));
-        println!("link: {}", invite::invite_link(&state, &token));
+        println!("link: {}", invite::invite_link(&state, &code));
         return Ok(());
     }
     invite::bootstrap(&state, config.bootstrap_admin_email.as_deref()).await.map_err(fail)?;
@@ -220,5 +237,19 @@ async fn wait_for_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_follows_the_livekit_config() {
+        assert!(livekit(None).config.is_none());
+        let cfg = LiveKitConfig::new("ws://127.0.0.1:7880", None, "key".into(), "s".repeat(32)).unwrap();
+        let lk = livekit(Some(&cfg));
+        assert_eq!(lk.config.as_ref().unwrap().url, "ws://127.0.0.1:7880");
+        assert!(lk.webhook_receiver().is_some());
     }
 }
