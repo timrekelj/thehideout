@@ -73,13 +73,6 @@ class EmbedScreenshots : ScreenshotTest() {
                 Frame { EmbedCard(content(), collapsed = collapsed, onToggleCollapsed = {}) }
             }
         }
-        // Coil's fetch of the bundled asset hops onto a real IO thread and posts back to the paused
-        // main looper; poll both so the capture doesn't race the thumbnail (same as EmbedUiTest.settle).
-        repeat(50) {
-            compose.waitForIdle()
-            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
-            Thread.sleep(20)
-        }
         compose.capture(screen, Device.Phone, variant)
     }
 

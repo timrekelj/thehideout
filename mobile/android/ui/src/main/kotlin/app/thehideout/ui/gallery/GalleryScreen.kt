@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -80,6 +81,40 @@ import app.thehideout.ui.theme.Look
 import java.time.LocalDate
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 
+/** One piece of the gallery: a title, an optional note, and the content it demonstrates. */
+data class GallerySection(val title: String, val note: String? = null, val content: @Composable () -> Unit)
+
+/** The gallery's sections, in the order [GalleryScreen] shows them. Shared with the screenshot
+ *  tests, which capture them in a few bounded groups instead of the whole page in one bitmap. */
+val gallerySections: List<GallerySection> = listOf(
+    GallerySection("Surfaces", "bg climbs to surface, raised, overlay") { Surfaces() },
+    GallerySection("Text and accent") { TextAndAccent() },
+    GallerySection("Status") { StatusColors() },
+    GallerySection("Channel palette", "ink for icons, text-safe ink for words") { ChannelPalette() },
+    GallerySection("Type", "Instrument Sans, JetBrains Mono for code") { TypeRamp() },
+    GallerySection("Buttons") { Buttons() },
+    GallerySection("Button groups and toggles") { ButtonGroups() },
+    GallerySection("Fields") { Fields() },
+    GallerySection("Chips and badges") { ChipsAndBadges() },
+    GallerySection("Selection") { Selection() },
+    GallerySection("Progress") { Progress() },
+    GallerySection("Avatars", "deterministic fills, desktop's FNV-1a rule") { Avatars() },
+    GallerySection("Servers") { Servers() },
+    GallerySection("Channels") { Channels() },
+    GallerySection("Messages") { Messages() },
+)
+
+/** A plain, non-lazy stack of some of [gallerySections] with no screen chrome (no top bar, FAB or
+ *  look sheet): lets the screenshot tests capture the gallery in a few bounded pieces instead of
+ *  one huge bitmap. */
+@Composable
+fun GallerySectionsPage(sections: List<GallerySection>, modifier: Modifier = Modifier) {
+    val c = Hideout.colors
+    Column(modifier.fillMaxWidth().background(c.bg)) {
+        sections.forEach { Section(it.title, it.note, it.content) }
+    }
+}
+
 /**
  * The debug gallery: the mobile twin of `client/gallery`. Everything built so far, drawn with the
  * tokens of the look in force, and a switcher for the look itself, so a design change is judged in
@@ -115,21 +150,7 @@ fun GalleryScreen(look: Look, onLookChange: (Look) -> Unit, modifier: Modifier =
             contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 96.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            item { Section("Surfaces", "bg climbs to surface, raised, overlay") { Surfaces() } }
-            item { Section("Text and accent") { TextAndAccent() } }
-            item { Section("Status") { StatusColors() } }
-            item { Section("Channel palette", "ink for icons, text-safe ink for words") { ChannelPalette() } }
-            item { Section("Type", "Instrument Sans, JetBrains Mono for code") { TypeRamp() } }
-            item { Section("Buttons") { Buttons() } }
-            item { Section("Button groups and toggles") { ButtonGroups() } }
-            item { Section("Fields") { Fields() } }
-            item { Section("Chips and badges") { ChipsAndBadges() } }
-            item { Section("Selection") { Selection() } }
-            item { Section("Progress") { Progress() } }
-            item { Section("Avatars", "deterministic fills, desktop's FNV-1a rule") { Avatars() } }
-            item { Section("Servers") { Servers() } }
-            item { Section("Channels") { Channels() } }
-            item { Section("Messages") { Messages() } }
+            items(gallerySections) { s -> Section(s.title, s.note, s.content) }
         }
     }
     if (sheet) LookSheet(look, onLookChange) { sheet = false }

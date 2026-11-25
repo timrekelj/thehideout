@@ -20,7 +20,6 @@ import app.thehideout.ui.components.MessageUi
 import app.thehideout.ui.theme.Hideout
 import java.time.Instant
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 // The same three guild emoji the fake backend seeds into The Hideout (FakeBackend.seedEmoji, MSG-09).
@@ -52,23 +51,12 @@ class EmojiScreenshots : ScreenshotTest() {
         Box(Modifier.background(c.bg).padding(16.dp).width(340.dp)) { content() }
     }
 
-    // Coil's fetch of the bundled asset hops onto a real IO thread and posts back to the paused
-    // main looper; poll both so the capture doesn't race the emoji pictures (same as EmbedScreenshots).
-    private fun settle() {
-        repeat(50) {
-            compose.waitForIdle()
-            shadowOf(android.os.Looper.getMainLooper()).idle()
-            Thread.sleep(20)
-        }
-    }
-
     private fun runRow(screen: String, variant: Variant, ui: app.thehideout.ui.components.MessageUi) {
         compose.setThemed(variant) {
             CompositionLocalProvider(LocalMediaBase provides "") {
                 Frame { MessageRow(ui, serverEmojis = serverEmojis) }
             }
         }
-        settle()
         compose.capture(screen, Device.Phone, variant)
     }
 
@@ -99,7 +87,6 @@ class EmojiScreenshots : ScreenshotTest() {
                 EmojiPickerSheet(onDismiss = {}, onPick = {}, serverEmojis = serverEmojis)
             }
         }
-        settle()
         compose.capture(screen, Device.Phone, variant)
     }
 
