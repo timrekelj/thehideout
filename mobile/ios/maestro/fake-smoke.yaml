@@ -1,0 +1,12 @@
+# Cheap sanity check against the bundled FakeBackend: no server, no accounts, just confirms the app
+# launches signed in and the tab bar renders. Run with:
+#   maestro --device <udid> test mobile/ios/maestro/fake-smoke.yaml
+appId: si.zabit.thehideout
+---
+- launchApp:
+    arguments:
+      --fake: true
+- assertVisible: "Servers"
+- tapOn: "DMs"
+- assertVisible: "DMs"
+- takeScreenshot: fake-smoke/01-dms-tab

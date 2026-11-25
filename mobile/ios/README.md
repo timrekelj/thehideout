@@ -96,6 +96,37 @@ Two things to know when touching this file:
 
 These tests are **not** run in CI (see `.github/workflows/ci.yml`, job `ios`): a headless CI runner's interaction with the keyboard and system callouts above is unreliable in a way a local run is not, and a flaky gate is worse than no gate. Run them locally before an auth-flow PR, and whenever this doc's launch arguments or `FakeAccounts` change.
 
+## Maestro flows
+
+`maestro/` drives the real app on a simulator through the accessibility tree, not XCUITest; it is how we check things XCUITest can't easily reach, like the gateway staying connected against a real server. [Install Maestro](https://maestro.mobile.dev) (needs a JVM; `brew install openjdk` and add it to `PATH` if `maestro --version` can't find a Java runtime).
+
+- `fake-smoke.yaml`: launches with `--fake`, cheap enough to run anytime.
+  ```sh
+  maestro --device <udid> test mobile/ios/maestro/fake-smoke.yaml
+  ```
+- `live-dm.yaml`: signs in as a real account on a real server, opens a DM and checks a message sent by the other side (via the Connect JSON API, not the UI) arrives live with no "Connecting…" banner, then sends a reply and confirms it too. Needs:
+  1. The dev stack up (`docker compose up -d`) and the server running against a disposable keyspace, e.g.:
+     ```sh
+     THEHIDEOUT_LISTEN_ADDR=127.0.0.1:18350 THEHIDEOUT_PUBLIC_URL=http://127.0.0.1:18350 \
+     THEHIDEOUT_KEYSPACE=live_check_$(date +%s) THEHIDEOUT_HEARTBEAT_SECS=5 \
+     THEHIDEOUT_BOOTSTRAP_ADMIN_EMAIL=you@example.com \
+     cd server && cargo run
+     ```
+     (`THEHIDEOUT_HEARTBEAT_SECS=5` makes the stream's liveness visible on a short run instead of the 30s default.)
+  2. Two accounts on it: accept the bootstrap invite logged at startup (`InviteService.AcceptInvite`, the Connect JSON API, e.g. `curl -X POST $SERVER_URL/thehideout.v1.InviteService/AcceptInvite -H 'Content-Type: application/json' --data '{...}'`) for account A, then `CreateInvite` + `AcceptInvite` for account B, then `DmService.OpenDm` between them to get a channel ID. See `server/tests/invites.rs` for the request shapes; invite codes are `XXXX-XXXX`.
+  3. The simulator pointed at that server (the app reads `server_url` from `UserDefaults.standard`, key `ServerSelection.defaultsKey`):
+     ```sh
+     xcrun simctl spawn <udid> defaults write si.zabit.thehideout server_url "http://127.0.0.1:18350"
+     ```
+  4. Run it, with account A's credentials and account B's session passed in, never committed:
+     ```sh
+     maestro --device <udid> test mobile/ios/maestro/live-dm.yaml \
+       -e USERNAME=alice -e PASSWORD=... -e PEER_USERNAME=bob \
+       -e SERVER_URL=http://127.0.0.1:18350 -e PEER_TOKEN=... -e DM_CHANNEL_ID=...
+     ```
+
+Screenshots land under the run's `takeScreenshot` artifact folder (pass `--test-output-dir` to control where); keep them out of version control.
+
 ## Theming rules in code
 
 *Glass for chrome, tokens for content.* Bars, tab bar, sheets and menus are the system's; `.themed(_:)` at the root sets the tint to the accent, the window background to `bg` and the colour scheme. Content uses `theme.colors.*`, `typeStyle(_:)` (Instrument Sans at an exact variable weight, Dynamic Type on top of the in-app text size), `Radius`, `Space` and `Motion`. On a filled accent (prominent buttons) use `.onAccent()` for the label: the system's white fails contrast on the lighter accents in dark mode.

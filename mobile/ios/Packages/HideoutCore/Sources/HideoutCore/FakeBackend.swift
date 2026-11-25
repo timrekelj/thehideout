@@ -21,6 +21,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
     public let accounts = FakeAccounts()
     private var world: World
     private var subscribers: [UUID: AsyncThrowingStream<GatewayEvent, Error>.Continuation] = [:]
+    private var subscribeCount = 0
 
     /// Seconds each call waits before it answers.
     public var latency: TimeInterval {
@@ -71,6 +72,10 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
     }
 
     public var openStreams: Int { lock.withLock { subscribers.count } }
+
+    /// How many times `subscribe()` has opened a stream, ever (a recording fake: tests check this against
+    /// `openStreams` to tell "reconnected" from "started a redundant second stream").
+    public var totalSubscribes: Int { lock.withLock { subscribeCount } }
 
     func delay() async throws {
         let l = latency
@@ -179,6 +184,22 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
         emit(.reactionRemoved(channel: channel, message: message, emoji: emoji, user: me))
     }
 
+    public func startDm(user: ID) async throws -> DMChannel {
+        try await delay()
+        let dm: DMChannel = try lock.withLock {
+            guard user != world.meID, world.users.contains(where: { $0.id == user }) else { throw AppError.invalidArgument("no such user") }
+            if let existing = world.dms.first(where: { $0.participants.count == 2 && $0.participants.contains { $0.id == user } }) {
+                return existing
+            }
+            world.nextID += 1
+            let dm = DMChannel(id: world.nextID, participants: [world.user(world.meID), world.user(user)], createdAt: Date())
+            world.dms.append(dm)
+            return dm
+        }
+        emit(.dmOpened(dm))
+        return dm
+    }
+
     public func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> Layout {
         try await delay()
         let l: Layout = try lock.withLock {
@@ -202,6 +223,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
             let id = UUID()
             let snapshot = lock.withLock { () -> GatewayEvent in
                 subscribers[id] = continuation
+                subscribeCount += 1
                 return .voiceSnapshot(guilds: world.guilds.map(\.id), states: world.voiceStates)
             }
             // Headers + first events, as the server opens a stream.

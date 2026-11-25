@@ -68,6 +68,8 @@ public protocol ApiClient: GatewaySource {
     func addReaction(channel: ID, message: ID, emoji: ReactionEmoji) async throws
     func removeReaction(channel: ID, message: ID, emoji: ReactionEmoji) async throws
     func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> Layout
+    /// Opens a DM with `user`, or returns the existing one (idempotent).
+    func startDm(user: ID) async throws -> DMChannel
 }
 
 /// The `x-thehideout-client` header value: `ios/<version> (iOS <os version>)`.

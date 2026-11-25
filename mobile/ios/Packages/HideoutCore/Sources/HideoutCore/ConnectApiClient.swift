@@ -29,6 +29,10 @@ final class HeaderInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked S
     }
 }
 
+/// A ceiling far past any real session (365 days), so `GatewayStream`'s own heartbeat watchdog is what
+/// decides a stale `Subscribe` stream is dead, not `URLSession`'s idle/total timeouts.
+enum GatewayHTTPTimeout { static let seconds: TimeInterval = 365 * 86_400 }
+
 /// The real `ApiClient`: connect-swift (Connect protocol, protobuf codec) over `URLSession`.
 public final class ConnectApiClient: ApiClient {
     let auth: Thehideout_V1_AuthServiceClient
@@ -51,7 +55,17 @@ public final class ConnectApiClient: ApiClient {
         let client = ProtocolClient(httpClient: URLSessionHTTPClient(), config: config)
         auth = .init(client: client); guilds = .init(client: client); messages = .init(client: client)
         dms = .init(client: client); roles = .init(client: client); emojis = .init(client: client)
-        gateway = .init(client: client); invites = .init(client: client)
+        invites = .init(client: client)
+        // `Subscribe` is a long-lived stream, not a request/response call: `URLSessionConfiguration.default`'s
+        // 60 s `timeoutIntervalForRequest` (idle timeout) and 7-day `timeoutIntervalForResource` (total
+        // duration) would otherwise kill it out from under the heartbeat watchdog above. A dedicated
+        // `URLSession` for the gateway client removes both ceilings; unary calls keep the default session's
+        // normal timeouts.
+        let streamConfig = URLSessionConfiguration.default
+        streamConfig.timeoutIntervalForRequest = GatewayHTTPTimeout.seconds
+        streamConfig.timeoutIntervalForResource = GatewayHTTPTimeout.seconds
+        let streamClient = ProtocolClient(httpClient: URLSessionHTTPClient(configuration: streamConfig), config: config)
+        gateway = .init(client: streamClient)
     }
 
     func value<T: ProtobufMessage>(_ r: ResponseMessage<T>) throws -> T {
@@ -142,6 +156,11 @@ public final class ConnectApiClient: ApiClient {
         var req = Thehideout_V1_RemoveReactionRequest()
         req.channelID = channel; req.messageID = message; req.emoji = emoji.proto
         _ = try value(await messages.removeReaction(request: req, headers: [:]))
+    }
+
+    public func startDm(user: ID) async throws -> DMChannel {
+        var req = Thehideout_V1_OpenDmRequest(); req.userID = user
+        return DMChannel(try value(await dms.openDm(request: req, headers: [:])).channel)
     }
 
     public func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> Layout {

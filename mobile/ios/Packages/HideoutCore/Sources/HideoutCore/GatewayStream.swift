@@ -12,6 +12,10 @@ public struct GatewayConfig: Sendable, Equatable {
     public var silenceFactor: Double = 2.5
     /// Random spread of the retry delay, as a fraction (0.2 = +-20 %).
     public var jitter: Double = 0.2
+    /// How long the app can stay inactive before the gateway actually stops (`AppStore.setActive`): a
+    /// notification-centre pull or app-switcher glance flips `scenePhase` to `.inactive` and back within
+    /// milliseconds, and should ride out rather than tear the stream down.
+    public var inactiveGrace: TimeInterval = 3
 
     public init() {}
 

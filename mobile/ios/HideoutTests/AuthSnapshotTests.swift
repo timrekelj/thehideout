@@ -264,5 +264,6 @@ private struct BrokenApi: ApiClient {
     func addReaction(channel: ID, message: ID, emoji: ReactionEmoji) async throws { throw AppError.network("offline") }
     func removeReaction(channel: ID, message: ID, emoji: ReactionEmoji) async throws { throw AppError.network("offline") }
     func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> HideoutCore.Layout { throw AppError.network("offline") }
+    func startDm(user: ID) async throws -> DMChannel { throw AppError.network("offline") }
     func subscribe() -> AsyncThrowingStream<GatewayEvent, Error> { AsyncThrowingStream { $0.finish(throwing: AppError.network("offline")) } }
 }

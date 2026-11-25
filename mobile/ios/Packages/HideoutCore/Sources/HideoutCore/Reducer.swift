@@ -3,7 +3,8 @@ import Foundation
 // The reducer: pure transitions of `AppState`. A port of desktop's `apply.rs` plus the state methods it
 // calls (state.rs, moderation.rs, voice.rs, emoji.rs, structure.rs). Differences from desktop, all about
 // navigation: a phone shows a channel only when its transcript is pushed, so `openChannel` is explicit
-// (entering a server does not open its first channel) and a deleted open channel just closes.
+// (entering a server does not open its first channel), a deleted open channel just closes, and `startDm`
+// records a `routeRequest` — the one navigation that isn't a tap on a link, so the shell can push it.
 
 extension AppState {
     // MARK: notices
@@ -136,6 +137,75 @@ extension AppState {
     }
 
     public mutating func discard(nonce: String) { outgoing.removeAll { $0.nonce == nonce } }
+
+    /// Edits an own message in place (optimistic; a refusal rolls back, see `applyEditReply`). False (and
+    /// nothing queued) when the message isn't loaded, or the new text is empty or over the limit.
+    @discardableResult
+    public mutating func editMessage(channel: ID, message: ID, content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count <= Self.maxMessageChars, !trimmed.isEmpty,
+              let i = logs[channel]?.messages.firstIndex(where: { $0.id == message }) else { return false }
+        let previous = logs[channel]!.messages[i].content
+        guard previous != trimmed else { return false }
+        logs[channel]!.messages[i].content = trimmed
+        outbox.append(.editMessage(channel: channel, message: message, content: trimmed, previous: previous))
+        return true
+    }
+
+    /// The reply to `editMessage`. Success: the server's version (attachments/embeds may differ once resolved).
+    /// Failure: the edit rolls back to `previous` unless the message has moved on since (another edit, or it
+    /// was deleted while editing).
+    public mutating func applyEditReply(channel: ID, message: ID, previous: String, result: Result<Message, AppError>) {
+        switch result {
+        case .success(let m): messageUpdated(m)
+        case .failure(let e):
+            if let i = logs[channel]?.messages.firstIndex(where: { $0.id == message }) {
+                logs[channel]!.messages[i].content = previous
+            }
+            notice(.danger, "Couldn't save the edit. \(sentence(e.description))")
+        }
+    }
+
+    // MARK: direct messages
+
+    /// Opens a DM with `user`: the existing 1:1 conversation if there is one (and shows it, loading its
+    /// history), or asks the server to open one.
+    public mutating func startDm(user: ID) {
+        if let dm = oneToOneDm(with: user) {
+            goHome()
+            open(channel: dm.id)
+            requestRoute(dm.id)
+        } else {
+            outbox.append(.startDm(user: user))
+        }
+    }
+
+    /// The reply to `startDm`: lists the conversation (idempotent: it may already be known, the gateway's own
+    /// `dm_opened` or another device having opened it first) and shows it, loading its history — the same
+    /// path a tap on an existing DM takes, so it never lands on the DM list instead of the conversation.
+    public mutating func applyDmOpened(result: Result<DMChannel, AppError>) {
+        switch result {
+        case .success(let dm):
+            addDm(dm)
+            goHome()
+            open(channel: dm.id)
+            requestRoute(dm.id)
+        case .failure(let e):
+            notice(.danger, "Couldn't open the conversation. \(sentence(e.description))")
+        }
+    }
+
+    /// The single explicit route: the shell shows `channel` now (DMs tab selected, its transcript pushed).
+    /// A nonce keeps two requests for the same conversation distinct, so the second still navigates.
+    mutating func requestRoute(_ channel: ID) {
+        routeCounter += 1
+        routeRequest = RouteRequest(channel: channel, nonce: routeCounter)
+    }
+
+    mutating func addDm(_ dm: DMChannel) {
+        for u in dm.participants { users[u.id] = u }
+        if !dms.contains(where: { $0.id == dm.id }) { dms.append(dm) }
+    }
 
     /// The reply to a send.
     public mutating func applySent(channel: ID, nonce: String, result: Result<Message, AppError>) {
@@ -413,9 +483,7 @@ extension AppState {
         case .guildRemoved(let g): guildRemoved(g, reason: nil)
         case .channelDeleted(let g, let c): channelRemoved(guild: g, channel: c)
         case .notificationSettingsUpdated(let settings): notificationSettings = settings
-        case .dmOpened(let dm):
-            for u in dm.participants { users[u.id] = u }
-            if !dms.contains(where: { $0.id == dm.id }) { dms.append(dm) }
+        case .dmOpened(let dm): addDm(dm)
         case .guildMemberJoined(let g, let user):
             // Before the list is loaded the join is part of it; a list of one would pass for it.
             if members[g] != nil, !members[g]!.contains(user.id) { members[g]!.append(user.id) }

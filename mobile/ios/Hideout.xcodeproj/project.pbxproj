@@ -13,7 +13,9 @@
 		31AA98A22A2C9A4D1D6814C7 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA3E68161E036F99B32D3211 /* JetBrainsMono-Bold.ttf */; };
 		3796DCA338ACEDE36DA1EB19 /* HideoutCore in Frameworks */ = {isa = PBXBuildFile; productRef = ED6942FAD47DBBE903FCBDBA /* HideoutCore */; };
 		41734FF11BBC4A09BEC0C1DF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8CA3C8CB126E4ECEB54FE2A0 /* Assets.xcassets */; };
+		434E8F9D735AC46A7B6D059B /* SystemPasskeysTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFB98417D389F03D98BC83CD /* SystemPasskeysTests.swift */; };
 		51FA3C7D4FB1CA3C9E470F99 /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = 44D13906C52E2B390B7124D7 /* SnapshotTesting */; };
+		6312D877F93B6FB045A2E670 /* ChatUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C86AE2209B075C16A223371 /* ChatUITests.swift */; };
 		66285212F86722E49EC3B233 /* HideoutUI in Frameworks */ = {isa = PBXBuildFile; productRef = 532847A11181D26586ED77E7 /* HideoutUI */; };
 		B476EA9AC198452C71CD4A78 /* SnapshotSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4BCB3F16214F227AB038248 /* SnapshotSupport.swift */; };
 		C653AEE65EEB7BFFCAED6974 /* SnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */; };
@@ -50,6 +52,7 @@
 		34BBD606F1C5251773D08C70 /* LookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LookTests.swift; sourceTree = "<group>"; };
 		374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotTests.swift; sourceTree = "<group>"; };
 		57ABA67EA95E11823ADF8B59 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
+		6C86AE2209B075C16A223371 /* ChatUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatUITests.swift; sourceTree = "<group>"; };
 		880EE04C0741505D4069BFA2 /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Regular.ttf"; path = "../tokens/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		8CA3C8CB126E4ECEB54FE2A0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9088CE26915B1A33F127FA46 /* AuthUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthUITests.swift; sourceTree = "<group>"; };
@@ -63,6 +66,7 @@
 		CBA0AAF20D860C0A8BCD8930 /* Hideout.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Hideout.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA3E68161E036F99B32D3211 /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Bold.ttf"; path = "../tokens/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
 		FDB6E82A785697F86643FA03 /* HideoutApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HideoutApp.swift; sourceTree = "<group>"; };
+		FFB98417D389F03D98BC83CD /* SystemPasskeysTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemPasskeysTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -136,6 +140,7 @@
 			isa = PBXGroup;
 			children = (
 				9088CE26915B1A33F127FA46 /* AuthUITests.swift */,
+				6C86AE2209B075C16A223371 /* ChatUITests.swift */,
 			);
 			path = HideoutUITests;
 			sourceTree = "<group>";
@@ -147,6 +152,7 @@
 				34BBD606F1C5251773D08C70 /* LookTests.swift */,
 				C4BCB3F16214F227AB038248 /* SnapshotSupport.swift */,
 				374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */,
+				FFB98417D389F03D98BC83CD /* SystemPasskeysTests.swift */,
 			);
 			path = HideoutTests;
 			sourceTree = "<group>";
@@ -299,6 +305,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FAF6A8BE3F8C409E8416E50D /* AuthUITests.swift in Sources */,
+				6312D877F93B6FB045A2E670 /* ChatUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -310,6 +317,7 @@
 				FD4227B170BC65459167AB9E /* LookTests.swift in Sources */,
 				B476EA9AC198452C71CD4A78 /* SnapshotSupport.swift in Sources */,
 				C653AEE65EEB7BFFCAED6974 /* SnapshotTests.swift in Sources */,
+				434E8F9D735AC46A7B6D059B /* SystemPasskeysTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

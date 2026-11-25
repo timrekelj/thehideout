@@ -1,0 +1,61 @@
+# Live gateway check against a real local server (see README.md "Maestro flows" section for setup).
+# Required -e vars: USERNAME, PASSWORD (account A's sign-in), PEER_USERNAME (account B's username,
+# the DM row to open), SERVER_URL, PEER_TOKEN, DM_CHANNEL_ID (account B's session and the DM channel,
+# used only by the script below to post as B through the Connect JSON API, never through the UI).
+# Run with: maestro --device <udid> test mobile/ios/maestro/live-dm.yaml -e USERNAME=... -e PASSWORD=... ...
+appId: si.zabit.thehideout
+---
+- launchApp:
+    clearKeychain: true
+- tapOn: "Username or email"
+- inputText: ${USERNAME}
+- tapOn: "Password"
+- inputText: ${PASSWORD}
+- tapOn: "Sign in"
+# iOS may offer to save the password in the system Keychain UI, covering the shell underneath; it can
+# show up a beat after sign-in completes, so check for it a few times rather than only once.
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    text: "Not Now"
+    optional: true
+- extendedWaitUntil:
+    visible: "DMs"
+    timeout: 20000
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn: "DMs"
+- tapOn: ${PEER_USERNAME}
+- assertNotVisible: "Connecting…"
+- takeScreenshot: live-dm/01-before-peer-message
+- runScript:
+    file: scripts/send_as_peer.js
+    env:
+      SERVER_URL: ${SERVER_URL}
+      PEER_TOKEN: ${PEER_TOKEN}
+      DM_CHANNEL_ID: ${DM_CHANNEL_ID}
+      MESSAGE_TEXT: "live check from B"
+- extendedWaitUntil:
+    visible: ${output.peerMessageText}
+    timeout: 15000
+- assertNotVisible: "Connecting…"
+- takeScreenshot: live-dm/02-peer-message-arrived
+- tapOn:
+    id: "composer"
+- inputText: "live check reply from the app"
+# A beat for the composer's `draft` binding to settle (and any glass-button transition to finish)
+# before tapping Send; the tap can otherwise land while the button briefly ignores it, so retry.
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: live-dm/03-before-send
+- retry:
+    maxRetries: 3
+    commands:
+      - tapOn: "Send"
+      - assertVisible: "Message @bob"
+- takeScreenshot: live-dm/04-app-reply-sent
