@@ -159,32 +159,28 @@ fun suspendedText(reason: String, until: Instant?): String {
     return text
 }
 
+/**
+ * Invites now carry only the 8-character code (`XXXX-XXXX`), never a link token (server PR #32/#33,
+ * "invite-code-only"): a pasted link yields just its code. Delegates to the shared
+ * [app.thehideout.core.invite.InviteCode] (desktop's `InviteCodeInput`), so the sign-in and sign-up
+ * fields normalise identically.
+ */
 object InviteCodes {
-    /** Whether the invite field holds a link rather than a code. */
-    fun looksLikeLink(raw: String): Boolean = raw.contains("://") || raw.contains("/invite/")
+    /** Whether the field, as typed so far, looks like a link rather than a bare code (nothing forgiven yet). */
+    fun looksLikeLink(raw: String): Boolean = app.thehideout.core.invite.InviteCode.looksLikeLink(raw)
 
     /**
-     * The code as typed or pasted, normalised: uppercase, the dash after the fourth character,
-     * and I/L/O forgiven as 1/1/0 (the server's alphabet has none of them). A link token is
-     * returned untouched — deep links send it as is.
+     * The code as typed or pasted, normalised: uppercase, the dash after the fourth character once
+     * complete, I/L/O forgiven as 1/1/0, and a pasted link reduced to the code after its last
+     * `/invite/`.
      */
-    fun normalize(raw: String): String {
-        val t = raw.trim()
-        if (looksLikeLink(t)) return t
-        val cleaned = buildString {
-            for (c in t.uppercase()) {
-                val d = when (c) { 'I', 'L' -> '1'; 'O' -> '0'; else -> c }
-                if (d.isLetterOrDigit()) append(d)
-            }
-        }
-        return if (cleaned.length == 8) "${cleaned.take(4)}-${cleaned.drop(4)}" else cleaned
-    }
+    fun normalize(raw: String): String = app.thehideout.core.invite.InviteCode.format(app.thehideout.core.invite.InviteCode.normalize(raw))
 
     /** `XXXX-XXXX` in the server's alphabet. */
-    fun isCodeShape(normalized: String): Boolean = Regex("[A-Z0-9]{4}-[A-Z0-9]{4}").matches(normalized)
+    fun isCodeShape(normalized: String): Boolean = Regex("[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}").matches(normalized)
 }
 
-/** The token at the end of an invite link the OS opened (`thehideout://invite/<token>`, `https://<server>/invite/<token>`). */
+/** The code at the end of an invite link the OS opened (`thehideout://invite/<code>`, `https://<server>/invite/<code>`). */
 fun inviteTokenFromUrl(url: String): String? {
     val at = url.indexOf("/invite/")
     if (at < 0) return null
@@ -336,7 +332,7 @@ class AuthFlow(
         val token = inviteTokenFromUrl(url) ?: return
         if (state.value.busy) return
         setMode(AuthMode.Invite)
-        update { it.copy(invite = token) }
+        update { it.copy(invite = InviteCodes.normalize(token)) }
         submit()
     }
 
@@ -385,8 +381,7 @@ class AuthFlow(
             }
             AuthStep.InviteCode -> {
                 val code = s.invite.trim()
-                if (code.isEmpty()) return fail(AuthField.Invite, "Enter the code from your invite email.")
-                if (InviteCodes.looksLikeLink(code)) return fail(AuthField.Invite, "Paste just the code from your invite email, not the link.")
+                if (code.isEmpty() || !InviteCodes.isCodeShape(code)) return fail(AuthField.Invite, "Enter the 8-character code from your invite email.")
                 launch { lookupInvite(code) }
             }
             is AuthStep.InviteAccept -> {

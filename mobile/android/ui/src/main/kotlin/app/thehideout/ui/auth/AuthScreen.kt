@@ -409,14 +409,14 @@ private fun WaitingCeremony(title: String, body: String, state: AuthUiState, aut
 @Composable
 private fun InviteCodeStep(state: AuthUiState, auth: AuthPresenter, haptic: androidx.compose.ui.hapticfeedback.HapticFeedback) {
     val c = Hideout.colors
-    AuthField(
-        "Invite code", state.invite, auth::updateInvite,
-        placeholder = "XXXX-XXXX",
+    Text("Invite code", style = MaterialTheme.typography.labelLarge, color = c.textMuted)
+    app.thehideout.ui.components.InviteCodeField(
+        state.invite, auth::updateInvite,
         error = state.errorFor(AuthField.Invite),
         imeAction = ImeAction.Go,
         onSubmit = auth::submit,
     )
-    Text("It's in your invite email.", style = MaterialTheme.typography.bodySmall, color = c.textMuted)
+    Text("It's in your invite email, or paste the whole link.", style = MaterialTheme.typography.bodySmall, color = c.textMuted)
     FormError(state)
     PrimaryButton(if (state.busy) "Checking…" else "Continue", state.busy, haptic, onClick = auth::submit)
 }

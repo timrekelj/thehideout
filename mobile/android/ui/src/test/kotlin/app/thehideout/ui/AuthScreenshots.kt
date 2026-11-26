@@ -74,11 +74,11 @@ object AuthStates {
     val reset = AuthUiState(step = AuthStep.Reset(sent = false), email = "tim@example.com")
     val resetSent = AuthUiState(step = AuthStep.Reset(sent = true), email = "tim@example.com", code = "123456", password = "brand-new-password", resendAt = System.currentTimeMillis() + 30_000L)
     val inviteCode = AuthUiState(mode = AuthMode.Invite, step = AuthStep.InviteCode, invite = "WXYZ-2345")
-    val inviteLinkError = AuthUiState(
+    val inviteCodeError = AuthUiState(
         mode = AuthMode.Invite,
         step = AuthStep.InviteCode,
-        invite = "https://thehideout.zabit.si/invite/tok-wxyz",
-        error = AuthError(AuthField.Invite, "Paste just the code from your invite email, not the link."),
+        invite = "WXYZ",
+        error = AuthError(AuthField.Invite, "Enter the 8-character code from your invite email."),
     )
     val inviteAccept = AuthUiState(
         mode = AuthMode.Invite,
@@ -131,8 +131,8 @@ class AuthPhoneScreenshots : ScreenshotTest() {
     @Test fun resetSentLight() = shot("reset-sent", Variant.Light, AuthStates.resetSent)
     @Test fun inviteCodeDark() = shot("invite-code", Variant.Dark, AuthStates.inviteCode)
     @Test fun inviteCodeLight() = shot("invite-code", Variant.Light, AuthStates.inviteCode)
-    @Test fun inviteLinkErrorDark() = shot("invite-link-error", Variant.Dark, AuthStates.inviteLinkError)
-    @Test fun inviteLinkErrorLight() = shot("invite-link-error", Variant.Light, AuthStates.inviteLinkError)
+    @Test fun inviteCodeErrorDark() = shot("invite-code-error", Variant.Dark, AuthStates.inviteCodeError)
+    @Test fun inviteCodeErrorLight() = shot("invite-code-error", Variant.Light, AuthStates.inviteCodeError)
     @Test fun inviteAcceptDark() = shot("invite-accept", Variant.Dark, AuthStates.inviteAccept)
     @Test fun inviteAcceptLight() = shot("invite-accept", Variant.Light, AuthStates.inviteAccept)
     @Test fun suspendedDark() = shot("suspended", Variant.Dark, AuthStates.suspended)
