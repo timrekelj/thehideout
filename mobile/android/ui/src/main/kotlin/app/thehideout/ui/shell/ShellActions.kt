@@ -1,8 +1,16 @@
 package app.thehideout.ui.shell
 
+import app.thehideout.core.api.AppError
+import app.thehideout.core.model.Channel
+import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.model.Guild
+import app.thehideout.core.model.Invite
 import app.thehideout.core.model.ReactionEmoji
+import app.thehideout.core.model.Section
 import app.thehideout.core.store.AppStore
 import app.thehideout.core.store.PickedFile
+
+private val unavailable = Result.failure<Nothing>(AppError.Other("unavailable"))
 
 /** What the screens can ask for. A plain bag of lambdas so screens are previewable and testable without a store. */
 data class ShellActions(
@@ -33,6 +41,19 @@ data class ShellActions(
     val dismissNotice: (Long) -> Unit = {},
     /** Signed-out screen: continue with the built-in demo data (debug builds). */
     val useDemo: (() -> Unit)? = null,
+
+    // ---- management: create/join servers, channels, sections, invites (phase 4a) ----
+    val createGuild: suspend (String) -> Result<Guild> = { unavailable },
+    val joinGuild: suspend (String) -> Result<Guild> = { unavailable },
+    val createChannel: suspend (Long, String, ChannelKind, Long?) -> Result<Channel> = { _, _, _, _ -> unavailable },
+    val createSection: suspend (Long, String) -> Result<Section> = { _, _ -> unavailable },
+    val renameSection: suspend (Long, Long, String) -> Result<Section> = { _, _, _ -> unavailable },
+    val deleteSection: suspend (Long, Long) -> Result<Unit> = { _, _ -> unavailable },
+    val rotateInviteCode: suspend (Long) -> Result<String> = { unavailable },
+    val createInvite: suspend (String, Long) -> Result<Invite> = { _, _ -> unavailable },
+    val listInvites: suspend (Long) -> Result<List<Invite>> = { unavailable },
+    val revokeInvite: suspend (Long) -> Result<Invite> = { unavailable },
+    val resendInvite: suspend (Long) -> Result<Invite> = { unavailable },
 ) {
     companion object {
         fun of(store: AppStore, useDemo: (() -> Unit)? = null) = ShellActions(
@@ -56,6 +77,17 @@ data class ShellActions(
             acceptTerms = store::acceptTerms,
             dismissNotice = store::dismissNotice,
             useDemo = useDemo,
+            createGuild = store::createGuild,
+            joinGuild = store::joinGuild,
+            createChannel = store::createChannel,
+            createSection = store::createSection,
+            renameSection = store::renameSection,
+            deleteSection = store::deleteSection,
+            rotateInviteCode = store::rotateInviteCode,
+            createInvite = store::createInvite,
+            listInvites = store::listInvites,
+            revokeInvite = store::revokeInvite,
+            resendInvite = store::resendInvite,
         )
     }
 }
