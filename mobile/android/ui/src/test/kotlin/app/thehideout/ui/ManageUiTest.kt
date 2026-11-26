@@ -88,12 +88,12 @@ class ManageUiTest {
         compose.onNodeWithText("general").assertIsDisplayed()
     }
 
-    @Test fun `joining by an 8-box code opens that server`() {
+    @Test fun `joining by an invite code opens that server`() {
         val store = harness()
         compose.onNodeWithTag("add-server").performClick()
         compose.onNodeWithText("Join server").performClick()
         compose.settle()
-        compose.onNodeWithTag("invite-code-input").performTextInput("garage22")
+        compose.onNodeWithTag("join-server-code").performTextInput("garage22")
         compose.onNodeWithTag("join-server-submit").performClick()
         compose.settle { store.state.value.currentGuild?.id == FakeBackend.GARAGE }
         assertEquals(FakeBackend.GARAGE, store.state.value.currentGuild?.id)

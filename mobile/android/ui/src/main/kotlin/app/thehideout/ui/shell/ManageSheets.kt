@@ -48,8 +48,6 @@ import app.thehideout.core.model.Guild
 import app.thehideout.core.model.Invite
 import app.thehideout.core.model.InviteStatus
 import app.thehideout.core.model.Section
-import app.thehideout.core.invite.InviteCode
-import app.thehideout.ui.components.InviteCodeField
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.theme.Hideout
@@ -100,7 +98,13 @@ fun CreateServerSheet(onDismiss: () -> Unit, createGuild: suspend (String) -> Re
     }
 }
 
-/** Join server with an invite code (DLG-02): the 8-box code field. */
+/**
+ * Join server with an invite code (DLG-02): a plain field, like desktop's `TextInput`. A guild's
+ * `invite_code` (server-generated alphanumeric, case-sensitive) is a different code from the
+ * 8-character Crockford email-invite codes [app.thehideout.ui.components.InviteCodeField] handles
+ * (AUTH-08/DLG-04): it has no fixed length or dash, so it is typed and sent as is, uppercased or
+ * reformatted.
+ */
 @Composable
 fun JoinServerSheet(onDismiss: () -> Unit, joinGuild: suspend (String) -> Result<Guild>, modifier: Modifier = Modifier) {
     val c = Hideout.colors
@@ -108,12 +112,20 @@ fun JoinServerSheet(onDismiss: () -> Unit, joinGuild: suspend (String) -> Result
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val normalized = code.filter { it != '-' }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.surface, modifier = modifier) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Join server", style = MaterialTheme.typography.titleLarge, color = c.text)
             Text("Paste an invite code from a friend.", style = MaterialTheme.typography.bodyMedium, color = c.textMuted)
-            InviteCodeField(code, { code = it; error = null }, error = error)
+            OutlinedTextField(
+                value = code,
+                onValueChange = { code = it.trim(); error = null },
+                label = { Text("Invite code") },
+                placeholder = { Text("HIDEOUT1") },
+                isError = error != null,
+                supportingText = error?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("join-server-code"),
+            )
             Button(
                 onClick = {
                     scope.launch {
@@ -124,7 +136,7 @@ fun JoinServerSheet(onDismiss: () -> Unit, joinGuild: suspend (String) -> Result
                         )
                     }
                 },
-                enabled = !busy && InviteCode.isComplete(normalized),
+                enabled = !busy && code.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().testTag("join-server-submit"),
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = c.accentFg, strokeWidth = 2.dp) else Text("Join")
