@@ -9,7 +9,12 @@ import app.thehideout.core.attachment.MAX_CONCURRENT_UPLOADS
 import app.thehideout.core.cache.SessionCache
 import app.thehideout.core.gateway.Backoff
 import app.thehideout.core.gateway.GatewayStream
+import app.thehideout.core.model.Channel
+import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.model.Guild
+import app.thehideout.core.model.Invite
 import app.thehideout.core.model.ReactionEmoji
+import app.thehideout.core.model.Section
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -124,6 +129,37 @@ class AppStore(
         dispatch(Action.SessionStarted(session.me))
         bootstrap()
     }
+
+    // ---- management: create/join servers, channels, sections, invites (phase 4a) ---------------
+
+    /** Creates a server (the server auto-creates its `general` channel) and opens it. */
+    suspend fun createGuild(name: String): Result<Guild> =
+        guard(runCatching { api.createGuild(name) }).also { r -> r.onSuccess { dispatch(Action.GuildEntered(it)) } }
+
+    /** Joins the server an 8-character invite code points to and opens it. */
+    suspend fun joinGuild(code: String): Result<Guild> =
+        guard(runCatching { api.joinGuild(code) }).also { r -> r.onSuccess { dispatch(Action.GuildEntered(it)) } }
+
+    suspend fun createChannel(guild: Long, name: String, kind: ChannelKind, sectionId: Long?): Result<Channel> =
+        guard(runCatching { api.createChannel(guild, name, kind, sectionId) }).also { r -> r.onSuccess { dispatch(Action.ChannelCreated(it)) } }
+
+    suspend fun createSection(guild: Long, name: String): Result<Section> =
+        guard(runCatching { api.createSection(guild, name) }).also { r -> r.onSuccess { dispatch(Action.LayoutReplaced(guild, it.layout)) } }.map { it.section }
+
+    suspend fun renameSection(guild: Long, section: Long, name: String): Result<Section> =
+        guard(runCatching { api.renameSection(guild, section, name) }).also { r -> r.onSuccess { dispatch(Action.LayoutReplaced(guild, it.layout)) } }.map { it.section }
+
+    suspend fun deleteSection(guild: Long, section: Long): Result<Unit> =
+        guard(runCatching { api.deleteSection(guild, section) }).also { r -> r.onSuccess { dispatch(Action.LayoutReplaced(guild, it)) } }.map { }
+
+    /** Replaces the server's invite code (MANAGE_SERVER); the old one stops working at once. */
+    suspend fun rotateInviteCode(guild: Long): Result<String> =
+        guard(runCatching { api.rotateInviteCode(guild) }).also { r -> r.onSuccess { dispatch(Action.GuildCodeRotated(guild, it)) } }
+
+    suspend fun createInvite(email: String, guild: Long): Result<Invite> = guard(runCatching { api.createInvite(email, guild) })
+    suspend fun listInvites(guild: Long): Result<List<Invite>> = guard(runCatching { api.listInvites(guild) })
+    suspend fun revokeInvite(inviteId: Long): Result<Invite> = guard(runCatching { api.revokeInvite(inviteId) })
+    suspend fun resendInvite(inviteId: Long): Result<Invite> = guard(runCatching { api.resendInvite(inviteId) })
 
     fun signOut() {
         stopGateway()

@@ -42,7 +42,7 @@ class FakeBackend(
     private var currentUserId = TIM
     private val me: User get() = users.getValue(currentUserId)
 
-    private val guilds = listOf(
+    private val guilds = mutableListOf(
         guild(HIDEOUT, "The Hideout", TIM, "HIDEOUT1"),
         guild(GARAGE, "Garage Band", ANA, "GARAGE22"),
         guild(COOKING, "Cooking Club", BRUNO, "COOK333"),
@@ -93,7 +93,7 @@ class FakeBackend(
         DmChannel(DM_BRUNO, listOf(users.getValue(TIM), users.getValue(BRUNO)), now - Duration.ofDays(80)),
     )
 
-    private val members = mapOf(
+    private val members = mutableMapOf(
         HIDEOUT to listOf(TIM, ANA, BRUNO, CVETKA),
         GARAGE to listOf(TIM, ANA, CVETKA),
         COOKING to listOf(TIM, BRUNO),
@@ -168,14 +168,29 @@ class FakeBackend(
     /** Passkey ceremonies: id -> how many empty-credential polls still answer `pending`. */
     private val ceremonies = mutableMapOf<String, Int>()
     private var nextCeremony = 0L
-    private data class FakeInvite(val email: String, val code: String, val token: String, val status: InviteStatus, val inviter: User?, val guildNames: List<String>, val expiresAt: Instant)
-    private val invites = listOf(
-        FakeInvite("erin@example.com", "WXYZ-2345", "tok-wxyz", InviteStatus.Pending, users.getValue(TIM), listOf("The Hideout"), now + Duration.ofDays(6)),
-        FakeInvite("finn@example.com", "EXPD-0001", "tok-expd", InviteStatus.Expired, users.getValue(TIM), listOf("The Hideout"), now - Duration.ofDays(2)),
-        FakeInvite("gus@example.com", "RVKD-0001", "tok-rvkd", InviteStatus.Revoked, users.getValue(TIM), listOf("The Hideout"), now + Duration.ofDays(4)),
-        FakeInvite("ana@example.com", "USED-0001", "tok-used", InviteStatus.Accepted, null, listOf("The Hideout"), now - Duration.ofDays(53)),
+    private data class FakeInvite(
+        val id: Long,
+        val email: String,
+        val code: String,
+        val token: String,
+        val status: InviteStatus,
+        val inviter: User?,
+        val guildIds: List<Long>,
+        val expiresAt: Instant,
+        val createdAt: Instant,
+        val makeAdmin: Boolean = false,
     )
+    private val invites = mutableListOf(
+        FakeInvite(1, "erin@example.com", "WXYZ-2345", "tok-wxyz", InviteStatus.Pending, users.getValue(TIM), listOf(HIDEOUT), now + Duration.ofDays(6), now - Duration.ofDays(1)),
+        FakeInvite(2, "finn@example.com", "EXPD-0001", "tok-expd", InviteStatus.Expired, users.getValue(TIM), listOf(HIDEOUT), now - Duration.ofDays(2), now - Duration.ofDays(9)),
+        FakeInvite(3, "gus@example.com", "RVKD-0001", "tok-rvkd", InviteStatus.Revoked, users.getValue(TIM), listOf(HIDEOUT), now + Duration.ofDays(4), now - Duration.ofDays(3)),
+        FakeInvite(4, "ana@example.com", "TAKN-0001", "tok-used", InviteStatus.Accepted, null, listOf(HIDEOUT), now - Duration.ofDays(53), now - Duration.ofDays(60)),
+    )
+    private var nextInviteId = 5L
     private var nextUserId = 100L
+    private var nextGuildId = 200L
+    private var nextChannelId = 300L
+    private var nextSectionId = 400L
 
     init {
         seed()
@@ -375,6 +390,144 @@ class FakeBackend(
 
     override suspend fun logout() = Unit
 
+    // ---- management: create/join servers, channels, sections, invites (phase 4a) ---------------
+
+    override suspend fun createGuild(name: String): Guild {
+        pause()
+        val id = nextGuildId++
+        val g = Guild(id, name, currentUserId, randomInviteCode(), now)
+        guilds += g
+        val generalId = nextChannelId++
+        channels += text(generalId, id, "general", ChannelIconRef.Phosphor("chat-circle-dots"))
+        layouts[id] = GuildLayout(1, entries = listOf(LayoutEntry(0, listOf(generalId))))
+        members[id] = listOf(currentUserId)
+        return g
+    }
+
+    override suspend fun joinGuild(code: String): Guild {
+        pause()
+        val clean = plain(code)
+        val g = guilds.firstOrNull { plain(it.inviteCode) == clean } ?: throw AppError.NotFound
+        val ids = members.getOrPut(g.id) { listOf(g.ownerId) }
+        if (currentUserId !in ids) members[g.id] = ids + currentUserId
+        return g
+    }
+
+    override suspend fun createChannel(guild: Long, name: String, kind: ChannelKind, sectionId: Long?): Channel {
+        pause()
+        val layout = layouts[guild] ?: throw AppError.NotFound
+        if (sectionId != null && layout.sections.none { it.id == sectionId }) throw AppError.NotFound
+        val id = nextChannelId++
+        val c = Channel(id, guild, name, now, sectionId = sectionId, kind = kind)
+        channels += c
+        val key = sectionId ?: 0L
+        val entries = layout.entries.toMutableList()
+        val at = entries.indexOfFirst { it.sectionId == key }
+        if (at >= 0) entries[at] = entries[at].copy(channelIds = entries[at].channelIds + id) else entries += LayoutEntry(key, listOf(id))
+        val newLayout = layout.copy(version = layout.version + 1, entries = entries)
+        layouts[guild] = newLayout
+        emit(GatewayEvent.ChannelCreated(c))
+        emit(GatewayEvent.LayoutUpdated(guild, newLayout))
+        return c
+    }
+
+    override suspend fun createSection(guild: Long, name: String): SectionResult {
+        pause()
+        val layout = layouts[guild] ?: throw AppError.NotFound
+        val section = Section(nextSectionId++, guild, name, layout.sections.size)
+        val newLayout = layout.copy(version = layout.version + 1, sections = layout.sections + section, entries = layout.entries + LayoutEntry(section.id, emptyList()))
+        layouts[guild] = newLayout
+        emit(GatewayEvent.LayoutUpdated(guild, newLayout))
+        return SectionResult(section, newLayout)
+    }
+
+    override suspend fun renameSection(guild: Long, section: Long, name: String): SectionResult {
+        pause()
+        val layout = layouts[guild] ?: throw AppError.NotFound
+        val at = layout.sections.indexOfFirst { it.id == section }
+        if (at < 0) throw AppError.NotFound
+        val updated = layout.sections[at].copy(name = name)
+        val sections = layout.sections.toMutableList().also { it[at] = updated }
+        val newLayout = layout.copy(version = layout.version + 1, sections = sections)
+        layouts[guild] = newLayout
+        emit(GatewayEvent.LayoutUpdated(guild, newLayout))
+        return SectionResult(updated, newLayout)
+    }
+
+    override suspend fun deleteSection(guild: Long, section: Long): GuildLayout {
+        pause()
+        val layout = layouts[guild] ?: throw AppError.NotFound
+        if (layout.sections.none { it.id == section }) throw AppError.NotFound
+        val moved = layout.entries.firstOrNull { it.sectionId == section }?.channelIds.orEmpty()
+        val top = layout.entries.firstOrNull { it.sectionId == 0L } ?: LayoutEntry(0, emptyList())
+        val entries = layout.entries.filter { it.sectionId != section && it.sectionId != 0L } + top.copy(channelIds = top.channelIds + moved)
+        val newLayout = layout.copy(version = layout.version + 1, sections = layout.sections.filter { it.id != section }, entries = entries)
+        layouts[guild] = newLayout
+        emit(GatewayEvent.LayoutUpdated(guild, newLayout))
+        return newLayout
+    }
+
+    override suspend fun rotateInviteCode(guild: Long): String {
+        pause()
+        val at = guilds.indexOfFirst { it.id == guild }
+        if (at < 0) throw AppError.NotFound
+        val code = randomInviteCode()
+        guilds[at] = guilds[at].copy(inviteCode = code)
+        emit(GatewayEvent.GuildUpdated(guilds[at]))
+        return code
+    }
+
+    override suspend fun createInvite(email: String, guildId: Long): Invite {
+        pause()
+        val clean = email.trim().lowercase()
+        if (users.values.any { it.email?.lowercase() == clean }) throw AppError.AlreadyExists
+        val inv = FakeInvite(nextInviteId++, clean, randomInviteCode(), "tok-$nextInviteId", InviteStatus.Pending, me, listOf(guildId), now + Duration.ofDays(7), now)
+        invites += inv
+        return inv.toModel(includeSecret = true)
+    }
+
+    override suspend fun listInvites(guildId: Long): List<Invite> {
+        pause()
+        return invites.filter { guildId in it.guildIds }.sortedByDescending { it.createdAt }.map { it.toModel(includeSecret = false) }
+    }
+
+    override suspend fun revokeInvite(inviteId: Long): Invite {
+        pause()
+        val at = invites.indexOfFirst { it.id == inviteId }
+        if (at < 0) throw AppError.NotFound
+        invites[at] = invites[at].copy(status = InviteStatus.Revoked)
+        return invites[at].toModel(includeSecret = false)
+    }
+
+    override suspend fun resendInvite(inviteId: Long): Invite {
+        pause()
+        val at = invites.indexOfFirst { it.id == inviteId }
+        if (at < 0) throw AppError.NotFound
+        val fresh = invites[at].copy(code = randomInviteCode(), token = "tok-${invites[at].id}-${nextInviteId++}", status = InviteStatus.Pending, expiresAt = now + Duration.ofDays(7))
+        invites[at] = fresh
+        return fresh.toModel(includeSecret = true)
+    }
+
+    private fun FakeInvite.toModel(includeSecret: Boolean): Invite = Invite(
+        id = id,
+        email = email,
+        code = if (includeSecret) code else null,
+        status = status,
+        inviter = inviter,
+        guildIds = guildIds,
+        createdAt = createdAt,
+        expiresAt = expiresAt,
+        makeAdmin = makeAdmin,
+        link = if (includeSecret) "https://thehideout.zabit.si/invite/$code" else null,
+    )
+
+    /** `XXXX-XXXX` from the server's alphabet (desktop's Crockford base32, no I/L/O/U). */
+    private fun randomInviteCode(): String {
+        val letters = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+        val chars = (1..8).map { letters.random() }.joinToString("")
+        return "${chars.take(4)}-${chars.drop(4)}"
+    }
+
     // ---- authentication and onboarding (the rules of desktop's `fake_account.rs`) -----------------
 
     /** A username or an email, as `Login` takes it. */
@@ -531,7 +684,7 @@ class FakeBackend(
         return InvitePreview(
             maskedEmail = mask(i.email),
             inviter = i.inviter,
-            guildNames = i.guildNames,
+            guildNames = i.guildIds.mapNotNull { id -> guilds.firstOrNull { it.id == id }?.name },
             expiresAt = i.expiresAt,
             status = i.status,
             termsVersion = termsVersion,

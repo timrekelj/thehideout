@@ -32,6 +32,7 @@ data class MessagePage(val items: List<Message>, val hasMore: Boolean)
 data class GuildMembers(val users: List<User>, val members: List<Member>)
 data class GuildRoles(val roles: List<Role>, val version: Long)
 data class GuildChannels(val channels: List<Channel>, val layout: GuildLayout)
+data class SectionResult(val section: Section, val layout: GuildLayout)
 
 /**
  * The server, as the store sees it. [ConnectApiClient] is the real thing; `FakeBackend` is the
@@ -65,6 +66,31 @@ interface ApiClient {
     /** The author, or MANAGE_MESSAGES in a guild channel. */
     suspend fun deleteMessage(channel: Long, message: Long)
     suspend fun logout()
+
+    // ---- management: create/join servers, channels, sections, invites (phase 4a) ---------------
+
+    /** Creates a guild owned by the caller; the server auto-creates its `general` channel. */
+    suspend fun createGuild(name: String): Guild
+    /** Joins the guild an 8-character invite code (`XXXX-XXXX`) points to. */
+    suspend fun joinGuild(code: String): Guild
+    /** Creates a text or voice channel; MANAGE_CHANNELS required. */
+    suspend fun createChannel(guild: Long, name: String, kind: ChannelKind, sectionId: Long?): Channel
+    /** Creates a section, appended last; MANAGE_CHANNELS required. */
+    suspend fun createSection(guild: Long, name: String): SectionResult
+    /** Renames a section; MANAGE_CHANNELS required. */
+    suspend fun renameSection(guild: Long, section: Long, name: String): SectionResult
+    /** Deletes a section; its channels move to the top level. MANAGE_CHANNELS required. */
+    suspend fun deleteSection(guild: Long, section: Long): GuildLayout
+    /** Replaces the guild's invite code; the old one stops working. MANAGE_SERVER required. */
+    suspend fun rotateInviteCode(guild: Long): String
+    /** Invites someone by email into a guild; requires INVITE_PEOPLE there. */
+    suspend fun createInvite(email: String, guildId: Long): Invite
+    /** This guild's invites (code/link unset, see `Invite`); requires INVITE_PEOPLE. */
+    suspend fun listInvites(guildId: Long): List<Invite>
+    /** Withdraws a pending invite. */
+    suspend fun revokeInvite(inviteId: Long): Invite
+    /** Emails a pending (or expired) invite again with a fresh code, link and expiry. */
+    suspend fun resendInvite(inviteId: Long): Invite
 
     // ---- authentication and onboarding (the unauthenticated RPCs; the rest need the token) ----
 

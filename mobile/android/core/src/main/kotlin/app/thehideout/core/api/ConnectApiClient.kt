@@ -283,6 +283,62 @@ class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, O
 
     override suspend fun logout() = Unit
 
+    // ---- management: create/join servers, channels, sections, invites (phase 4a) ---------------
+
+    override suspend fun createGuild(name: String): Guild {
+        val r = call { guilds.createGuild(com.thehideout.v1.CreateGuildRequest.newBuilder().setName(name).build()) }
+        return r.guild.toModel()
+    }
+
+    override suspend fun joinGuild(code: String): Guild {
+        val r = call { guilds.joinGuild(com.thehideout.v1.JoinGuildRequest.newBuilder().setInviteCode(code).build()) }
+        return r.guild.toModel()
+    }
+
+    override suspend fun createChannel(guild: Long, name: String, kind: ChannelKind, sectionId: Long?): Channel {
+        val b = com.thehideout.v1.CreateChannelRequest.newBuilder().setGuildId(guild).setName(name)
+            .setKind(if (kind == ChannelKind.Voice) com.thehideout.v1.ChannelKind.CHANNEL_KIND_VOICE else com.thehideout.v1.ChannelKind.CHANNEL_KIND_TEXT)
+        sectionId?.let { b.sectionId = it }
+        return call { guilds.createChannel(b.build()) }.channel.toModel()
+    }
+
+    override suspend fun createSection(guild: Long, name: String): SectionResult {
+        val r = call { guilds.createSection(com.thehideout.v1.CreateSectionRequest.newBuilder().setGuildId(guild).setName(name).build()) }
+        return SectionResult(r.section.toModel(), r.layout.toModel())
+    }
+
+    override suspend fun renameSection(guild: Long, section: Long, name: String): SectionResult {
+        val r = call { guilds.updateSection(com.thehideout.v1.UpdateSectionRequest.newBuilder().setGuildId(guild).setSectionId(section).setName(name).build()) }
+        return SectionResult(r.section.toModel(), r.layout.toModel())
+    }
+
+    override suspend fun deleteSection(guild: Long, section: Long): GuildLayout {
+        val r = call { guilds.deleteSection(com.thehideout.v1.DeleteSectionRequest.newBuilder().setGuildId(guild).setSectionId(section).build()) }
+        return r.layout.toModel()
+    }
+
+    override suspend fun rotateInviteCode(guild: Long): String {
+        return call { guilds.rotateInviteCode(com.thehideout.v1.RotateInviteCodeRequest.newBuilder().setGuildId(guild).build()) }.inviteCode
+    }
+
+    override suspend fun createInvite(email: String, guildId: Long): Invite {
+        val r = call { invites.createInvite(com.thehideout.v1.CreateInviteRequest.newBuilder().setEmail(email).setGuildId(guildId).build()) }
+        return r.invite.toModel()
+    }
+
+    override suspend fun listInvites(guildId: Long): List<Invite> {
+        val r = call { invites.listInvites(com.thehideout.v1.ListInvitesRequest.newBuilder().setGuildId(guildId).build()) }
+        return r.invitesList.map { it.toModel() }
+    }
+
+    override suspend fun revokeInvite(inviteId: Long): Invite {
+        return call { invites.revokeInvite(com.thehideout.v1.RevokeInviteRequest.newBuilder().setInviteId(inviteId).build()) }.invite.toModel()
+    }
+
+    override suspend fun resendInvite(inviteId: Long): Invite {
+        return call { invites.resendInvite(com.thehideout.v1.ResendInviteRequest.newBuilder().setInviteId(inviteId).build()) }.invite.toModel()
+    }
+
     // ---- authentication and onboarding ---------------------------------------------------------
 
     private fun com.thehideout.v1.PasskeyCeremony.toModel() = PasskeyCeremony(ceremonyId, ceremonyUrl, optionsJson)
