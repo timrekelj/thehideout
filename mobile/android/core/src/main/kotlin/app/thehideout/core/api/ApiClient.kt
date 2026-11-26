@@ -71,7 +71,7 @@ interface ApiClient {
 
     /** Creates a guild owned by the caller; the server auto-creates its `general` channel. */
     suspend fun createGuild(name: String): Guild
-    /** Joins the guild an 8-character invite code (`XXXX-XXXX`) points to. */
+    /** Joins the guild its invite code points to (server-generated, case-sensitive, no fixed shape). */
     suspend fun joinGuild(code: String): Guild
     /** Creates a text or voice channel; MANAGE_CHANNELS required. */
     suspend fun createChannel(guild: Long, name: String, kind: ChannelKind, sectionId: Long?): Channel

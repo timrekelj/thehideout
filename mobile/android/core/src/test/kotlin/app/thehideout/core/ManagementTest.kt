@@ -43,7 +43,7 @@ class ManagementTest {
 
     @Test fun `joining by code opens the server and lists you as a member`() = runTest {
         val s = store()
-        val r = s.joinGuild("garage22")
+        val r = s.joinGuild("GaraGe22")
         assertTrue(r.isSuccess)
         assertEquals(Place.InGuild(GARAGE), s.state.value.place)
     }
@@ -55,6 +55,12 @@ class ManagementTest {
         assertTrue(r.exceptionOrNull() is AppError.NotFound)
     }
 
+    @Test fun `joining is case-sensitive, like a real server (GuildService only trims)`() = runTest {
+        val s = store()
+        assertTrue(s.joinGuild("garage22").isFailure, "wrong case refused")
+        assertTrue(s.joinGuild(" GaraGe22 ").isSuccess, "surrounding whitespace is trimmed")
+    }
+
     @Test fun `creating a channel lists it at once, like a channel_created echo`() = runTest {
         val s = store()
         val r = s.createChannel(HIDEOUT, "ops", ChannelKind.Text, null)
@@ -62,6 +68,24 @@ class ManagementTest {
         val c = r.getOrThrow()
         assertEquals(HIDEOUT, c.guildId)
         assertTrue(s.state.value.channelsOf(HIDEOUT).any { it.id == c.id })
+    }
+
+    @Test fun `creating a channel in an unknown section fails`() = runTest {
+        val s = store()
+        val r = s.createChannel(HIDEOUT, "ops", ChannelKind.Text, 999_999L)
+        assertTrue(r.isFailure)
+        assertTrue(r.exceptionOrNull() is AppError.NotFound)
+    }
+
+    @Test fun `creating a channel inside a section places it in that section`() = runTest {
+        val s = store()
+        val section = s.createSection(HIDEOUT, "Projects").getOrThrow()
+        val c = s.createChannel(HIDEOUT, "roadmap", ChannelKind.Text, section.id).getOrThrow()
+        assertEquals(section.id, c.sectionId)
+        assertTrue(s.state.value.channelsOf(HIDEOUT).any { it.id == c.id && it.sectionId == section.id })
+        // The layout itself (which section lists which channel ids) only updates from the
+        // server's own layout_updated event over the gateway (Effect.LoadChannels/the stream),
+        // not from this reply alone - see ReducerTest's `LayoutReplaced`/`layout_updated` cases.
     }
 
     @Test fun `creating, renaming and deleting a section updates the layout each time`() = runTest {
@@ -74,12 +98,40 @@ class ManagementTest {
         assertFalse(s.state.value.layouts[HIDEOUT]!!.sections.any { it.id == created.id })
     }
 
+    @Test fun `deleting a section keeps the other entries' order and moves its channels to the top level`() = runTest {
+        val s = store()
+        val layoutBefore = s.state.value.layouts[HIDEOUT]!!
+        val sectionOrderBefore = layoutBefore.entries.map { it.sectionId }
+        val section = layoutBefore.sections.first()
+        val movedChannels = layoutBefore.entries.first { it.sectionId == section.id }.channelIds
+        s.deleteSection(HIDEOUT, section.id).getOrThrow()
+        val newLayout = s.state.value.layouts[HIDEOUT]!!
+        val remainingIds = sectionOrderBefore.filter { it != section.id }
+        assertEquals(remainingIds, newLayout.entries.map { it.sectionId }.filter { it in remainingIds }, "the other entries kept their relative order")
+        assertTrue(newLayout.entries.first { it.sectionId == 0L }.channelIds.containsAll(movedChannels), "its channels moved to the top level")
+    }
+
+    @Test fun `deleting an unknown section fails without touching the layout`() = runTest {
+        val s = store()
+        val before = s.state.value.layouts[HIDEOUT]
+        val r = s.deleteSection(HIDEOUT, 999_999L)
+        assertTrue(r.isFailure)
+        assertEquals(before, s.state.value.layouts[HIDEOUT])
+    }
+
     @Test fun `resetting the invite code replaces it and the old one stops matching a join`() = runTest {
         val s = store()
         val old = s.state.value.guild(HIDEOUT)!!.inviteCode
         val fresh = s.rotateInviteCode(HIDEOUT).getOrThrow()
         assertNotEquals(old, fresh)
         assertEquals(fresh, s.state.value.guild(HIDEOUT)?.inviteCode)
+    }
+
+    @Test fun `resetting an unknown server's invite code fails`() = runTest {
+        val s = store()
+        val r = s.rotateInviteCode(999_999L)
+        assertTrue(r.isFailure)
+        assertTrue(r.exceptionOrNull() is AppError.NotFound)
     }
 
     @Test fun `inviting by email creates a pending invite with a code and a link`() = runTest {
@@ -99,6 +151,12 @@ class ManagementTest {
         assertNotEquals(invite.code, resent.code)
         val revoked = s.revokeInvite(invite.id).getOrThrow()
         assertEquals(app.thehideout.core.model.InviteStatus.Revoked, revoked.status)
+    }
+
+    @Test fun `resending or withdrawing an unknown invite fails`() = runTest {
+        val s = store()
+        assertTrue(s.resendInvite(999_999L).isFailure)
+        assertTrue(s.revokeInvite(999_999L).isFailure)
     }
 
     @Test fun `only MANAGE_CHANNELS, MANAGE_SERVER and INVITE_PEOPLE gate their rows, like desktop's perms`() {

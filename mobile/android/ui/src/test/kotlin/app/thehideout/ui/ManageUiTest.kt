@@ -3,6 +3,7 @@ package app.thehideout.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
@@ -13,8 +14,10 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import app.thehideout.core.InMemoryTokenStore
 import app.thehideout.core.fake.FakeBackend
+import app.thehideout.core.store.Action
 import app.thehideout.core.store.AppStore
 import app.thehideout.core.store.SessionPhase
 import app.thehideout.ui.shell.ShellActions
@@ -93,10 +96,25 @@ class ManageUiTest {
         compose.onNodeWithTag("add-server").performClick()
         compose.onNodeWithText("Join server").performClick()
         compose.settle()
-        compose.onNodeWithTag("join-server-code").performTextInput("garage22")
+        // Exact case: a guild's invite_code is server-generated and case-sensitive, unlike an
+        // email invite's Crockford code (confirmed against a real server, see the fix in this PR).
+        compose.onNodeWithTag("join-server-code").performTextInput("GaraGe22")
         compose.onNodeWithTag("join-server-submit").performClick()
         compose.settle { store.state.value.currentGuild?.id == FakeBackend.GARAGE }
         assertEquals(FakeBackend.GARAGE, store.state.value.currentGuild?.id)
+    }
+
+    @Test fun `joining with the wrong case is refused`() {
+        val store = harness()
+        compose.onNodeWithTag("add-server").performClick()
+        compose.onNodeWithText("Join server").performClick()
+        compose.settle()
+        compose.onNodeWithTag("join-server-code").performTextInput("garage22")
+        compose.onNodeWithTag("join-server-submit").performClick()
+        // The sheet stays open with an error instead of closing into the server, and the button stays enabled to try again.
+        compose.settle { compose.onAllNodesWithTag("join-server-submit").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("join-server-submit").assertIsDisplayed()
+        assertTrue(store.state.value.currentGuild?.id != FakeBackend.GARAGE)
     }
 
     @Test fun `creating a channel lists it under the server`() {
@@ -110,15 +128,60 @@ class ManageUiTest {
         compose.onNodeWithText("ops").assertIsDisplayed()
     }
 
-    @Test fun `the invite sheet shows the server code and shares the link`() {
+    @Test fun `the invite sheet shows the server code and shares it (not a link)`() {
         harness()
         compose.onNodeWithTag("server-menu").performClick()
         compose.onNodeWithText("Invite people").performClick()
         compose.settle()
-        compose.onNodeWithTag("invite-code-value").assertIsDisplayed().assertTextEquals("HIDEOUT1")
-        compose.onNodeWithContentDescription("Share the link").performClick()
+        compose.onNodeWithTag("invite-code-value").assertIsDisplayed().assertTextEquals("HiDeout1")
+        compose.onNodeWithContentDescription("Share the code").performClick()
         compose.settle { shadowOf(compose.activity).peekNextStartedActivity() != null }
         val started = shadowOf(compose.activity).peekNextStartedActivity()
         assertTrue("expected a chooser for an ACTION_SEND intent, got $started", started != null)
+        // `Intent.createChooser` wraps the real ACTION_SEND intent in `EXTRA_INTENT`.
+        val sent = started!!.getParcelableExtra(android.content.Intent.EXTRA_INTENT, android.content.Intent::class.java) ?: started
+        val text = sent.getStringExtra(android.content.Intent.EXTRA_TEXT).orEmpty()
+        assertTrue("the shared text should carry the code, not a link: $text", text.contains("HiDeout1") && !text.contains("http"))
+    }
+
+    @Test fun `creating a channel inside a section places it there`() {
+        val store = harness()
+        compose.onNodeWithTag("section-menu-${FakeBackend.BUILDING}").performClick()
+        compose.onNodeWithText("Create channel here").performClick()
+        compose.settle()
+        compose.onNodeWithTag("create-channel-name").performTextInput("roadmap")
+        compose.onNodeWithTag("create-channel-submit").performClick()
+        compose.settle { store.state.value.channelsOf(FakeBackend.HIDEOUT).any { it.name == "roadmap" } }
+        val channel = store.state.value.channelsOf(FakeBackend.HIDEOUT).first { it.name == "roadmap" }
+        assertEquals(FakeBackend.BUILDING, channel.sectionId)
+        compose.onNodeWithText("roadmap").assertIsDisplayed()
+    }
+
+    @Test fun `renaming and deleting a section through its menu updates the layout`() {
+        val store = harness()
+        compose.onNodeWithTag("section-menu-${FakeBackend.BUILDING}").performClick()
+        compose.onNodeWithText("Rename").performClick()
+        compose.settle()
+        compose.onNodeWithTag("section-name-input").performTextReplacement("Workshop")
+        compose.onNodeWithText("Save").performClick()
+        compose.settle { store.state.value.layouts[FakeBackend.HIDEOUT]?.sections?.any { it.id == FakeBackend.BUILDING && it.name == "Workshop" } == true }
+
+        compose.onNodeWithTag("section-menu-${FakeBackend.BUILDING}").performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.settle()
+        compose.onNodeWithTag("delete-section-confirm").performClick()
+        compose.settle { store.state.value.layouts[FakeBackend.HIDEOUT]?.sections?.none { it.id == FakeBackend.BUILDING } == true }
+        assertTrue(store.state.value.layouts[FakeBackend.HIDEOUT]!!.sections.none { it.id == FakeBackend.BUILDING })
+    }
+
+    @Test fun `the server and section menus are hidden without MANAGE_CHANNELS or INVITE_PEOPLE`() {
+        val store = harness()
+        // ana (role 1003 on The Hideout: MANAGE_EMOJIS only) has neither permission.
+        store.dispatch(Action.SessionStarted(store.state.value.users.getValue(FakeBackend.ANA)))
+        compose.settle()
+        compose.onAllNodesWithTag("server-menu").assertCountEquals(0)
+        compose.onAllNodesWithTag("section-menu-${FakeBackend.BUILDING}").assertCountEquals(0)
+        // The "+" to create/join a server has nothing to do with this guild's permissions.
+        compose.onNodeWithTag("add-server").assertIsDisplayed()
     }
 }

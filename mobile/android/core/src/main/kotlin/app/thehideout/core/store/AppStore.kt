@@ -136,7 +136,7 @@ class AppStore(
     suspend fun createGuild(name: String): Result<Guild> =
         guard(runCatching { api.createGuild(name) }).also { r -> r.onSuccess { dispatch(Action.GuildEntered(it)) } }
 
-    /** Joins the server an 8-character invite code points to and opens it. */
+    /** Joins the server its invite code points to and opens it (not an 8-character code; see [app.thehideout.core.api.ApiClient.joinGuild]). */
     suspend fun joinGuild(code: String): Result<Guild> =
         guard(runCatching { api.joinGuild(code) }).also { r -> r.onSuccess { dispatch(Action.GuildEntered(it)) } }
 

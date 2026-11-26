@@ -98,7 +98,12 @@ fun InviteCodeField(
                 enabled = enabled,
                 singleLine = true,
                 textStyle = LocalTextStyle.current,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = imeAction, capitalization = KeyboardCapitalization.Characters),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = imeAction,
+                    capitalization = KeyboardCapitalization.Characters,
+                    autoCorrectEnabled = false,
+                ),
                 keyboardActions = KeyboardActions(
                     onDone = { onSubmit?.invoke() },
                     onGo = { onSubmit?.invoke() },

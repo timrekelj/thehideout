@@ -42,10 +42,12 @@ class FakeBackend(
     private var currentUserId = TIM
     private val me: User get() = users.getValue(currentUserId)
 
+    // Mixed-case, like a real server's (GuildService.claim_invite_code: rand's Alphanumeric,
+    // case-sensitive), not the all-caps `XXXX-XXXX` of an email invite's Crockford code.
     private val guilds = mutableListOf(
-        guild(HIDEOUT, "The Hideout", TIM, "HIDEOUT1"),
-        guild(GARAGE, "Garage Band", ANA, "GARAGE22"),
-        guild(COOKING, "Cooking Club", BRUNO, "COOK333"),
+        guild(HIDEOUT, "The Hideout", TIM, "HiDeout1"),
+        guild(GARAGE, "Garage Band", ANA, "GaraGe22"),
+        guild(COOKING, "Cooking Club", BRUNO, "CookClub"),
     )
 
     private val channels = mutableListOf<Channel>().apply {
@@ -406,8 +408,10 @@ class FakeBackend(
 
     override suspend fun joinGuild(code: String): Guild {
         pause()
-        val clean = plain(code)
-        val g = guilds.firstOrNull { plain(it.inviteCode) == clean } ?: throw AppError.NotFound
+        // Case-sensitive, like the real server (GuildService only trims; a guild's invite_code
+        // has no fixed shape to normalise, unlike an email invite's Crockford code).
+        val clean = code.trim()
+        val g = guilds.firstOrNull { it.inviteCode == clean } ?: throw AppError.NotFound
         val ids = members.getOrPut(g.id) { listOf(g.ownerId) }
         if (currentUserId !in ids) members[g.id] = ids + currentUserId
         return g
@@ -459,8 +463,16 @@ class FakeBackend(
         val layout = layouts[guild] ?: throw AppError.NotFound
         if (layout.sections.none { it.id == section }) throw AppError.NotFound
         val moved = layout.entries.firstOrNull { it.sectionId == section }?.channelIds.orEmpty()
-        val top = layout.entries.firstOrNull { it.sectionId == 0L } ?: LayoutEntry(0, emptyList())
-        val entries = layout.entries.filter { it.sectionId != section && it.sectionId != 0L } + top.copy(channelIds = top.channelIds + moved)
+        val hasTop = layout.entries.any { it.sectionId == 0L }
+        // Updates the top-level entry in place (not filter-then-append), so the other entries
+        // keep their order; appended after its existing channels, per the server's rule.
+        val entries = layout.entries.mapNotNull { e ->
+            when {
+                e.sectionId == section -> null
+                e.sectionId == 0L -> e.copy(channelIds = e.channelIds + moved)
+                else -> e
+            }
+        } + if (hasTop) emptyList() else listOf(LayoutEntry(0, moved))
         val newLayout = layout.copy(version = layout.version + 1, sections = layout.sections.filter { it.id != section }, entries = entries)
         layouts[guild] = newLayout
         emit(GatewayEvent.LayoutUpdated(guild, newLayout))
@@ -481,7 +493,8 @@ class FakeBackend(
         pause()
         val clean = email.trim().lowercase()
         if (users.values.any { it.email?.lowercase() == clean }) throw AppError.AlreadyExists
-        val inv = FakeInvite(nextInviteId++, clean, randomInviteCode(), "tok-$nextInviteId", InviteStatus.Pending, me, listOf(guildId), now + Duration.ofDays(7), now)
+        val id = nextInviteId++
+        val inv = FakeInvite(id, clean, randomInviteCode(), "tok-$id", InviteStatus.Pending, me, listOf(guildId), now + Duration.ofDays(7), now)
         invites += inv
         return inv.toModel(includeSecret = true)
     }

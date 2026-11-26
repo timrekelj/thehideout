@@ -102,8 +102,8 @@ fun CreateServerSheet(onDismiss: () -> Unit, createGuild: suspend (String) -> Re
  * Join server with an invite code (DLG-02): a plain field, like desktop's `TextInput`. A guild's
  * `invite_code` (server-generated alphanumeric, case-sensitive) is a different code from the
  * 8-character Crockford email-invite codes [app.thehideout.ui.components.InviteCodeField] handles
- * (AUTH-08/DLG-04): it has no fixed length or dash, so it is typed and sent as is, uppercased or
- * reformatted.
+ * (AUTH-08/DLG-04): it has no fixed length or dash, so it is typed and sent as is, not uppercased
+ * or reformatted.
  */
 @Composable
 fun JoinServerSheet(onDismiss: () -> Unit, joinGuild: suspend (String) -> Result<Guild>, modifier: Modifier = Modifier) {
@@ -287,14 +287,29 @@ fun SectionNameDialog(
 fun DeleteSectionDialog(name: String, onDismiss: () -> Unit, onConfirm: suspend () -> Result<*>) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Delete section") },
-        text = { Text("“$name” will be removed. Its channels move to the top of the list; nothing is deleted from them.") },
-        confirmButton = {
-            TextButton(enabled = !busy, onClick = { scope.launch { busy = true; onConfirm(); onDismiss() } }) { Text(if (busy) "Deleting…" else "Delete section") }
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("“$name” will be removed. Its channels move to the top of the list; nothing is deleted from them.")
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            TextButton(
+                enabled = !busy,
+                modifier = Modifier.testTag("delete-section-confirm"),
+                onClick = {
+                    scope.launch {
+                        busy = true
+                        onConfirm().fold({ onDismiss() }, { e -> busy = false; error = e.message ?: "Couldn't delete the section." })
+                    }
+                },
+            ) { Text(if (busy) "Deleting…" else "Delete section") }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -317,9 +332,9 @@ fun InviteSheet(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val link = "https://thehideout.zabit.si/invite/${guild.inviteCode}"
     var resetConfirm by remember { mutableStateOf(false) }
     var resetBusy by remember { mutableStateOf(false) }
+    var resetError by remember { mutableStateOf<String?>(null) }
     var email by remember { mutableStateOf("") }
     var emailError by remember { mutableStateOf<String?>(null) }
     var emailBusy by remember { mutableStateOf(false) }
@@ -329,7 +344,12 @@ fun InviteSheet(
     var refreshKey by remember { mutableStateOf(0) }
 
     LaunchedEffect(guild.id, refreshKey) {
-        if (canInvite) listInvites(guild.id).fold({ pending = it.filter { i -> i.status == InviteStatus.Pending } }, { e -> pendingError = e.message })
+        if (canInvite) {
+            listInvites(guild.id).fold(
+                { pending = it.filter { i -> i.status == InviteStatus.Pending }; pendingError = null },
+                { e -> pendingError = e.message ?: "Couldn't load the pending invites." },
+            )
+        }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.surface, modifier = modifier) {
@@ -347,9 +367,14 @@ fun InviteSheet(
                         )
                         IconButton(onClick = { clipboard.setText(AnnotatedString(guild.inviteCode)) }) { SymIcon(Sym.ContentCopy, "Copy code") }
                         IconButton(onClick = {
-                            val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, link) }
+                            // The code only: a guild's invite_code has no link form (unlike an
+                            // email invite's `/invite/<code>`, see AUTH-08/DLG-04), and it is not
+                            // Crockford-shaped, so it must not be run through the sign-in flow's
+                            // link-to-code extraction.
+                            val message = "Join ${guild.name} on thehideout with the code ${guild.inviteCode}."
+                            val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, message) }
                             runCatching { context.startActivity(Intent.createChooser(send, null)) }
-                        }) { SymIcon(Sym.Share, "Share the link") }
+                        }) { SymIcon(Sym.Share, "Share the code") }
                     }
                     if (canManageServer) {
                         OutlinedButton(onClick = { resetConfirm = true }, modifier = Modifier.testTag("invite-reset")) {
@@ -408,10 +433,18 @@ fun InviteSheet(
                             )
                         }
                         TextButton(enabled = !busy, onClick = {
-                            scope.launch { busyIds = busyIds + invite.id; resendInvite(invite.id); busyIds = busyIds - invite.id; refreshKey++ }
+                            scope.launch {
+                                busyIds = busyIds + invite.id
+                                resendInvite(invite.id).fold({ refreshKey++ }, { e -> pendingError = e.message ?: "Couldn't resend the invite." })
+                                busyIds = busyIds - invite.id
+                            }
                         }) { Text("Resend") }
                         TextButton(enabled = !busy, onClick = {
-                            scope.launch { busyIds = busyIds + invite.id; revokeInvite(invite.id); busyIds = busyIds - invite.id; refreshKey++ }
+                            scope.launch {
+                                busyIds = busyIds + invite.id
+                                revokeInvite(invite.id).fold({ refreshKey++ }, { e -> pendingError = e.message ?: "Couldn't withdraw the invite." })
+                                busyIds = busyIds - invite.id
+                            }
                         }) { Text("Withdraw") }
                     }
                 }
@@ -422,15 +455,29 @@ fun InviteSheet(
 
     if (resetConfirm) {
         AlertDialog(
-            onDismissRequest = { if (!resetBusy) resetConfirm = false },
+            onDismissRequest = { if (!resetBusy) { resetConfirm = false; resetError = null } },
             title = { Text("Reset invite code") },
-            text = { Text("${guild.name} gets a new code. The old code stops working, so anyone who hasn't joined yet will need the new one.") },
-            confirmButton = {
-                TextButton(enabled = !resetBusy, onClick = {
-                    scope.launch { resetBusy = true; rotateInviteCode(guild.id); resetBusy = false; resetConfirm = false }
-                }) { Text(if (resetBusy) "Resetting…" else "Reset code") }
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${guild.name} gets a new code. The old code stops working, so anyone who hasn't joined yet will need the new one.")
+                    resetError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
             },
-            dismissButton = { TextButton(onClick = { resetConfirm = false }) { Text("Cancel") } },
+            confirmButton = {
+                TextButton(
+                    enabled = !resetBusy,
+                    onClick = {
+                        scope.launch {
+                            resetBusy = true
+                            rotateInviteCode(guild.id).fold(
+                                { resetBusy = false; resetConfirm = false; resetError = null },
+                                { e -> resetBusy = false; resetError = e.message ?: "Couldn't reset the code." },
+                            )
+                        }
+                    },
+                ) { Text(if (resetBusy) "Resetting…" else "Reset code") }
+            },
+            dismissButton = { TextButton(enabled = !resetBusy, onClick = { resetConfirm = false; resetError = null }) { Text("Cancel") } },
         )
     }
 }

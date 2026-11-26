@@ -126,6 +126,21 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
     var renameSectionFor by remember { mutableStateOf<app.thehideout.core.model.Section?>(null) }
     var deleteSectionFor by remember { mutableStateOf<app.thehideout.core.model.Section?>(null) }
     var createChannelSectionId by remember { mutableStateOf<Long?>(null) }
+    // A server switch invalidates any sheet/dialog left open on the previous one (its section or
+    // channel ids belong to that guild, not whichever is now current).
+    LaunchedEffect(guild?.id) {
+        addMenu = false
+        showCreateServer = false
+        showJoinServer = false
+        guildMenu = false
+        showCreateChannel = false
+        showCreateSection = false
+        showInvite = false
+        sectionMenuFor = null
+        renameSectionFor = null
+        deleteSectionFor = null
+        createChannelSectionId = null
+    }
     val canManageChannels = guild != null && Perm.has(state.perms(guild.id), Perm.MANAGE_CHANNELS)
     val canManageServer = guild != null && Perm.has(state.perms(guild.id), Perm.MANAGE_SERVER)
     val canInvite = guild != null && Perm.has(state.perms(guild.id), Perm.INVITE_PEOPLE)
@@ -188,7 +203,7 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
                                 trailing = if (canManageChannels) {
                                     {
                                         Box {
-                                            IconButton(onClick = { sectionMenuFor = section.id }, modifier = Modifier.size(32.dp)) { SymIcon(Sym.MoreVert, "Section menu") }
+                                            IconButton(onClick = { sectionMenuFor = section.id }, modifier = Modifier.size(32.dp).testTag("section-menu-${section.id}")) { SymIcon(Sym.MoreVert, "Section menu") }
                                             DropdownMenu(expanded = sectionMenuFor == section.id, onDismissRequest = { sectionMenuFor = null }) {
                                                 DropdownMenuItem(text = { Text("Create channel here") }, onClick = { sectionMenuFor = null; createChannelSectionId = section.id; showCreateChannel = true })
                                                 DropdownMenuItem(text = { Text("Rename") }, onClick = { sectionMenuFor = null; renameSectionFor = section })

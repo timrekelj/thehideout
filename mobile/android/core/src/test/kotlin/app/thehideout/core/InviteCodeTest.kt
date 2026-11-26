@@ -3,6 +3,7 @@ package app.thehideout.core
 import app.thehideout.core.invite.InviteCode
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -32,8 +33,8 @@ class InviteCodeTest {
 
     @Test fun `u is not in the server's alphabet (Crockford, no I L O U)`() {
         assertEquals("", InviteCode.normalize("u"))
-        assertNull2(InviteCode.codeChar('U'))
-        assertNull2(InviteCode.codeChar('u'))
+        assertNull(InviteCode.codeChar('U'))
+        assertNull(InviteCode.codeChar('u'))
     }
 
     @Test fun `format adds the dash only once a code is complete`() {
@@ -51,6 +52,4 @@ class InviteCodeTest {
         assertTrue(InviteCode.looksLikeLink("https://thehideout.zabit.si/invite/WXYZ-2345"))
         assertFalse(InviteCode.looksLikeLink("WXYZ-2345"))
     }
-
-    private fun assertNull2(c: Char?) = assertEquals(null, c)
 }

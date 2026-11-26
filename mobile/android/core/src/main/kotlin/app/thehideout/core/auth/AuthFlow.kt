@@ -381,7 +381,7 @@ class AuthFlow(
             }
             AuthStep.InviteCode -> {
                 val code = s.invite.trim()
-                if (code.isEmpty() || !InviteCodes.isCodeShape(code)) return fail(AuthField.Invite, "Enter the 8-character code from your invite email.")
+                if (!InviteCodes.isCodeShape(code)) return fail(AuthField.Invite, "Enter the 8-character code from your invite email.")
                 launch { lookupInvite(code) }
             }
             is AuthStep.InviteAccept -> {
