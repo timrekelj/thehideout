@@ -52,8 +52,12 @@ extension AppState {
     }
 
     /// Opens a text channel or DM. The reader just arrived: fix the "New" divider, clear the unread count and
-    /// fetch the history if it hasn't been.
+    /// fetch the history if it hasn't been. A no-op when it is already the open channel: the transcript's own
+    /// `.task` and a shell-level tab sync (`ShellNav.select`/`follow`) can both call this for the same arrival,
+    /// and a second pass must not wipe the "New" divider it just placed by re-reading an unread count already
+    /// consumed by the first.
     public mutating func open(channel: ID) {
+        guard openChannel != channel else { return }
         openChannel = channel
         marker = .none
         let pending = unread.removeValue(forKey: channel).flatMap { $0.count > 0 ? $0 : nil }

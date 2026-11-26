@@ -75,6 +75,25 @@ final class ShellSnapshotTests: SnapshotCase {
         assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.dmAna) }, store: store, styles: [("dark", .dark)])
     }
 
+    /// Regression for the vanishing "New" divider: two unread messages from the same author, more than five
+    /// minutes apart (so they land as separate groups, same as desktop), arrive while the DM is closed. Opening
+    /// it is a double call in the real shell (`ShellNav.select`'s route sync, then the pushed transcript's own
+    /// `.task`) — the second must not wipe the marker the first just placed.
+    func testTranscriptGroupsWithNewDivider() async {
+        let (store, fake) = await makeFakeStore()
+        store.setActive(true)
+        for _ in 0..<400 where fake.openStreams == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        let t1 = snapshotNow.addingTimeInterval(-3600)
+        let t2 = t1.addingTimeInterval(600)
+        fake.incoming(channel: FakeBackend.Ids.dmAna, author: FakeBackend.Ids.ana, content: "quick one before you go", at: t1)
+        fake.incoming(channel: FakeBackend.Ids.dmAna, author: FakeBackend.Ids.ana, content: "never mind, found it", at: t2)
+        for _ in 0..<400 where store.state.unread(FakeBackend.Ids.dmAna).count < 2 { try? await Task.sleep(for: .milliseconds(10)) }
+        store.setActive(false)
+        store.open(channel: FakeBackend.Ids.dmAna)
+        await store.settle()
+        assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.dmAna) }, store: store, styles: [("dark", .dark)])
+    }
+
     func testSignedOutAndLoading() async {
         registerFonts()
         let fake = FakeBackend(now: snapshotNow)
