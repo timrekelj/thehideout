@@ -458,31 +458,13 @@ private struct PasskeyStep: View {
 
 private struct InviteCodeStep: View {
     @Environment(AuthFlow.self) private var flow
-    @Environment(\.theme) private var theme
     var focus: FocusState<AuthFocus?>.Binding
 
     var body: some View {
-        @Bindable var flow = flow
         VStack(alignment: .leading, spacing: Space.s4) {
             LabelledField("Invite code", error: flow.issue(for: .invite), hint: "It's in your invite email.") {
-                HStack(spacing: Space.s2) {
-                    TextField("", text: $flow.invite, prompt: Text("XXXX-XXXX").foregroundStyle(.secondary))
-                        .font(DesignFont.mono(size: 18))
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .keyboardType(.asciiCapable)
-                        .submitLabel(.continue)
-                        .focused(focus, equals: .invite)
-                        .accessibilityLabel("Invite code")
-                        .onSubmit { flow.submit() }
-                    PasteButton(payloadType: String.self) { strings in
-                        if let s = strings.first { Task { @MainActor in flow.invite = s.trimmingCharacters(in: .whitespacesAndNewlines) } }
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonBorderShape(.capsule)
-                    .tint(theme.colors.accent)
-                }
-                .modifier(FieldBox(focused: focus.wrappedValue == .invite, invalid: flow.issue?.field == .invite))
+                InviteCodeField(text: Binding(get: { flow.invite }, set: { flow.setInvite($0) }), focus: focus,
+                                invalid: flow.issue?.field == .invite, submit: { flow.submit() })
             }
             FormError()
             PrimaryButton(title: "Continue", busyTitle: "Checking…", busy: flow.busy) { flow.submit() }

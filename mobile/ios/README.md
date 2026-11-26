@@ -63,7 +63,7 @@ Without arguments the app talks to `http://127.0.0.1:8080` (change `server_url` 
 }
 ```
 
-`<TEAMID>` is the Apple Developer Team ID (`project.yml`'s `DEVELOPMENT_TEAM` once a real team is set); `Hideout.entitlements` already declares `webcredentials:thehideout.zabit.si` and `applinks:thehideout.zabit.si` for the production domain. Follow-up for a self-hosted server that cannot add that well-known file: a custom-scheme redirect (`thehideout://invite/<token>`) from the ceremony page, so the `SFSafariViewController` fallback can close itself instead of waiting purely on polling.
+`<TEAMID>` is the Apple Developer Team ID (`project.yml`'s `DEVELOPMENT_TEAM` once a real team is set); `Hideout.entitlements` already declares `webcredentials:thehideout.zabit.si` and `applinks:thehideout.zabit.si` for the production domain. Follow-up for a self-hosted server that cannot add that well-known file: a custom-scheme redirect (`thehideout://invite/<code>`) from the ceremony page, so the `SFSafariViewController` fallback can close itself instead of waiting purely on polling.
 
 ## Snapshot tests
 
@@ -103,6 +103,13 @@ These tests are **not** run in CI (see `.github/workflows/ci.yml`, job `ios`): a
 - `fake-smoke.yaml`: launches with `--fake`, cheap enough to run anytime.
   ```sh
   maestro --device <udid> test mobile/ios/maestro/fake-smoke.yaml
+  ```
+- `invite-code.yaml`: launches with `--fake --signed-out`, opens "Join with a code", types a code into
+  the 8-box field (the 8th character looks it up at once) and reaches the accept step, then opens an
+  invite deep link (the same `AuthFlow.handle(url:)` path a pasted link's extracted code or a universal
+  link takes) and reaches the accept step again.
+  ```sh
+  maestro --device <udid> test mobile/ios/maestro/invite-code.yaml
   ```
 - `live-dm.yaml`: signs in as a real account on a real server, opens a DM and checks a message sent by the other side (via the Connect JSON API, not the UI) arrives live with no "Connecting…" banner, then sends a reply and confirms it too. Needs:
   1. The dev stack up (`docker compose up -d`) and the server running against a disposable keyspace, e.g.:

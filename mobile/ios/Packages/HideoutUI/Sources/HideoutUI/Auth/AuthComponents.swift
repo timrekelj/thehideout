@@ -253,6 +253,60 @@ struct CodeField: View {
     }
 }
 
+/// The eight boxes of an invite code, over a real text field so paste, cut and screen readers behave as for
+/// any other text input: a thin dash divider sits between the fourth and fifth box, matching desktop's
+/// `InviteCodeInput`. Typing, pasting a bare code or pasting a whole invite link all land the same way —
+/// `AuthFlow.setInvite` runs every change through `InviteCode.normalize`, so the field only ever shows a
+/// clean, at most eight character code.
+struct InviteCodeField: View {
+    @Environment(\.theme) private var theme
+    @ScaledMetric(relativeTo: .title) private var charSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .title) private var boxHeight: CGFloat = 52
+    @Binding var text: String
+    var focus: FocusState<AuthFocus?>.Binding
+    var invalid = false
+    var submit: () -> Void
+
+    var body: some View {
+        let isFocused = focus.wrappedValue == .invite
+        ZStack {
+            HStack(spacing: Space.s2) {
+                ForEach(0..<InviteCode.length, id: \.self) { i in
+                    if i == InviteCode.length / 2 {
+                        Rectangle().fill(theme.colors.textMuted).frame(width: Space.s3, height: 2)
+                    }
+                    let current = isFocused && i == min(text.count, InviteCode.length - 1)
+                    let char = i < text.count ? String(text[text.index(text.startIndex, offsetBy: i)]) : ""
+                    let shape = RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+                    Text(char)
+                        .font(DesignFont.mono(size: charSize))
+                        .foregroundStyle(theme.colors.text)
+                        .frame(maxWidth: .infinity, minHeight: boxHeight)
+                        .background(theme.colors.surfaceRaised, in: shape)
+                        .overlay(shape.strokeBorder(invalid ? theme.colors.danger : current ? theme.colors.focus : theme.colors.controlBorder,
+                                                    lineWidth: current || invalid ? Space.ringWidth : 1))
+                }
+            }
+            .accessibilityHidden(true)
+            TextField("", text: $text)
+                .keyboardType(.asciiCapable)
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .focused(focus, equals: .invite)
+                .foregroundStyle(.clear)
+                .tint(.clear)
+                .textSelection(.disabled)
+                .submitLabel(.continue)
+                .frame(maxWidth: .infinity, minHeight: boxHeight)
+                .contentShape(Rectangle())
+                .accessibilityLabel("Invite code")
+                .accessibilityValue(text.isEmpty ? "empty" : text.map(String.init).joined(separator: " "))
+                .onSubmit(submit)
+        }
+        .animation(Motion.control, value: text.count)
+    }
+}
+
 /// `SFSafariViewController` for the Terms and Privacy pages.
 struct SafariView: UIViewControllerRepresentable {
     let url: URL

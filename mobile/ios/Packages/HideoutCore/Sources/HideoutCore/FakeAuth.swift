@@ -8,14 +8,14 @@ import Foundation
 /// | `ana` + the password | asks for a second factor: TOTP `FakeAccounts.totp`, recovery `FakeAccounts.recovery`, or a passkey |
 /// | `cvetka` + the password | suspended |
 /// | an emailed code | `FakeAccounts.emailCode` for `tim@example.com` / `ana@example.com` |
-/// | invite code `WXYZ-2345` | a pending invite from ana (`USED-0000`: already used) |
+/// | invite code `WXYZ-2345` | a pending invite from ana (`SEEN-0000`: already used) |
 public final class FakeAccounts: @unchecked Sendable {
     public static let password = "correct-horse"
     public static let totp = "123456"
     public static let recovery = "abcde-fghij"
     public static let emailCode = "424242"
     public static let inviteCode = "WXYZ-2345"
-    public static let usedInviteCode = "USED-0000"
+    public static let usedInviteCode = "SEEN-0000"
     public static let challenge = "challenge-1"
 
     private let lock = NSLock()

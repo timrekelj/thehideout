@@ -91,8 +91,8 @@ final class AuthUITests: XCTestCase {
     func testInviteCodePreviewAcceptShowsShell() {
         let app = launch(["--signed-out"])
         tap(app, "Join with a code")
+        // The 8th character looks it up at once; no "Continue" tap needed.
         type(app, into: "Invite code", inviteCode.replacingOccurrences(of: "-", with: ""))
-        tap(app, "Continue")
         XCTAssertTrue(waitForText(app, containing: "invited you to join"), "the invite preview did not appear")
         type(app, into: "Choose a username", "zoe")
         type(app, into: "Choose a password", secure: true, "long-enough-pw")
@@ -174,8 +174,8 @@ final class AuthUITests: XCTestCase {
         do {
             var app = launch(["--signed-out"])
             tap(app, "Join with a code")
-            type(app, into: "Invite code", "0000-0000")
-            tap(app, "Continue")
+            // The 8th character looks it up at once; no "Continue" tap needed.
+            type(app, into: "Invite code", "00000000")
             XCTAssertTrue(waitForText(app, containing: "couldn't find that invite"))
             shot(app, "12-invite-unknown")
             app.terminate()
@@ -183,7 +183,6 @@ final class AuthUITests: XCTestCase {
             app = launch(["--signed-out"])
             tap(app, "Join with a code")
             type(app, into: "Invite code", inviteCode.replacingOccurrences(of: "-", with: ""))
-            tap(app, "Continue")
             XCTAssertTrue(waitForText(app, containing: "invited you to join"))
             shot(app, "13-invite-accept")
             type(app, into: "Choose a username", "zoe")

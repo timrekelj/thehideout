@@ -82,7 +82,7 @@ public final class AuthFlow {
     public var email = ""
     public private(set) var code = ""
     public var recovery = ""
-    public var invite = ""
+    public private(set) var invite = ""
     public var username = ""
     public var acceptTerms = false
     public var confirmAge = false
@@ -189,6 +189,17 @@ public final class AuthFlow {
         }
     }
 
+    /// The invite code field: filtered through `InviteCode.normalize` on every change (so a pasted link gives
+    /// just its code), eight characters at most. The 8th character looks it up at once, like `setCode` does for
+    /// a six-digit one; editing a code that already failed tries again.
+    public func setInvite(_ raw: String) {
+        let clean = InviteCode.normalize(raw)
+        invite = clean
+        if issue?.field == .invite { issue = nil }
+        guard clean.count == InviteCode.length, step == .inviteCode else { return }
+        submit()
+    }
+
     // MARK: submit
 
     public func submit() {
@@ -261,10 +272,9 @@ public final class AuthFlow {
                 await me.finish(session)
             }
         case .inviteCode:
-            let typed = InviteCode.normalize(invite)
-            if typed.isEmpty { return invalid(.invite, "Enter the code from your invite email.") }
-            if InviteCode.looksLikeLink(typed) { return invalid(.invite, "Paste just the code from your invite email, not the link.") }
-            lookUp(typed)
+            if invite.isEmpty { return invalid(.invite, "Enter the code from your invite email.") }
+            if invite.count != InviteCode.length { return invalid(.invite, "Invite codes have 8 characters.") }
+            lookUp(InviteCode.dashed(invite))
         case .inviteAccept(let preview, let code):
             let name = username.trimmingCharacters(in: .whitespaces)
             if !(3...32).contains(name.count) { return invalid(.username, "Choose a username of 3 to 32 characters.") }
@@ -303,11 +313,12 @@ public final class AuthFlow {
 
     // MARK: invites
 
-    /// `thehideout://invite/<token>` or `{server}/invite/<token>`: opens the invite step and looks it up.
-    /// Returns whether the URL was an invite link.
+    /// `thehideout://invite/<code>` or `{server}/invite/<code>`: opens the invite step with the code prefilled
+    /// and looks it up at once (a short or malformed code fails locally, the same "8 characters" message a typed
+    /// one would). Returns whether the URL was an invite link at all.
     @discardableResult
     public func handle(url: URL) -> Bool {
-        guard let token = InviteCode.token(fromLink: url.absoluteString), !token.isEmpty else { return false }
+        guard InviteCode.isLink(url.absoluteString) else { return false }
         // A universal link's host is the server that minted the invite; the custom scheme (`thehideout://invite/…`)
         // has no real host to compare (its authority component is "invite"), only the universal link does.
         if url.scheme == "https", let linkHost = url.host, !linkHost.isEmpty, linkHost.lowercased() != server.host.lowercased() {
@@ -315,9 +326,18 @@ public final class AuthFlow {
             return true
         }
         go(.inviteCode)
-        invite = ""
-        lookUp(token)
+        openInviteLink(url.absoluteString)
         return true
+    }
+
+    /// Prefills the code field from a link and either looks it up (whole) or shows the length error (not).
+    private func openInviteLink(_ link: String) {
+        invite = InviteCode.normalize(link)
+        if invite.count == InviteCode.length {
+            lookUp(InviteCode.dashed(invite))
+        } else {
+            invalid(.invite, "Invite codes have 8 characters.")
+        }
     }
 
     /// Set by `handle(url:)` when a universal invite link's host is not the selected server: looking the invite up
@@ -329,7 +349,7 @@ public final class AuthFlow {
     /// Switches to the invite link's server, then opens and looks up the invite there. Does not go through `go()`:
     /// that would cancel this very task (it cancels whatever `task` currently is) before the lookup below runs.
     public func switchServerForPendingInviteLink() {
-        guard let pending = pendingInviteLink, let token = InviteCode.token(fromLink: pending.url.absoluteString) else { return }
+        guard let pending = pendingInviteLink else { return }
         pendingInviteLink = nil
         start { me, g in
             do { try await me.server.change(to: pending.host) }
@@ -341,20 +361,24 @@ public final class AuthFlow {
             guard g == me.generation else { return }
             me.step = .inviteCode
             me.issue = nil; me.notice = nil; me.suspension = nil
-            me.invite = ""
-            try await me.performLookup(token: token, generation: g)
+            me.invite = InviteCode.normalize(pending.url.absoluteString)
+            guard me.invite.count == InviteCode.length else {
+                me.issue = AuthIssue(.invite, "Invite codes have 8 characters.")
+                return
+            }
+            try await me.performLookup(code: InviteCode.dashed(me.invite), generation: g)
         }
     }
 
-    private func lookUp(_ token: String) {
-        start { me, g in try await me.performLookup(token: token, generation: g) }
+    private func lookUp(_ code: String) {
+        start { me, g in try await me.performLookup(code: code, generation: g) }
     }
 
-    private func performLookup(token: String, generation g: Int) async throws {
-        let preview = try await api.lookupInvite(code: token)
+    private func performLookup(code: String, generation g: Int) async throws {
+        let preview = try await api.lookupInvite(code: code)
         guard g == generation else { return }
         if let problem = Self.problem(with: preview.status) { fail(.invite, problem); return }
-        step = .inviteAccept(preview: preview, code: token)
+        step = .inviteAccept(preview: preview, code: code)
         issue = nil; notice = nil; busy = false
     }
 
@@ -665,31 +689,46 @@ public final class AuthFlow {
     }
 }
 
-/// Typed invite codes and invite links.
+/// Typed invite codes and invite links: the server mints only an 8-character code (`XXXX-XXXX`, Crockford
+/// base32 — no `I`, `L`, `O` or `U`), passed to `LookupInvite`/`AcceptInvite` with dashes and case ignored.
 public enum InviteCode {
-    /// What goes to the server: trimmed and uppercased, the dash put in (`wxyz2345` -> `WXYZ-2345`). A longer value
-    /// (an emailed link token) is left as typed.
-    public static func normalize(_ raw: String) -> String {
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !looksLikeLink(t) else { return t }
-        let squeezed = t.filter { $0 != "-" && $0 != " " }
-        if squeezed.count == 8, squeezed.allSatisfy({ $0.isLetter || $0.isNumber }) {
-            let u = squeezed.uppercased()
-            return "\(u.prefix(4))-\(u.suffix(4))"
+    /// Characters a code may hold.
+    public static let length = 8
+    private static let alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+    /// One typed or pasted character as a code character: uppercased, `I`/`L` read as `1`, `O` as `0`, `nil`
+    /// when the alphabet has no such character (including `-`, spaces and `_`).
+    private static func codeChar(_ c: Character) -> Character? {
+        let upper = c.uppercased().first ?? c
+        let u: Character
+        switch upper {
+        case "I", "L": u = "1"
+        case "O": u = "0"
+        default: u = upper
         }
-        return t.uppercased()
+        return alphabet.contains(u) ? u : nil
     }
 
-    /// The field holds a link rather than a code.
-    public static func looksLikeLink(_ raw: String) -> Bool { raw.contains("://") || raw.contains("/invite/") }
-
-    /// The token at the end of an invite link (`thehideout://invite/<token>`, `https://host/invite/<token>`).
-    public static func token(fromLink link: String) -> String? {
-        let url = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let r = url.range(of: "/invite/") else { return nil }
-        let rest = url[r.upperBound...]
-        return rest.split(whereSeparator: { "?#/".contains($0) }).first.map(String.init)
+    /// The code characters in `raw`, in order, at most `length`: anything outside the alphabet (dashes,
+    /// spaces, underscores, punctuation) is dropped, so typing, pasting a bare code or pasting a whole invite
+    /// link (`.../invite/XXXX-XXXX`, counted only from after its last `/invite/`) all land the same way.
+    public static func normalize(_ raw: String) -> String {
+        let afterLink = raw.range(of: "/invite/", options: .backwards).map { String(raw[$0.upperBound...]) } ?? raw
+        return String(afterLink.compactMap(codeChar).prefix(length))
     }
+
+    /// `normalize`'s result written `XXXX-XXXX` once it is whole (what the server expects to read, though it
+    /// ignores dashes and case); a shorter code comes back bare.
+    public static func dashed(_ raw: String) -> String {
+        let code = normalize(raw)
+        guard code.count == length else { return code }
+        let mid = code.index(code.startIndex, offsetBy: length / 2)
+        return "\(code[..<mid])-\(code[mid...])"
+    }
+
+    /// Whether `raw` is an invite link (`thehideout://invite/<code>`, `https://host/invite/<code>`) rather
+    /// than a bare code; its code may still be short or malformed, so this alone does not mean it is usable.
+    public static func isLink(_ raw: String) -> Bool { raw.contains("/invite/") }
 }
 
 enum ServerURLCheck {

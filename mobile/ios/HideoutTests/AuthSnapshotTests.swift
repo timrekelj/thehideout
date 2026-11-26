@@ -134,18 +134,18 @@ final class AuthSnapshotTests: SnapshotCase {
         shoot(r)
     }
 
-    func testInviteCodeLinkRejected() async {
+    func testInviteCodeFromPastedLink() async {
         let r = await rig()
         r.flow.startInvite()
-        r.flow.invite = "https://thehideout.zabit.si/invite/abcDEF"
-        r.flow.submit()
+        r.flow.setInvite("https://thehideout.zabit.si/invite/NOPE-0000")
+        await r.flow.settle()
         shoot(r)
     }
 
     private func acceptStep(_ r: Rig) async {
         r.flow.startInvite()
-        r.flow.invite = FakeAccounts.inviteCode
-        r.flow.submit(); await r.flow.settle()
+        r.flow.setInvite(FakeAccounts.inviteCode)
+        await r.flow.settle()
     }
 
     func testInviteAccept() async {
