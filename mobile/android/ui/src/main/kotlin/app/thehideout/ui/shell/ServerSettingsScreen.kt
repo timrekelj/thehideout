@@ -54,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -112,7 +113,7 @@ fun RoleDot(color: String, size: androidx.compose.ui.unit.Dp, modifier: Modifier
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerSettingsScreen(state: AppState, guildId: Long, actions: ShellActions, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+fun ServerSettingsScreen(state: AppState, guildId: Long, actions: ShellActions, onDismiss: () -> Unit, modifier: Modifier = Modifier, initialPage: ServerSettingsPage? = null) {
     val c = Hideout.colors
     val guild = state.guild(guildId) ?: run { onDismiss(); return }
     val pages = remember(state, guildId) {
@@ -124,7 +125,7 @@ fun ServerSettingsScreen(state: AppState, guildId: Long, actions: ShellActions, 
             if (state.canManageEmojis(guildId)) add(ServerSettingsPage.Emojis)
         }
     }
-    var page by remember(guildId) { mutableStateOf(pages.firstOrNull() ?: ServerSettingsPage.Overview) }
+    var page by remember(guildId) { mutableStateOf(initialPage ?: pages.firstOrNull() ?: ServerSettingsPage.Overview) }
     LaunchedEffect(pages) { if (page !in pages && pages.isNotEmpty()) page = pages.first() }
 
     Scaffold(
@@ -467,7 +468,7 @@ private fun RolesPage(state: AppState, guildId: Long, actions: ShellActions) {
                             enabled = !busyMove,
                             onClick = { scope.launch { busyMove = true; actions.moveRole(guildId, r.id, -1); busyMove = false } },
                             modifier = Modifier.size(32.dp).testTag("role-up-${r.id}"),
-                        ) { SymIcon(Sym.ExpandMore, "Move ${r.name} up", modifier = Modifier.size(18.dp)) }
+                        ) { SymIcon(Sym.ExpandMore, "Move ${r.name} up", modifier = Modifier.size(18.dp).graphicsLayer(rotationZ = 180f)) }
                         IconButton(
                             enabled = !busyMove,
                             onClick = { scope.launch { busyMove = true; actions.moveRole(guildId, r.id, 1); busyMove = false } },
