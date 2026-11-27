@@ -3,7 +3,6 @@ package app.thehideout.ui.shell
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,8 +34,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,12 +48,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.thehideout.core.api.AppError
 import app.thehideout.core.auth.PasskeyCeremony
 import app.thehideout.core.security.DeviceSession
 import app.thehideout.core.security.Passkey
 import app.thehideout.core.security.SecurityInfo
+import app.thehideout.core.store.AppState
+import app.thehideout.ui.auth.PasskeyCreateResult
 import app.thehideout.ui.auth.PasskeyLauncher
 import app.thehideout.ui.components.GroupLabel
 import app.thehideout.ui.components.HideoutCard
@@ -59,8 +66,10 @@ import app.thehideout.ui.components.SecureScreenEffect
 import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.theme.Hideout
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -74,9 +83,42 @@ private sealed interface SecurityRoute {
     data object DeleteAccount : SecurityRoute
 }
 
+/** The route keys that are safe to persist across a process restart (data-bearing ones are not). */
+private enum class SecurityRouteKey { TwoFactor, TotpSetup, Passkeys, Devices, DeleteAccount }
+
+/**
+ * A [SecurityRoute] is not `Parcelable`/`Serializable` (`rememberSaveable`'s default `Saver` would
+ * crash trying to marshal it — "Parcel: unable to marshal value"), so this saves just the simple
+ * case's key and rebuilds it on restore. [SecurityRoute.RecoveryCodes] carries the account's
+ * recovery codes: it is deliberately never written to saved state (they are shown once and are not
+ * retrievable again), so a process restart while that screen is up lands back on the Security list.
+ */
+private val SecurityRouteSaver = Saver<SecurityRoute?, String>(
+    save = { route ->
+        when (route) {
+            SecurityRoute.TwoFactor -> SecurityRouteKey.TwoFactor.name
+            SecurityRoute.TotpSetup -> SecurityRouteKey.TotpSetup.name
+            SecurityRoute.Passkeys -> SecurityRouteKey.Passkeys.name
+            SecurityRoute.Devices -> SecurityRouteKey.Devices.name
+            SecurityRoute.DeleteAccount -> SecurityRouteKey.DeleteAccount.name
+            is SecurityRoute.RecoveryCodes, null -> ""
+        }
+    },
+    restore = { key ->
+        when (runCatching { SecurityRouteKey.valueOf(key) }.getOrNull()) {
+            SecurityRouteKey.TwoFactor -> SecurityRoute.TwoFactor
+            SecurityRouteKey.TotpSetup -> SecurityRoute.TotpSetup
+            SecurityRouteKey.Passkeys -> SecurityRoute.Passkeys
+            SecurityRouteKey.Devices -> SecurityRoute.Devices
+            SecurityRouteKey.DeleteAccount -> SecurityRoute.DeleteAccount
+            null -> null
+        }
+    },
+)
+
 /** SEC-01..08, ACCT-01..02: Email, Password, Two-factor, Passkeys, Devices, then Export/Delete. */
 @Composable
-fun SecurityScreen(actions: ShellActions, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun SecurityScreen(state: AppState, actions: ShellActions, serverUrl: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val c = Hideout.colors
     BackHandler(onBack = onBack)
     var info by remember { mutableStateOf<SecurityInfo?>(null) }
@@ -90,13 +132,12 @@ fun SecurityScreen(actions: ShellActions, onBack: () -> Unit, modifier: Modifier
     var showEmail by rememberSaveable { mutableStateOf(false) }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     var showExportConfirm by remember { mutableStateOf(false) }
-    var exportState by remember { mutableStateOf<String?>(null) }
-    var route by rememberSaveable { mutableStateOf<SecurityRoute?>(null) }
+    var route by rememberSaveable(stateSaver = SecurityRouteSaver) { mutableStateOf<SecurityRoute?>(null) }
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { SymIcon(Sym.ArrowBack, "Back") }
+                IconButton(onClick = onBack, modifier = Modifier.testTag("security-back")) { SymIcon(Sym.ArrowBack, "Back") }
                 Text("Security", style = MaterialTheme.typography.headlineSmall, color = c.text)
             }
             if (loadError != null) Text(loadError!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp))
@@ -139,7 +180,7 @@ fun SecurityScreen(actions: ShellActions, onBack: () -> Unit, modifier: Modifier
                 Column {
                     SettingRow(
                         Sym.Download, "Export my data",
-                        exportState ?: "Emails you a download link (once every 24 hours)",
+                        state.dataExportMaskedEmail?.let { "Link emailed to $it" } ?: "Emails you a download link (once every 24 hours)",
                         onClick = { showExportConfirm = true },
                     )
                     HorizontalDivider(color = c.borderSubtle)
@@ -150,13 +191,7 @@ fun SecurityScreen(actions: ShellActions, onBack: () -> Unit, modifier: Modifier
 
         if (showEmail) ChangeEmailFlow(actions, hasPassword = info?.hasPassword ?: true, onDismiss = { showEmail = false; reload() })
         if (showPassword) ChangePasswordDialog(actions, hasPassword = info?.hasPassword ?: true, onDismiss = { showPassword = false; reload() })
-        if (showExportConfirm) {
-            ExportDataDialog(
-                onDismiss = { showExportConfirm = false },
-                onConfirm = actions.exportData,
-                onSuccess = { masked -> exportState = "Link emailed to $masked" },
-            )
-        }
+        if (showExportConfirm) ExportDataDialog(onDismiss = { showExportConfirm = false }, onConfirm = actions.exportData)
 
         when (val r = route) {
             SecurityRoute.TwoFactor -> {
@@ -176,22 +211,16 @@ fun SecurityScreen(actions: ShellActions, onBack: () -> Unit, modifier: Modifier
                     onEnabled = { codes -> route = SecurityRoute.RecoveryCodes(codes) },
                 )
             }
-            is SecurityRoute.RecoveryCodes -> {
-                BackHandler { route = null; reload() }
-                RecoveryCodesScreen(r.codes, title = "Save your recovery codes", onDone = { route = null; reload() })
-            }
+            is SecurityRoute.RecoveryCodes -> RecoveryCodesScreen(r.codes, title = "Save your recovery codes", onDone = { route = null; reload() })
             SecurityRoute.Passkeys -> {
                 BackHandler { route = null }
-                PasskeysScreen(actions, onBack = { route = null; reload() })
+                PasskeysScreen(actions, serverUrl, onBack = { route = null; reload() })
             }
             SecurityRoute.Devices -> {
                 BackHandler { route = null }
                 DevicesScreen(actions, onBack = { route = null })
             }
-            SecurityRoute.DeleteAccount -> {
-                BackHandler { route = null }
-                DeleteAccountScreen(actions, info, onBack = { route = null })
-            }
+            SecurityRoute.DeleteAccount -> DeleteAccountScreen(actions, info, onBack = { route = null })
             null -> Unit
         }
     }
@@ -214,6 +243,27 @@ private fun SettingRow(sym: Sym, title: String, subtitle: String?, destructive: 
     }
 }
 
+/** A password field with a show/hide toggle (never left in plain text by default). */
+@Suppress("DEPRECATION") // the visual-transformation TextField flavors are deprecated in Material 3 1.5 but still the outlined look we want
+@Composable
+private fun PasswordField(value: String, onValue: (String) -> Unit, label: String, modifier: Modifier = Modifier, testTag: String? = null) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValue,
+        label = { Text(label) },
+        singleLine = true,
+        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                SymIcon(if (visible) Sym.VisibilityOff else Sym.Visibility, if (visible) "Hide password" else "Show password")
+            }
+        },
+        modifier = modifier.then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+    )
+}
+
 // ---- email (SEC-03) ---------------------------------------------------------------------------
 
 @Composable
@@ -232,7 +282,7 @@ private fun ChangeEmailFlow(actions: ShellActions, hasPassword: Boolean, onDismi
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(newEmail, { newEmail = it; error = null }, label = { Text("New email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    if (hasPassword) OutlinedTextField(password, { password = it; error = null }, label = { Text("Current password") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    if (hasPassword) PasswordField(password, { password = it; error = null }, "Current password", modifier = Modifier.fillMaxWidth())
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 }
             },
@@ -297,11 +347,9 @@ private fun ChangePasswordDialog(actions: ShellActions, hasPassword: Boolean, on
         title = { Text(if (hasPassword) "Change password" else "Set a password") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (hasPassword) {
-                    OutlinedTextField(current, { current = it; error = null }, label = { Text("Current password") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                }
-                OutlinedTextField(new, { new = it; error = null }, label = { Text("New password") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(confirm, { confirm = it; error = null }, label = { Text("Confirm new password") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (hasPassword) PasswordField(current, { current = it; error = null }, "Current password", modifier = Modifier.fillMaxWidth())
+                PasswordField(new, { new = it; error = null }, "New password", modifier = Modifier.fillMaxWidth())
+                PasswordField(confirm, { confirm = it; error = null }, "Confirm new password", modifier = Modifier.fillMaxWidth())
                 Text("Signs out your other devices.", style = MaterialTheme.typography.bodySmall, color = Hideout.colors.textMuted)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
@@ -327,7 +375,7 @@ private fun ChangePasswordDialog(actions: ShellActions, hasPassword: Boolean, on
 // ---- export (ACCT-02) --------------------------------------------------------------------------
 
 @Composable
-private fun ExportDataDialog(onDismiss: () -> Unit, onConfirm: suspend () -> Result<String>, onSuccess: (String) -> Unit) {
+private fun ExportDataDialog(onDismiss: () -> Unit, onConfirm: suspend () -> Result<String>) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -346,7 +394,13 @@ private fun ExportDataDialog(onDismiss: () -> Unit, onConfirm: suspend () -> Res
                 onClick = {
                     scope.launch {
                         busy = true
-                        onConfirm().fold({ masked -> onSuccess(masked); onDismiss() }, { e -> busy = false; error = (e as? AppError)?.message ?: "Couldn't request the export." })
+                        onConfirm().fold(
+                            { onDismiss() },
+                            { e ->
+                                busy = false
+                                error = if (e is AppError.RateLimited) "You can request one export per 24 hours." else (e as? AppError)?.message ?: "Couldn't request the export."
+                            },
+                        )
                     }
                 },
             ) { Text(if (busy) "Requesting…" else "Request export") }
@@ -365,7 +419,7 @@ private fun TwoFactorScreen(actions: ShellActions, info: SecurityInfo?, onBack: 
     var regenerated by remember { mutableStateOf<List<String>?>(null) }
     Column(modifier.fillMaxSize().background(c.bg).statusBarsPadding().verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { SymIcon(Sym.ArrowBack, "Back") }
+            IconButton(onClick = onBack, modifier = Modifier.testTag("totp-back")) { SymIcon(Sym.ArrowBack, "Back") }
             Text("Authenticator app", style = MaterialTheme.typography.headlineSmall, color = c.text)
         }
         if (info?.totpEnabled == true) {
@@ -440,6 +494,15 @@ private fun <T> CodeConfirmDialog(title: String, body: String, confirmLabel: Str
     )
 }
 
+/** A black-on-white QR bitmap of [content] (the TOTP `otpauth://` URI), computed off the main thread. */
+@Composable
+private fun rememberQrBitmap(content: String): android.graphics.Bitmap? {
+    val state = produceState<android.graphics.Bitmap?>(initialValue = null, content) {
+        value = withContext(Dispatchers.Default) { qrBitmap(content) }
+    }
+    return state.value
+}
+
 @Suppress("DEPRECATION") // LocalClipboardManager is deprecated for the suspend-based LocalClipboard; a plain synchronous copy fits a short code better than threading a CoroutineScope through
 @Composable
 private fun TotpSetupScreen(actions: ShellActions, onBack: () -> Unit, onEnabled: (List<String>) -> Unit, modifier: Modifier = Modifier) {
@@ -465,8 +528,12 @@ private fun TotpSetupScreen(actions: ShellActions, onBack: () -> Unit, onEnabled
             Text("Scan this with your authenticator app, or enter the key manually.", color = c.textMuted)
             val u = uri
             if (u != null) {
-                val bitmap = remember(u) { qrBitmap(u) }
-                Image(bitmap.asImageBitmap(), "QR code for $u", modifier = Modifier.size(220.dp).align(Alignment.CenterHorizontally))
+                val bitmap = rememberQrBitmap(u)
+                if (bitmap != null) {
+                    Image(bitmap.asImageBitmap(), "QR code", modifier = Modifier.size(220.dp).align(Alignment.CenterHorizontally))
+                } else {
+                    LoadingIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                }
                 Row(Modifier.fillMaxWidth().clickable { clipboard.setText(AnnotatedString(secret)) }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(secret, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = app.thehideout.design.DesignFonts.mono), color = c.text, modifier = Modifier.weight(1f))
                     SymIcon(Sym.ContentCopy, "Copy key", tint = c.accentText)
@@ -499,6 +566,11 @@ private fun RecoveryCodesScreen(codes: List<String>, title: String, onDone: () -
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     var saved by remember { mutableStateOf(false) }
+    var confirmLeave by remember { mutableStateOf(false) }
+    val tryLeave = { if (saved) onDone() else confirmLeave = true }
+    // Self-contained: the only way out is "I saved them" (the Done button already requires it) or
+    // explicitly confirming "leave without saving" on the system/gesture back, never a silent skip.
+    BackHandler(onBack = tryLeave)
     Column(modifier.fillMaxSize().background(c.bg).statusBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(title, style = MaterialTheme.typography.headlineSmall, color = c.text)
         Text("Each code works once, if you lose access to your authenticator app. We won't show these again.", color = c.textMuted)
@@ -525,12 +597,21 @@ private fun RecoveryCodesScreen(codes: List<String>, title: String, onDone: () -
         }
         Button(enabled = saved, onClick = onDone, shapes = ButtonDefaults.shapes()) { Text("Done") }
     }
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Leave without saving?") },
+            text = { Text("You won't be able to see these recovery codes again.") },
+            confirmButton = { TextButton(onClick = { confirmLeave = false; onDone() }) { Text("Leave") } },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Stay") } },
+        )
+    }
 }
 
 // ---- passkeys (SEC-06) --------------------------------------------------------------------------
 
 @Composable
-private fun PasskeysScreen(actions: ShellActions, onBack: () -> Unit, modifier: Modifier = Modifier) {
+private fun PasskeysScreen(actions: ShellActions, serverUrl: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val c = Hideout.colors
     var passkeys by remember { mutableStateOf<List<Passkey>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -567,22 +648,35 @@ private fun PasskeysScreen(actions: ShellActions, onBack: () -> Unit, modifier: 
         }
     }
     if (adding) {
-        AddPasskeyFlow(actions, onDismiss = { adding = false; reload() })
+        AddPasskeyFlow(actions, serverUrl, onDismiss = { adding = false; reload() })
     }
     renaming?.let { pk ->
         RenamePasskeyDialog(pk, actions, onDismiss = { renaming = null }, onRenamed = { renaming = null; reload() })
     }
     deleting?.let { pk ->
+        var busy by remember(pk) { mutableStateOf(false) }
+        var dialogError by remember(pk) { mutableStateOf<String?>(null) }
         AlertDialog(
-            onDismissRequest = { deleting = null },
+            onDismissRequest = { if (!busy) deleting = null },
             title = { Text("Delete passkey") },
-            text = { Text("\"${pk.name}\" won't be able to sign in anymore.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch { actions.deletePasskey(pk.id).fold({ deleting = null; reload() }, { e -> error = e.message }) }
-                }) { Text("Delete") }
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("\"${pk.name}\" won't be able to sign in anymore.")
+                    dialogError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            actions.deletePasskey(pk.id).fold({ deleting = null; reload() }, { e -> busy = false; dialogError = e.message ?: "Couldn't delete it." })
+                        }
+                    },
+                ) { Text(if (busy) "Deleting…" else "Delete") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { deleting = null }) { Text("Cancel") } },
         )
     }
 }
@@ -598,7 +692,7 @@ private fun RenamePasskeyDialog(passkey: Passkey, actions: ShellActions, onDismi
         title = { Text("Rename passkey") },
         text = {
             Column {
-                OutlinedTextField(name, { name = it; error = null }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = it; error = null }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("rename-passkey-name"))
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
         },
@@ -618,54 +712,84 @@ private fun RenamePasskeyDialog(passkey: Passkey, actions: ShellActions, onDismi
 }
 
 @Composable
-private fun AddPasskeyFlow(actions: ShellActions, onDismiss: () -> Unit) {
+private fun AddPasskeyFlow(actions: ShellActions, serverUrl: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val launcher = remember { PasskeyLauncher(context) }
     var name by remember { mutableStateOf("") }
     var ceremony by remember { mutableStateOf<PasskeyCeremony?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var polling by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(ceremony) {
         val c = ceremony ?: return@LaunchedEffect
-        val native = runCatching { launcher.createCredential(c) }.getOrNull()
-        if (native != null) {
-            actions.finishPasskeyRegistration(c.ceremonyId, native).fold({ onDismiss() }, { e -> busy = false; error = e.message ?: "Couldn't add the passkey." })
-        } else {
-            launcher.openCeremonyTab(c)
-            var polls = 0
-            while (polls < 80 && ceremony == c) {
-                delay(1500)
-                actions.finishPasskeyRegistration(c.ceremonyId, "").fold(
-                    { if (!it.pending) { onDismiss() } },
-                    { e -> busy = false; error = e.message; return@LaunchedEffect },
-                )
-                polls++
+        if (PasskeyLauncher.isDomainHost(serverUrl)) {
+            when (val result = launcher.createCredential(c)) {
+                is PasskeyCreateResult.Success -> {
+                    actions.finishPasskeyRegistration(c.ceremonyId, result.json).fold(
+                        { onDismiss() },
+                        { e -> busy = false; ceremony = null; error = e.message ?: "Couldn't add the passkey." },
+                    )
+                    return@LaunchedEffect
+                }
+                PasskeyCreateResult.Cancelled -> {
+                    // The user backed out of the system UI on purpose: stop, no browser fallback.
+                    busy = false
+                    ceremony = null
+                    return@LaunchedEffect
+                }
+                PasskeyCreateResult.Unsupported -> Unit // fall through to the browser ceremony below
             }
+        }
+        launcher.openCeremonyTab(c)
+        busy = false
+        polling = true
+        var polls = 0
+        while (polls < 80 && ceremony == c) {
+            delay(1500)
+            if (ceremony != c) return@LaunchedEffect // cancelled while waiting out the delay
+            actions.finishPasskeyRegistration(c.ceremonyId, "").fold(
+                { finished -> if (!finished.pending) { polling = false; onDismiss(); return@LaunchedEffect } },
+                { e -> polling = false; ceremony = null; error = e.message ?: "Couldn't add the passkey."; return@LaunchedEffect },
+            )
+            polls++
+        }
+        if (ceremony == c && polling) {
+            polling = false
+            ceremony = null
+            error = "Timed out waiting for the browser. Try again."
         }
     }
     AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = { if (!busy) { ceremony = null; onDismiss() } },
         title = { Text("Add a passkey") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Uses your device's screen lock, fingerprint or face.")
-                OutlinedTextField(name, { name = it; error = null }, label = { Text("Name (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (polling) {
+                    Text("Finish adding the passkey in the browser tab, then come back here.")
+                    LoadingIndicator()
+                } else {
+                    Text("Uses your device's screen lock, fingerprint or face.")
+                    OutlinedTextField(name, { name = it; error = null }, label = { Text("Name (optional)") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = !busy,
-                onClick = {
-                    scope.launch {
-                        busy = true
-                        actions.beginPasskeyRegistration(name.trim()).fold({ ceremony = it }, { e -> busy = false; error = e.message ?: "Couldn't start." })
-                    }
-                },
-            ) { Text(if (busy) "Working…" else "Continue") }
+            if (!polling) {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            actions.beginPasskeyRegistration(name.trim()).fold({ ceremony = it }, { e -> busy = false; error = e.message ?: "Couldn't start." })
+                        }
+                    },
+                ) { Text(if (busy) "Working…" else "Continue") }
+            }
         },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
+        // Never disabled: a passkey ceremony (native prompt or the browser tab) can always be called off.
+        dismissButton = { TextButton(onClick = { ceremony = null; onDismiss() }) { Text("Cancel") } },
     )
 }
 
@@ -686,7 +810,7 @@ private fun DevicesScreen(actions: ShellActions, onBack: () -> Unit, modifier: M
     val formatter = remember { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
     Column(modifier.fillMaxSize().background(c.bg).statusBarsPadding().verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { SymIcon(Sym.ArrowBack, "Back") }
+            IconButton(onClick = onBack, modifier = Modifier.testTag("devices-back")) { SymIcon(Sym.ArrowBack, "Back") }
             Text("Devices", style = MaterialTheme.typography.headlineSmall, color = c.text, modifier = Modifier.weight(1f))
             if ((sessions?.size ?: 0) > 1) TextButton(onClick = { revokingOthers = true }) { Text("Sign out others") }
         }
@@ -711,28 +835,57 @@ private fun DevicesScreen(actions: ShellActions, onBack: () -> Unit, modifier: M
         }
     }
     revoking?.let { s ->
+        var busy by remember(s) { mutableStateOf(false) }
+        var dialogError by remember(s) { mutableStateOf<String?>(null) }
         AlertDialog(
-            onDismissRequest = { revoking = null },
+            onDismissRequest = { if (!busy) revoking = null },
             title = { Text("Sign out this device?") },
-            text = { Text("\"${s.deviceName}\" will need to sign in again.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("\"${s.deviceName}\" will need to sign in again.")
+                    dialogError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
             confirmButton = {
                 TextButton(
+                    enabled = !busy,
                     modifier = Modifier.testTag("revoke-session-submit"),
-                    onClick = { scope.launch { actions.revokeSession(s.id).fold({ revoking = null; reload() }, { e -> error = e.message }) } },
-                ) { Text("Sign out") }
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            actions.revokeSession(s.id).fold({ revoking = null; reload() }, { e -> busy = false; dialogError = e.message ?: "Couldn't sign it out." })
+                        }
+                    },
+                ) { Text(if (busy) "Signing out…" else "Sign out") }
             },
-            dismissButton = { TextButton(onClick = { revoking = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(enabled = !busy, onClick = { revoking = null }) { Text("Cancel") } },
         )
     }
     if (revokingOthers) {
+        var busy by remember { mutableStateOf(false) }
+        var dialogError by remember { mutableStateOf<String?>(null) }
         AlertDialog(
-            onDismissRequest = { revokingOthers = false },
+            onDismissRequest = { if (!busy) revokingOthers = false },
             title = { Text("Sign out every other device?") },
-            text = { Text("Everywhere you're signed in except this device will be signed out.") },
-            confirmButton = {
-                TextButton(onClick = { scope.launch { actions.revokeOtherSessions().fold({ revokingOthers = false; reload() }, { e -> error = e.message }) } }) { Text("Sign out others") }
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Everywhere you're signed in except this device will be signed out.")
+                    dialogError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
             },
-            dismissButton = { TextButton(onClick = { revokingOthers = false }) { Text("Cancel") } },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    modifier = Modifier.testTag("revoke-others-submit"),
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            actions.revokeOtherSessions().fold({ revokingOthers = false; reload() }, { e -> busy = false; dialogError = e.message ?: "Couldn't sign them out." })
+                        }
+                    },
+                ) { Text(if (busy) "Signing out…" else "Sign out others") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { revokingOthers = false }) { Text("Cancel") } },
         )
     }
 }
@@ -753,10 +906,15 @@ private fun DeleteAccountScreen(actions: ShellActions, info: SecurityInfo?, onBa
     val scope = rememberCoroutineScope()
     val hasPassword = info?.hasPassword ?: true
     val needsTotp = info?.totpEnabled == true
+    // Once the account is actually gone (or the request is in flight), Back can't skip the
+    // confirmation and leave the store's own delayed sign-out (see AppStore.deleteAccount) to run
+    // unobserved — the store does the sign-out regardless, but this avoids a jarring back-out.
+    val canLeave = !busy && !deleted
+    BackHandler(enabled = canLeave, onBack = onBack)
 
     Column(modifier.fillMaxSize().background(c.bg).statusBarsPadding().verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { SymIcon(Sym.ArrowBack, "Back") }
+            IconButton(enabled = canLeave, onClick = onBack, modifier = Modifier.testTag("delete-account-back")) { SymIcon(Sym.ArrowBack, "Back") }
             Text("Delete account", style = MaterialTheme.typography.headlineSmall, color = c.text)
         }
         if (deleted) {
@@ -775,10 +933,7 @@ private fun DeleteAccountScreen(actions: ShellActions, info: SecurityInfo?, onBa
                 }
             } else {
                 if (hasPassword) {
-                    OutlinedTextField(
-                        password, { password = it; error = null }, label = { Text("Current password") }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("delete-account-password"),
-                    )
+                    PasswordField(password, { password = it; error = null }, "Current password", modifier = Modifier.fillMaxWidth(), testTag = "delete-account-password")
                 } else {
                     if (!codeSent) {
                         TextButton(onClick = {
@@ -805,11 +960,9 @@ private fun DeleteAccountScreen(actions: ShellActions, info: SecurityInfo?, onBa
                                 if (!hasPassword) emailCode.trim() else null,
                                 if (needsTotp) totpCode.trim() else null,
                             ).fold(
-                                {
-                                    deleted = true
-                                    delay(1200)
-                                    actions.signOut()
-                                },
+                                // The store itself signs out shortly after (see AppStore.deleteAccount); this
+                                // screen only shows the confirmation until the app's own phase flips away.
+                                { deleted = true },
                                 { e ->
                                     busy = false
                                     if (e is AppError.OwnsGuilds) ownedGuilds = e.guilds else error = e.message ?: "Couldn't delete the account."
@@ -827,9 +980,12 @@ private fun DeleteAccountScreen(actions: ShellActions, info: SecurityInfo?, onBa
 private fun qrBitmap(content: String, size: Int = 480): android.graphics.Bitmap {
     val writer = com.google.zxing.qrcode.QRCodeWriter()
     val matrix = writer.encode(content, com.google.zxing.BarcodeFormat.QR_CODE, size, size)
-    val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-    for (x in 0 until size) for (y in 0 until size) {
-        bmp.setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+    val pixels = IntArray(size * size)
+    for (y in 0 until size) {
+        val row = y * size
+        for (x in 0 until size) pixels[row + x] = if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE
     }
+    val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+    bmp.setPixels(pixels, 0, size, 0, 0, size, size)
     return bmp
 }

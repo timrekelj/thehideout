@@ -5,6 +5,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -98,6 +99,14 @@ class SettingsScreenshots {
         compose.settle()
         compose.onNodeWithText("Set up").performClick()
         compose.settle()
+        // The QR bitmap is encoded off the UI thread (Dispatchers.Default): wait for it to land.
+        var qrReady = false
+        repeat(50) {
+            if (!qrReady) {
+                qrReady = compose.onAllNodesWithContentDescription("QR code").fetchSemanticsNodes().isNotEmpty()
+                if (!qrReady) { Thread.sleep(20); compose.settle() }
+            }
+        }
         compose.capture("settings-security-totp-setup", Device.Phone, Variant.Dark)
     }
 

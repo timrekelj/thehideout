@@ -126,6 +126,9 @@ data class AppState(
     val collapsedEmbeds: List<app.thehideout.core.embed.EmbedRef> = emptyList(),
     /** The account's notification settings, once known (a change on another session arrives as an event). */
     val notificationSettings: NotificationSettings? = null,
+    /** The masked address the last `ExportData` emailed a link to, kept until the next one
+     * (store-level so it survives leaving and returning to the Security page). */
+    val dataExportMaskedEmail: String? = null,
     val logs: Map<Long, ChannelLog> = emptyMap(),
     val outgoing: List<Outgoing> = emptyList(),
     val unread: Map<Long, Unread> = emptyMap(),

@@ -8,8 +8,19 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
+import androidx.credentials.exceptions.CreateCredentialCancellationException
+import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialException
 import app.thehideout.core.auth.PasskeyCeremony
+
+/** How a native passkey-creation attempt (`PasskeyLauncher.createCredential`) came back. */
+sealed interface PasskeyCreateResult {
+    data class Success(val json: String) : PasskeyCreateResult
+    /** The user backed out of the system UI: stop, don't fall back to the browser ceremony. */
+    data object Cancelled : PasskeyCreateResult
+    /** No passkey provider, or this RP id isn't associated with the app yet: fall back to the browser ceremony. */
+    data object Unsupported : PasskeyCreateResult
+}
 
 /**
  * Runs a WebAuthn ceremony natively through Credential Manager, or in a Custom Tab when the server's
@@ -36,13 +47,16 @@ class PasskeyLauncher(private val context: Context) {
         }
     }
 
-    /** Adds a passkey: the `PublicKeyCredential` JSON of the registration ceremony. */
-    suspend fun createCredential(ceremony: PasskeyCeremony): String? {
+    /** Adds a passkey: the `PublicKeyCredential` JSON of the registration ceremony, or why not. */
+    suspend fun createCredential(ceremony: PasskeyCeremony): PasskeyCreateResult {
         return try {
             val result = manager.createCredential(context, CreatePublicKeyCredentialRequest(ceremony.optionsJson))
-            (result as? androidx.credentials.CreatePublicKeyCredentialResponse)?.registrationResponseJson
-        } catch (e: Exception) {
-            null
+            val json = (result as? androidx.credentials.CreatePublicKeyCredentialResponse)?.registrationResponseJson
+            if (json != null) PasskeyCreateResult.Success(json) else PasskeyCreateResult.Unsupported
+        } catch (e: CreateCredentialCancellationException) {
+            PasskeyCreateResult.Cancelled
+        } catch (e: CreateCredentialException) {
+            PasskeyCreateResult.Unsupported
         }
     }
 

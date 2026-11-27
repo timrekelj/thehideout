@@ -44,6 +44,7 @@ import app.thehideout.core.model.ChannelKind
 import app.thehideout.core.model.NotificationLevel
 import app.thehideout.core.model.NotificationOverride
 import app.thehideout.core.model.NotificationSettings
+import app.thehideout.core.notification.isMuted
 import app.thehideout.core.store.AppState
 import app.thehideout.ui.components.GroupLabel
 import app.thehideout.ui.components.HideoutCard
@@ -54,8 +55,6 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 
 private val MUTED_FOREVER: Instant = Instant.parse("2099-01-01T00:00:00Z")
-
-private fun NotificationOverride?.isMuted(now: Instant): Boolean = this?.mutedUntil?.isAfter(now) == true
 
 private fun levelLabel(level: NotificationLevel): String = when (level) {
     NotificationLevel.All -> "All messages"
@@ -119,7 +118,7 @@ fun NotificationsScreen(state: AppState, actions: ShellActions, onBack: () -> Un
                     state.guilds.forEachIndexed { i, g ->
                         if (i > 0) HorizontalDivider(color = c.borderSubtle)
                         val override = settings.guilds.firstOrNull { it.id == g.id }
-                        val label = if (override.isMuted(Instant.now())) "Muted" else override?.let { levelLabel(it.level) } ?: "Default"
+                        val label = if (override?.isMuted(Instant.now()) == true) "Muted" else override?.let { levelLabel(it.level) } ?: "Default"
                         OverrideRow(Sym.Dns, g.name, label, onClick = { guildRoute = g.id })
                     }
                     if (state.guilds.isEmpty()) Text("No servers yet.", color = c.textMuted, modifier = Modifier.padding(16.dp))
@@ -182,7 +181,7 @@ private fun GuildNotificationsScreen(
                     }
                 }
                 HorizontalDivider(color = c.borderSubtle)
-                ToggleRow("Muted", "No pushes from this server until you turn it back on", guildOverride.isMuted(Instant.now())) { muted ->
+                ToggleRow("Muted", "No pushes from this server until you turn it back on", guildOverride?.isMuted(Instant.now()) == true) { muted ->
                     scope.launch {
                         val until = if (muted) MUTED_FOREVER else null
                         actions.updateNotificationSettings(null, null, null, listOf(NotificationOverride(guildId, guildOverride?.level ?: NotificationLevel.Inherit, until)), emptyList())
@@ -197,7 +196,7 @@ private fun GuildNotificationsScreen(
                 channels.forEachIndexed { i, ch ->
                     if (i > 0) HorizontalDivider(color = c.borderSubtle)
                     val override = settings.channels.firstOrNull { it.id == ch.id }
-                    val label = if (override.isMuted(Instant.now())) "Muted" else override?.let { levelLabel(it.level) } ?: "Default"
+                    val label = if (override?.isMuted(Instant.now()) == true) "Muted" else override?.let { levelLabel(it.level) } ?: "Default"
                     OverrideRow(if (ch.kind == ChannelKind.Voice) Sym.Headphones else Sym.Tag, ch.name, label, onClick = { channelDialog = ch.id })
                 }
                 if (channels.isEmpty()) Text("No channels yet.", color = c.textMuted, modifier = Modifier.padding(16.dp))
@@ -205,23 +204,28 @@ private fun GuildNotificationsScreen(
         }
     }
     channelDialog?.let { chId ->
-        val ch = channels.first { it.id == chId }
-        val override = settings.channels.firstOrNull { it.id == chId }
-        ChannelOverrideDialog(
-            channelName = ch.name,
-            current = override,
-            onDismiss = { channelDialog = null },
-            onSave = { lvl, mutedUntil ->
-                actions.updateNotificationSettings(null, null, null, emptyList(), listOf(NotificationOverride(chId, lvl, mutedUntil)))
-            },
-        )
+        val ch = channels.firstOrNull { it.id == chId }
+        if (ch == null) {
+            // The channel was deleted (or its list hasn't loaded this one) while the dialog was open.
+            channelDialog = null
+        } else {
+            val override = settings.channels.firstOrNull { it.id == chId }
+            ChannelOverrideDialog(
+                channelName = ch.name,
+                current = override,
+                onDismiss = { channelDialog = null },
+                onSave = { lvl, mutedUntil ->
+                    actions.updateNotificationSettings(null, null, null, emptyList(), listOf(NotificationOverride(chId, lvl, mutedUntil)))
+                },
+            )
+        }
     }
 }
 
 @Composable
 private fun ChannelOverrideDialog(channelName: String, current: NotificationOverride?, onDismiss: () -> Unit, onSave: suspend (NotificationLevel, Instant?) -> Result<*>) {
     var level by remember { mutableStateOf(current?.level ?: NotificationLevel.Inherit) }
-    var muted by remember { mutableStateOf(current.isMuted(Instant.now())) }
+    var muted by remember { mutableStateOf(current?.isMuted(Instant.now()) == true) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -232,7 +236,7 @@ private fun ChannelOverrideDialog(channelName: String, current: NotificationOver
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf(NotificationLevel.Inherit, NotificationLevel.All, NotificationLevel.Mentions, NotificationLevel.Nothing).forEach { lvl ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { level = lvl }.semantics { role = Role.RadioButton },
+                        Modifier.fillMaxWidth().clickable { level = lvl }.semantics { role = Role.RadioButton }.testTag("channel-${lvl.name}"),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = level == lvl, onClick = { level = lvl })

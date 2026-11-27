@@ -324,14 +324,23 @@ class AppStore(
     suspend fun requestAccountDeletionCode(): Result<Unit> = guard(runCatching { api.requestAccountDeletionCode() })
 
     /**
-     * Deletes the account; the server already revoked every session. Does not sign out itself, so
-     * the caller's dialog can show "Account deleted" for a moment before leaving — call [signOut]
-     * once it has.
+     * Deletes the account; the server already revoked every session. On success, signs out after a
+     * short delay so the caller's screen can show "Account deleted" for a moment — scheduled on
+     * this store's own (long-lived) [scope], not the caller's, so leaving the screen, a
+     * configuration change or the system reclaiming the composition can't skip it.
      */
     suspend fun deleteAccount(password: String?, emailCode: String?, totpCode: String?): Result<Unit> =
-        guard(runCatching { api.deleteAccount(password, emailCode, totpCode) })
+        guard(runCatching { api.deleteAccount(password, emailCode, totpCode) }).also { r ->
+            r.onSuccess {
+                scope.launch {
+                    delay(Duration.ofMillis(1200).toMillis())
+                    signOut()
+                }
+            }
+        }
 
-    suspend fun exportData(): Result<String> = guard(runCatching { api.exportData() })
+    suspend fun exportData(): Result<String> =
+        guard(runCatching { api.exportData() }).also { r -> r.onSuccess { dispatch(Action.DataExportRequested(it)) } }
 
     // ---- notification settings (MOB-02) -----------------------------------------------------------
 

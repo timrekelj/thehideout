@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,6 +42,21 @@ private sealed interface YouRoute {
     data object About : YouRoute
 }
 
+/** [YouRoute] is not `Parcelable`; `rememberSaveable`'s default `Saver` would crash trying to
+ * marshal it. Every case here is a no-argument object, so a plain name round-trips it. */
+private val YouRouteSaver = Saver<YouRoute?, String>(
+    save = { it?.let { r -> r::class.simpleName } ?: "" },
+    restore = { name ->
+        when (name) {
+            YouRoute.Appearance::class.simpleName -> YouRoute.Appearance
+            YouRoute.Security::class.simpleName -> YouRoute.Security
+            YouRoute.Notifications::class.simpleName -> YouRoute.Notifications
+            YouRoute.About::class.simpleName -> YouRoute.About
+            else -> null
+        }
+    },
+)
+
 /** You: the profile and the settings entry points (SET-05). */
 @Composable
 fun YouScreen(
@@ -54,12 +70,12 @@ fun YouScreen(
     modifier: Modifier = Modifier,
 ) {
     val c = Hideout.colors
-    var route by rememberSaveable { mutableStateOf<YouRoute?>(null) }
+    var route by rememberSaveable(stateSaver = YouRouteSaver) { mutableStateOf<YouRoute?>(null) }
     Box(modifier.fillMaxSize()) {
         YouList(state.me, look, versionName, onSignOut = actions.signOut, onRoute = { route = it }, modifier = Modifier.fillMaxSize())
         when (route) {
             YouRoute.Appearance -> AppearanceScreen(look, onLookChange, onBack = { route = null }, modifier = Modifier.fillMaxSize())
-            YouRoute.Security -> SecurityScreen(actions, onBack = { route = null }, modifier = Modifier.fillMaxSize())
+            YouRoute.Security -> SecurityScreen(state, actions, serverUrl, onBack = { route = null }, modifier = Modifier.fillMaxSize())
             YouRoute.Notifications -> NotificationsScreen(state, actions, onBack = { route = null }, modifier = Modifier.fillMaxSize())
             YouRoute.About -> AboutScreen(versionName, serverUrl, onOpenUrl, onBack = { route = null }, modifier = Modifier.fillMaxSize())
             null -> Unit

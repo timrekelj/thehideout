@@ -135,6 +135,8 @@ sealed interface Action {
     // ---- settings and security (phase 5) ----
     /** `GetNotificationSettings`/`UpdateNotificationSettings`'s reply: applied like the gateway's own event. */
     data class NotificationSettingsReplaced(val settings: NotificationSettings) : Action
+    /** `ExportData` was accepted: the masked address it emailed the link to. */
+    data class DataExportRequested(val maskedEmail: String) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -287,6 +289,7 @@ object Reducer {
         }
         is Action.EmojiRemoved -> Reduction(s.copy(emojis = s.emojis[a.guildId]?.let { s.emojis + (a.guildId to it.filter { e -> e.id != a.emojiId }) } ?: s.emojis))
         is Action.NotificationSettingsReplaced -> Reduction(s.copy(notificationSettings = a.settings))
+        is Action.DataExportRequested -> Reduction(s.copy(dataExportMaskedEmail = a.maskedEmail))
     }
 
     // ---- data in ------------------------------------------------------------------------------

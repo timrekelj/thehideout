@@ -8,6 +8,8 @@ appId: si.zabit.thehideout
 # reachable at the URL below with a bootstrap admin invite code already created
 # (`thehideout-server invite <email> --admin`), and Settings > Developer options > "Don't keep
 # activities" off (so the keyboard's IME doesn't fight the sheet's own state restore).
+#
+# Run with: maestro test settings-live-check.yaml -e INVITE_CODE=<the invite's own code>
 - tapOn: "Change"
 - tapOn: "http://.*"
 - eraseText
@@ -15,7 +17,7 @@ appId: si.zabit.thehideout
 - inputText: "http://127.0.0.1:8090"
 - tapOn: "Save"
 - tapOn: "Join with a code"
-- inputText: "GDX74HH5" # replace with the invite's own code
+- inputText: "${INVITE_CODE}"
 - tapOn: "Continue"
 - tapOn: "ana"
 - inputText: "tim"
