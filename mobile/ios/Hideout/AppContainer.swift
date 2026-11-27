@@ -34,6 +34,11 @@ final class AppContainer {
         }
         self.server = server
         self.store = store
+        // Evicts stale cached attachments/pictures from previous runs; never blocks launch on it.
+        Task.detached(priority: .background) {
+            pruneAttachmentCache()
+            pruneMediaImageCache()
+        }
         // `UIDevice.current.name` needs an entitlement since iOS 16: the model ("iPhone", "iPad") is what the device list shows.
         auth = AuthFlow(server: server, deviceName: UIDevice.current.model, passkeys: SystemPasskeys(),
                         onSession: { token in await store.signedIn(token: token) },

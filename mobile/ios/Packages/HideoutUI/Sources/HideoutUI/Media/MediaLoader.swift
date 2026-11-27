@@ -1,5 +1,6 @@
 import Foundation
 import HideoutCore
+import ImageIO
 import UIKit
 
 /// A fetch of attachment bytes that failed: `message` is safe to show the user directly.
@@ -12,6 +13,10 @@ public struct AttachmentIOError: Error, Equatable {
 /// `ui/src/main/assets/fake_media` so both apps' snapshots show the same pictures and clips).
 enum FakeMedia {
     static func url(forAssetNamed name: String) -> URL? {
+        // Defensive even though every caller already gates this behind `allowFakeAssets` (only ever
+        // true under `--fake`/`--gallery`, never from a real server's response): a name can't escape
+        // the `FakeMedia` subdirectory it's looked up in.
+        guard !name.contains("/"), !name.contains("..") else { return nil }
         let base = (name as NSString).deletingPathExtension
         let ext = (name as NSString).pathExtension
         return Bundle.module.url(forResource: base, withExtension: ext, subdirectory: "FakeMedia")
@@ -44,108 +49,201 @@ public func streamAttachment(_ source: MediaSource, to destination: URL) async t
 }
 
 /// `name` (an attachment's display filename), stripped to characters safe for a local file name.
+/// Keeping "." lets a real extension through, but a name made up of nothing but dots (`"."`, `".."`,
+/// `"..."`) would otherwise survive unchanged and, used as a lone path component, name the parent
+/// directory instead of a file in it — so that case falls back to "file" too.
 public func safeAttachmentFileName(_ name: String) -> String {
     let allowed = name.filter { $0.isLetter || $0.isNumber || ".-_ ".contains($0) }
-    return allowed.isEmpty ? "file" : allowed
+    let meaningful = allowed.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    return meaningful.isEmpty ? "file" : allowed
 }
 
-/// Downloads or copies `source` into the app's cache (under `Caches/thehideout-attachments`), named
-/// `filename`; a share sheet, Quick Look preview or "save to Photos" all start from this local copy.
-public func fetchAttachmentToCache(_ source: MediaSource, filename: String) async throws -> URL {
-    let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("thehideout-attachments", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let destination = dir.appendingPathComponent(safeAttachmentFileName(filename))
-    try await streamAttachment(source, to: destination)
-    return destination
+/// Coalesces concurrent fetches of the same attachment (opening Quick Look while a download of the
+/// same file is also in flight, say) onto one `streamAttachment` call, and keeps each attachment's
+/// cached copy in its own folder named by id: two attachments that happen to share a display filename
+/// can never collide or overwrite each other.
+actor AttachmentDownloadCoordinator {
+    static let shared = AttachmentDownloadCoordinator()
+    private var inFlight: [ID: Task<URL, Error>] = [:]
+
+    func fetch(_ source: MediaSource, id: ID, filename: String) async throws -> URL {
+        if let existing = inFlight[id] { return try await existing.value }
+        let task = Task<URL, Error> { try await Self.perform(source, id: id, filename: filename) }
+        inFlight[id] = task
+        defer { inFlight[id] = nil }
+        return try await task.value
+    }
+
+    private static func perform(_ source: MediaSource, id: ID, filename: String) async throws -> URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("thehideout-attachments", isDirectory: true)
+        let dir = base.appendingPathComponent(String(id), isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let destination = dir.appendingPathComponent(safeAttachmentFileName(filename))
+        try await streamAttachment(source, to: destination)
+        return destination
+    }
 }
 
-/// Deletes cached attachment files older than a day, or past `maxBytes` total (oldest first): call once on app start.
-public func pruneAttachmentCache(maxAge: TimeInterval = 86_400, maxBytes: Int = 200 * 1024 * 1024) {
+/// Downloads or copies `source` into the app's cache (under `Caches/thehideout-attachments/<id>`),
+/// named `filename`; a share sheet, Quick Look preview or "save to Photos" all start from this local
+/// copy. `id` is the attachment's own id, so two attachments never share a destination file even if
+/// their display filenames are identical, and concurrent calls for the same attachment share one fetch.
+public func fetchAttachmentToCache(_ source: MediaSource, id: ID, filename: String) async throws -> URL {
+    try await AttachmentDownloadCoordinator.shared.fetch(source, id: id, filename: filename)
+}
+
+/// Deletes a cache directory's files older than `maxAge`, or past `maxBytes` total (oldest first),
+/// walking subdirectories (an attachment's own `<id>` folder, say) too.
+private func pruneCacheDirectory(named name: String, maxAge: TimeInterval, maxBytes: Int) {
     let fm = FileManager.default
-    let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("thehideout-attachments", isDirectory: true)
-    let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
-    guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: Array(keys)) else { return }
+    let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent(name, isDirectory: true)
+    let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey]
+    guard let enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: keys) else { return }
     let now = Date()
-    var entries = files.compactMap { url -> (URL, Int, Date)? in
-        guard let v = try? url.resourceValues(forKeys: keys) else { return nil }
-        return (url, v.fileSize ?? 0, v.contentModificationDate ?? .distantPast)
+    var entries: [(url: URL, size: Int, date: Date)] = []
+    for case let url as URL in enumerator {
+        guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isDirectory != true else { continue }
+        let date = v.contentModificationDate ?? .distantPast
+        if now.timeIntervalSince(date) > maxAge {
+            try? fm.removeItem(at: url)
+            continue
+        }
+        entries.append((url, v.fileSize ?? 0, date))
     }
-    entries = entries.filter { url, _, date in
-        if now.timeIntervalSince(date) > maxAge { try? fm.removeItem(at: url); return false }
-        return true
-    }
-    entries.sort { $0.2 < $1.2 }
-    var total = entries.reduce(0) { $0 + $1.1 }
+    entries.sort { $0.date < $1.date }
+    var total = entries.reduce(0) { $0 + $1.size }
     for entry in entries {
         if total <= maxBytes { break }
-        try? fm.removeItem(at: entry.0)
-        total -= entry.1
+        try? fm.removeItem(at: entry.url)
+        total -= entry.size
     }
 }
 
-/// A small in-memory + disk cache of decoded attachment thumbnails/pictures, keyed by `MediaSource`.
+/// Call once on app start (ATT-04/ATT-12 hygiene): evicts cached downloaded attachments older than a
+/// day, or past `maxBytes` total.
+public func pruneAttachmentCache(maxAge: TimeInterval = 86_400, maxBytes: Int = 200 * 1024 * 1024) {
+    pruneCacheDirectory(named: "thehideout-attachments", maxAge: maxAge, maxBytes: maxBytes)
+}
+
+/// Call once on app start (ATT-01/02 hygiene): evicts `MediaImageCache`'s disk-cached pictures older
+/// than a week, or past `maxBytes` total.
+public func pruneMediaImageCache(maxAge: TimeInterval = 7 * 86_400, maxBytes: Int = 150 * 1024 * 1024) {
+    pruneCacheDirectory(named: "thehideout-media-images", maxAge: maxAge, maxBytes: maxBytes)
+}
+
+/// Whether a load of attachment picture bytes succeeded, failed to even fetch (worth a retry), or
+/// fetched fine but could not be decoded as an image (an SVG or other unsupported format: retrying
+/// would just fail the same way again).
+public enum MediaLoadOutcome: Sendable {
+    case loaded(UIImage)
+    case fetchFailed
+    case undecodable
+}
+
+/// A small in-memory + disk cache of decoded attachment thumbnails/posters, keyed by `MediaSource`.
 /// `AsyncImage` alone is not enough here: it has no disk cache of its own, so the same picture would
 /// be refetched on every scroll of the transcript. One cache instance is shared process-wide.
 public actor MediaImageCache {
     public static let shared = MediaImageCache()
 
-    private let memory = NSCache<NSString, UIImage>()
+    // `NSCache` is thread-safe on its own: marking these `nonisolated(unsafe)` lets `cachedImage(for:)`
+    // (and the key/path helpers it needs) peek synchronously from any thread, without an actor hop, so
+    // a view can show an already-cached picture at creation with no one-frame gap waiting for a `.task`.
+    private nonisolated(unsafe) let memory = NSCache<NSString, UIImage>()
     private let directory: URL
-    private var inFlight: [String: Task<UIImage?, Never>] = [:]
+    private var inFlight: [String: Task<MediaLoadOutcome, Never>] = [:]
+
+    /// The longest side a decoded picture is kept at: a thumbnail or a poster frame never needs more,
+    /// and a full-resolution upload decoded at its native size would otherwise bloat memory for no
+    /// visible benefit.
+    private static let maxDecodedPixelSize: CGFloat = 800
 
     init() {
         directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("thehideout-media-images", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        memory.countLimit = 200
+        // Capped by estimated decoded bytes, not by picture count: a handful of full-bleed photos
+        // should not starve the memory cache for the rest of the transcript's thumbnails.
+        memory.totalCostLimit = 64 * 1024 * 1024
     }
 
-    private func key(for source: MediaSource) -> String {
+    private nonisolated func key(for source: MediaSource) -> String {
         switch source {
         case .remote(let url): return url.absoluteString
         case .fakeAsset(let name): return "fakeasset:\(name)"
         }
     }
 
-    private func diskURL(_ key: String) -> URL {
+    private nonisolated func diskURL(_ key: String) -> URL {
         // A cache key, not a security boundary: percent-encoding keeps it one path component.
         let name = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? String(key.hashValue)
         return directory.appendingPathComponent(name)
     }
 
-    /// The image for `source`: memory, then disk, then a fetch — coalesced so concurrent requests for
-    /// the same picture (several image-grid tiles scrolling into view at once) share one fetch.
-    public func image(for source: MediaSource) async -> UIImage? {
+    /// A synchronous, thread-safe peek at the in-memory cache only: nil doesn't mean the picture will
+    /// fail to load, only that `outcome(for:)`/`image(for:)` have not been awaited yet.
+    public nonisolated func cachedImage(for source: MediaSource) -> UIImage? {
+        memory.object(forKey: key(for: source) as NSString)
+    }
+
+    /// The outcome for `source`: memory, then disk, then a fetch — coalesced so concurrent requests for
+    /// the same picture (several grid tiles scrolling into view at once) share one fetch. The fetch and
+    /// decode run detached from this actor's executor, so one slow picture never queues up the rest.
+    public func outcome(for source: MediaSource) async -> MediaLoadOutcome {
         let k = key(for: source)
-        if let cached = memory.object(forKey: k as NSString) { return cached }
+        if let cached = memory.object(forKey: k as NSString) { return .loaded(cached) }
         if let existing = inFlight[k] { return await existing.value }
-        let task = Task<UIImage?, Never> { [weak self] in
-            guard let self else { return nil }
-            if let data = try? Data(contentsOf: await self.diskURL(k)), let image = UIImage(data: data) {
-                await self.store(image, memoryKey: k)
-                return image
+        let diskPath = diskURL(k)
+        let task = Task<MediaLoadOutcome, Never>.detached(priority: .userInitiated) {
+            if let data = try? Data(contentsOf: diskPath) {
+                if let image = Self.decodeDownsampled(data) { return .loaded(image) }
+                return .undecodable
             }
-            guard let image = await self.fetch(source) else { return nil }
-            await self.store(image, memoryKey: k)
-            if let data = image.pngData() { try? data.write(to: await self.diskURL(k)) }
-            return image
+            guard let data = await Self.fetchData(source) else { return .fetchFailed }
+            guard let image = Self.decodeDownsampled(data) else { return .undecodable }
+            try? data.write(to: diskPath)
+            return .loaded(image)
         }
         inFlight[k] = task
         let result = await task.value
         inFlight[k] = nil
+        if case .loaded(let image) = result { memory.setObject(image, forKey: k as NSString, cost: Self.cost(of: image)) }
         return result
     }
 
-    private func store(_ image: UIImage, memoryKey: String) { memory.setObject(image, forKey: memoryKey as NSString) }
+    /// Convenience for callers that only need the picture, not why it is missing (the viewer).
+    public func image(for source: MediaSource) async -> UIImage? {
+        if case .loaded(let image) = await outcome(for: source) { return image }
+        return nil
+    }
 
-    private func fetch(_ source: MediaSource) async -> UIImage? {
+    private static func cost(of image: UIImage) -> Int {
+        guard let cg = image.cgImage else { return 0 }
+        return cg.bytesPerRow * cg.height
+    }
+
+    private static func fetchData(_ source: MediaSource) async -> Data? {
         switch source {
         case .fakeAsset(let name):
-            guard let url = FakeMedia.url(forAssetNamed: name), let data = try? Data(contentsOf: url) else { return nil }
-            return UIImage(data: data)
+            guard let url = FakeMedia.url(forAssetNamed: name) else { return nil }
+            return try? Data(contentsOf: url)
         case .remote(let url):
             guard let (data, response) = try? await URLSession.shared.data(from: url),
                   let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-            return UIImage(data: data)
+            return data
         }
+    }
+
+    /// Decodes `data` downsampled to at most `maxDecodedPixelSize` on the long side, with EXIF
+    /// orientation applied (`kCGImageSourceCreateThumbnailWithTransform`) — the raw bytes stay on disk
+    /// as fetched (no re-encoding, which would otherwise bloat JPEGs and could drop metadata).
+    private static func decodeDownsampled(_ data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDecodedPixelSize,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }

@@ -11,8 +11,8 @@ struct ZoomableImage: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
+    func makeUIView(context: Context) -> ZoomingScrollView {
+        let scrollView = ZoomingScrollView()
         scrollView.delegate = context.coordinator
         scrollView.minimumZoomScale = 1
         scrollView.maximumZoomScale = 5
@@ -33,9 +33,12 @@ struct ZoomableImage: UIViewRepresentable {
         return scrollView
     }
 
-    func updateUIView(_ scrollView: UIScrollView, context: Context) {
-        context.coordinator.imageView?.image = image
-        context.coordinator.layout(scrollView)
+    func updateUIView(_ scrollView: ZoomingScrollView, context: Context) {
+        // Only the image changes here; layout (sizing/centering the image view) is `ZoomingScrollView`'s
+        // own `layoutSubviews`, which skips doing that while zoomed so it never fights an active pan.
+        if context.coordinator.imageView?.image !== image {
+            context.coordinator.imageView?.image = image
+        }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
@@ -43,12 +46,6 @@ struct ZoomableImage: UIViewRepresentable {
         weak var imageView: UIImageView?
 
         init(_ parent: ZoomableImage) { self.parent = parent }
-
-        func layout(_ scrollView: UIScrollView) {
-            guard let imageView, scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
-            imageView.frame = scrollView.bounds
-            scrollView.contentSize = scrollView.bounds.size
-        }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
 
@@ -76,5 +73,17 @@ struct ZoomableImage: UIViewRepresentable {
                 scrollView.zoom(to: target, animated: true)
             }
         }
+    }
+}
+
+/// Sizes and positions its image view itself, in `layoutSubviews` (so rotation/size changes relay out
+/// automatically), but only at zoom scale 1: resetting `imageView.frame`/`contentSize` while zoomed in
+/// (mid-pan, no gesture in progress) is undefined and would fight the pinch/pan the person is doing.
+final class ZoomingScrollView: UIScrollView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard zoomScale == 1, bounds.width > 0, bounds.height > 0, let imageView = subviews.first as? UIImageView else { return }
+        imageView.frame = bounds
+        contentSize = bounds.size
     }
 }
