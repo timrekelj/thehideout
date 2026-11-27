@@ -1,0 +1,46 @@
+# Attachment rendering against the bundled FakeBackend (#design, phase 3b-1): opens a channel whose
+# messages carry every attachment kind, plays an audio attachment inline, scrolls up to the image
+# grids, opens the full-screen viewer on a picture, swipes between pictures, then dismisses. Run with:
+#   maestro --device <udid> test mobile/ios/maestro/attachments.yaml
+appId: si.zabit.thehideout
+---
+- launchApp:
+    arguments:
+      --fake: true
+- assertVisible: "Servers"
+- tapOn: "The Hideout"
+- tapOn: "design"
+- assertVisible: "voice-note.m4a"
+- takeScreenshot: attachments/01-design-channel-bottom
+- tapOn: "Play"
+- waitForAnimationToEnd:
+    timeout: 800
+- takeScreenshot: attachments/02-audio-playing
+- scrollUntilVisible:
+    element:
+      text: "View saturday-1.jpg"
+    direction: UP
+    visibilityPercentage: 60
+    centerElement: true
+- waitForAnimationToEnd:
+    timeout: 1500
+- takeScreenshot: attachments/03-image-grids
+# A raw point, not `tapOn: "View saturday-1.jpg"`: Maestro's accessibility-frame lookup for a tile
+# inside the custom `imageGrid` SwiftUI `Layout` resolves to the wrong tile (a Maestro/SwiftUI
+# accessibility quirk, not an app bug — confirmed by tapping this exact point and opening
+# "saturday-1.jpg · 1 of 3"); `scrollUntilVisible` with `centerElement: true` above puts the first
+# (tall) tile at this same screen position every run.
+- tapOn:
+    point: "35%,76%"
+- waitForAnimationToEnd:
+    timeout: 1000
+- takeScreenshot: attachments/04-viewer-opened
+- swipe:
+    start: 90%, 50%
+    end: 10%, 50%
+- waitForAnimationToEnd:
+    timeout: 800
+- takeScreenshot: attachments/05-viewer-swiped
+- tapOn: "Close"
+- assertVisible: "Photos from Saturday"
+- takeScreenshot: attachments/06-viewer-dismissed
