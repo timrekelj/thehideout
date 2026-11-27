@@ -18,6 +18,7 @@
 		51FA3C7D4FB1CA3C9E470F99 /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = 44D13906C52E2B390B7124D7 /* SnapshotTesting */; };
 		6312D877F93B6FB045A2E670 /* ChatUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C86AE2209B075C16A223371 /* ChatUITests.swift */; };
 		66285212F86722E49EC3B233 /* HideoutUI in Frameworks */ = {isa = PBXBuildFile; productRef = 532847A11181D26586ED77E7 /* HideoutUI */; };
+		765E6A1A6EACA14769FAAF53 /* MediaLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FD346A13CADCE4DFF337D96 /* MediaLoaderTests.swift */; };
 		B476EA9AC198452C71CD4A78 /* SnapshotSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4BCB3F16214F227AB038248 /* SnapshotSupport.swift */; };
 		C653AEE65EEB7BFFCAED6974 /* SnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */; };
 		CEC7357F8BFEEFBB8663046A /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 880EE04C0741505D4069BFA2 /* JetBrainsMono-Regular.ttf */; };
@@ -53,6 +54,7 @@
 		164320C763F43DE669FAF1CE /* HideoutDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HideoutDesign; path = Packages/HideoutDesign; sourceTree = SOURCE_ROOT; };
 		34BBD606F1C5251773D08C70 /* LookTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LookTests.swift; sourceTree = "<group>"; };
 		374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotTests.swift; sourceTree = "<group>"; };
+		3FD346A13CADCE4DFF337D96 /* MediaLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaLoaderTests.swift; sourceTree = "<group>"; };
 		57ABA67EA95E11823ADF8B59 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		6C86AE2209B075C16A223371 /* ChatUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatUITests.swift; sourceTree = "<group>"; };
 		880EE04C0741505D4069BFA2 /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Regular.ttf"; path = "../tokens/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
@@ -153,6 +155,7 @@
 				124B1511C0B56D9806F04B0E /* AttachmentSnapshotTests.swift */,
 				048E997DF1C69854AC07A834 /* AuthSnapshotTests.swift */,
 				34BBD606F1C5251773D08C70 /* LookTests.swift */,
+				3FD346A13CADCE4DFF337D96 /* MediaLoaderTests.swift */,
 				C4BCB3F16214F227AB038248 /* SnapshotSupport.swift */,
 				374CC41DCBA4ECDC5B62F4DF /* SnapshotTests.swift */,
 				FFB98417D389F03D98BC83CD /* SystemPasskeysTests.swift */,
@@ -319,6 +322,7 @@
 				344320E5B33E5883DD5D006A /* AttachmentSnapshotTests.swift in Sources */,
 				F46AA8C2EAA3A376985E1EB3 /* AuthSnapshotTests.swift in Sources */,
 				FD4227B170BC65459167AB9E /* LookTests.swift in Sources */,
+				765E6A1A6EACA14769FAAF53 /* MediaLoaderTests.swift in Sources */,
 				B476EA9AC198452C71CD4A78 /* SnapshotSupport.swift in Sources */,
 				C653AEE65EEB7BFFCAED6974 /* SnapshotTests.swift in Sources */,
 				434E8F9D735AC46A7B6D059B /* SystemPasskeysTests.swift in Sources */,

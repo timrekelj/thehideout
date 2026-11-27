@@ -77,6 +77,7 @@ extension View {
             .environment(server)
             .environment(themeStore)
             .themed(themeStore)
+            .environment(\.allowsFakeAssets, true)
             .environment(\.currentDate, snapshotNow)
             .environment(\.timeZone, TimeZone(identifier: "UTC")!)
             .environment(\.locale, Locale(identifier: "en_US"))
