@@ -1,0 +1,47 @@
+appId: si.zabit.thehideout
+---
+# Server settings moderation (phase 4b-1): create a role, assign it, ban with a cleanup window,
+# unban, transfer ownership and delete the server, against a real local dev server.
+#
+# Prerequisites (see mobile/android/README.md "E2E check"): the debug app installed, signed in on
+# a fresh account (bootstrap invite accepted) with the server URL already set, and a second,
+# invited account known to the tester to assign/kick/ban. This flow assumes the owner is already
+# signed in inside a server and has posted at least one message as the second member beforehand
+# (e.g. over curl, see mobile/android/README.md) so the ban's cleanup window has something to
+# delete.
+
+- launchApp:
+    clearState: false
+- tapOn: "Server menu"
+- tapOn: "Server settings"
+- tapOn: "Roles"
+- tapOn:
+    id: "role-new"
+- inputText: "Helper"
+- tapOn: "Create role"
+- tapOn: "Members"
+- tapOn:
+    id: "member-add-.*"
+    index: 0
+- tapOn: "Helper"
+- assertVisible: "Helper"
+- tapOn:
+    id: "member-ban-.*"
+    index: 0
+- inputText: "maestro live check"
+- tapOn: "Don't delete"
+- tapOn: "Last hour"
+- tapOn: "Ban"
+- tapOn: "Bans"
+- assertVisible: "Unban"
+- tapOn: "Unban"
+- assertVisible: "No one is banned."
+- tapOn: "Overview"
+- tapOn: "Transfer…"
+- tapOn: "Pick a member"
+- tapOn:
+    index: 0
+- tapOn:
+    id: "transfer-confirm-name"
+- inputText: "${SERVER_NAME}"
+- tapOn: "Transfer"
