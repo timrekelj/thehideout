@@ -78,6 +78,8 @@ fun PbMember.toModel() = Member(user.toModel(), roleIdsList.toList(), joinedAt.t
 
 fun PbEmoji.toModel() = Emoji(id, guildId, name, animated, image, creatorId, createdAt.toInstant())
 
+fun com.thehideout.v1.Ban.toModel() = Ban(user.toModel(), bannedBy, reason, createdAt.toInstant())
+
 fun PbDm.toModel() = DmChannel(id, participantsList.map { it.toModel() }, createdAt.toInstant())
 
 fun PbReactionEmoji.toModel(): ReactionEmoji = when (kindCase) {

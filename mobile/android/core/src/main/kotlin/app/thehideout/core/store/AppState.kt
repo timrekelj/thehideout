@@ -120,6 +120,8 @@ data class AppState(
     val emojis: Map<Long, List<Emoji>> = emptyMap(),
     /** Guilds whose emojis were asked for, so one question is ever in flight. */
     val emojisAsked: Set<Long> = emptySet(),
+    /** Bans per guild, once the Bans page has asked for them (BAN_MEMBERS). */
+    val bans: Map<Long, List<Ban>> = emptyMap(),
     /** Folded embeds (ATT-07), oldest first, capped like desktop's `collapsed_embeds`. */
     val collapsedEmbeds: List<app.thehideout.core.embed.EmbedRef> = emptyList(),
     /** The account's notification settings, once known (a change on another session arrives as an event). */
@@ -226,6 +228,85 @@ data class AppState(
             log.messages.filter { it.authorId != myId && mentions(it.content, name) }.map { MentionEntry(channel, it) }
         }.sortedByDescending { it.message.createdAt }
     }
+
+    // ---- server settings and moderation: who may do what (mirrors the server's rules so the
+    // controls can be greyed out; the server still checks every call) --------------------------
+
+    fun isOwner(guild: Long): Boolean = guild(guild)?.ownerId == myId
+
+    fun rolesOf(guild: Long): List<Role> = roles[guild].orEmpty()
+
+    fun role(guild: Long, id: Long): Role? = rolesOf(guild).firstOrNull { it.id == id }
+
+    fun roleVersion(guild: Long): Long = roleVersions[guild] ?: 0L
+
+    /** The position of the signed-in user's highest role in [guild] (`null` without roles). */
+    fun topPosition(guild: Long): Int? = topPosition(memberRoles[guild]?.get(myId).orEmpty(), rolesOf(guild))
+
+    /** Whether the user may manage a role at [position]: the owner always, anyone else only strictly below their highest role. */
+    fun outranks(guild: Long, position: Int): Boolean = isOwner(guild) || topPosition(guild)?.let { position < it } == true
+
+    fun canManageRoles(guild: Long): Boolean = Perm.has(perms(guild), Perm.MANAGE_ROLES)
+    fun canManageServer(guild: Long): Boolean = Perm.has(perms(guild), Perm.MANAGE_SERVER)
+    fun canManageEmojis(guild: Long): Boolean = Perm.has(perms(guild), Perm.MANAGE_EMOJIS)
+
+    /** Whether the user may kick or ban at all (so the Members page's moderation actions are theirs to see). */
+    fun canRemovePeople(guild: Long): Boolean = Perm.has(perms(guild), Perm.KICK_MEMBERS) || Perm.has(perms(guild), Perm.BAN_MEMBERS)
+
+    /** "Server settings" is offered to anyone who may manage the server, its roles or emojis, or remove people. */
+    fun canOpenServerSettings(guild: Long): Boolean = canManageServer(guild) || canManageRoles(guild) || canManageEmojis(guild) || canRemovePeople(guild)
+
+    /** Whether the user may edit, delete or hand out [role]. */
+    fun canEditRole(guild: Long, role: Role): Boolean = canManageRoles(guild) && outranks(guild, role.position)
+
+    /** Whether the user may grant or revoke every bit of [bits] (must hold them; the owner holds all). */
+    fun canGrant(guild: Long, bits: Long): Boolean = isOwner(guild) || Perm.has(perms(guild), bits)
+
+    /** The colour of a member's name: that of their highest-positioned role that has one, "" for none. */
+    fun nameColor(guild: Long, user: Long): String {
+        if (users[user]?.deleted == true) return ""
+        val mine = memberRoles[guild]?.get(user).orEmpty()
+        return rolesOf(guild).filter { it.id in mine && it.color.isNotEmpty() }.maxByOrNull { it.position }?.color ?: ""
+    }
+
+    /** How many of the guild's loaded members hold [role]. */
+    fun roleMembers(guild: Long, role: Long): Int = memberRoles[guild]?.values?.count { role in it } ?: 0
+
+    /** The roles [user] doesn't hold that the signed-in user may hand out. */
+    fun assignableRoles(guild: Long, user: Long): List<Role> {
+        val held = memberRoles[guild]?.get(user).orEmpty()
+        return rolesOf(guild).filter { it.id !in held && canEditRole(guild, it) }
+    }
+
+    /** Whether the signed-in user holds [bit] in [guild] and outranks [user] there (or is [user]): the server's moderation rule. */
+    fun canModerate(guild: Long, user: Long, bit: Long): Boolean {
+        val g = guild(guild) ?: return false
+        if (!Perm.has(perms(guild), bit)) return false
+        if (user == myId) return true
+        return outranksMember(g, myId, memberRoles[guild]?.get(myId).orEmpty(), user, memberRoles[guild]?.get(user).orEmpty(), rolesOf(guild))
+    }
+
+    /** Whether [user] may be removed by the signed-in user: KICK_MEMBERS and a higher top role; never yourself. */
+    fun canKick(guild: Long, user: Long): Boolean = user != myId && canModerate(guild, user, Perm.KICK_MEMBERS)
+
+    /** Whether [user] may be banned by the signed-in user: BAN_MEMBERS and the same hierarchy rule as [canKick]. */
+    fun canBan(guild: Long, user: Long): Boolean = user != myId && canModerate(guild, user, Perm.BAN_MEMBERS)
+
+    /** Whether the ban list is available to the signed-in user. */
+    fun canViewBans(guild: Long): Boolean = Perm.has(perms(guild), Perm.BAN_MEMBERS)
+
+    /** Whether leaving is offered: members may, the owner may not. */
+    fun canLeaveGuild(guild: Long): Boolean = guild(guild)?.let { it.ownerId != myId } == true
+
+    /** Whether deleting the guild or handing it over is offered: only the owner. */
+    fun canDeleteGuild(guild: Long): Boolean = isOwner(guild)
+
+    /** The bans of [guild], newest first, once loaded. */
+    fun bansOf(guild: Long): List<Ban> = bans[guild].orEmpty()
+
+    /** The members a server can be handed to (everyone but the signed-in user), by name. */
+    fun transferCandidates(guild: Long): List<User> =
+        members[guild].orEmpty().filter { it != myId }.mapNotNull { users[it] }.sortedBy { it.username.lowercase() }
 }
 
 /** One hit in [AppState.mentionFeed]. */

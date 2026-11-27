@@ -224,6 +224,16 @@ data class Emoji(
     val createdAt: Instant,
 )
 
+/** A ban of a user from a guild. */
+data class Ban(
+    val user: User,
+    /** The moderator who banned them; 0 if unknown. */
+    val bannedBy: Long,
+    /** "" if none given. */
+    val reason: String,
+    val createdAt: Instant,
+)
+
 enum class NotificationLevel { Unspecified, Inherit, All, Mentions, Nothing }
 
 /** A guild's or channel's own level (or `Inherit`), optionally silenced until [mutedUntil]. */

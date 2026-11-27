@@ -1,11 +1,15 @@
 package app.thehideout.ui.shell
 
 import app.thehideout.core.api.AppError
+import app.thehideout.core.model.Ban
 import app.thehideout.core.model.Channel
 import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.model.Emoji
 import app.thehideout.core.model.Guild
 import app.thehideout.core.model.Invite
+import app.thehideout.core.model.Member
 import app.thehideout.core.model.ReactionEmoji
+import app.thehideout.core.model.Role
 import app.thehideout.core.model.Section
 import app.thehideout.core.store.AppStore
 import app.thehideout.core.store.PickedFile
@@ -54,6 +58,26 @@ data class ShellActions(
     val listInvites: suspend (Long) -> Result<List<Invite>> = { unavailable },
     val revokeInvite: suspend (Long) -> Result<Invite> = { unavailable },
     val resendInvite: suspend (Long) -> Result<Invite> = { unavailable },
+
+    // ---- management: server settings, roles, moderation, emojis (phase 4b-1) ----
+    val renameGuild: suspend (Long, String) -> Result<Guild> = { _, _ -> unavailable },
+    val uploadGuildIcon: suspend (Long, ByteArray, String) -> Result<Guild> = { _, _, _ -> unavailable },
+    val removeGuildIcon: suspend (Long) -> Result<Guild> = { unavailable },
+    val leaveGuild: suspend (Long) -> Result<Unit> = { unavailable },
+    val deleteGuild: suspend (Long, String) -> Result<Unit> = { _, _ -> unavailable },
+    val transferOwnership: suspend (Long, Long, String) -> Result<Guild> = { _, _, _ -> unavailable },
+    val kickMember: suspend (Long, Long) -> Result<Unit> = { _, _ -> unavailable },
+    val banMember: suspend (Long, Long, String, Int?) -> Result<Unit> = { _, _, _, _ -> unavailable },
+    val unbanMember: suspend (Long, Long) -> Result<Unit> = { _, _ -> unavailable },
+    val loadBans: suspend (Long) -> Result<List<Ban>> = { unavailable },
+    val createRole: suspend (Long, String, String, Long) -> Result<Role> = { _, _, _, _ -> unavailable },
+    val updateRole: suspend (Long, Long, String?, String?, Long?) -> Result<Role> = { _, _, _, _, _ -> unavailable },
+    val deleteRole: suspend (Long, Long) -> Result<Unit> = { _, _ -> unavailable },
+    val moveRole: suspend (Long, Long, Int) -> Result<Unit> = { _, _, _ -> unavailable },
+    val setMemberRole: suspend (Long, Long, Long, Boolean) -> Result<Member> = { _, _, _, _ -> unavailable },
+    val createEmoji: suspend (Long, String, ByteArray, String) -> Result<Emoji> = { _, _, _, _ -> unavailable },
+    val renameEmoji: suspend (Long, Long, String) -> Result<Emoji> = { _, _, _ -> unavailable },
+    val deleteEmoji: suspend (Long, Long) -> Result<Unit> = { _, _ -> unavailable },
 ) {
     companion object {
         fun of(store: AppStore, useDemo: (() -> Unit)? = null) = ShellActions(
@@ -88,6 +112,24 @@ data class ShellActions(
             listInvites = store::listInvites,
             revokeInvite = store::revokeInvite,
             resendInvite = store::resendInvite,
+            renameGuild = store::renameGuild,
+            uploadGuildIcon = store::uploadGuildIcon,
+            removeGuildIcon = store::removeGuildIcon,
+            leaveGuild = store::leaveGuild,
+            deleteGuild = store::deleteGuild,
+            transferOwnership = store::transferOwnership,
+            kickMember = store::kickMember,
+            banMember = store::banMember,
+            unbanMember = store::unbanMember,
+            loadBans = store::loadBans,
+            createRole = store::createRole,
+            updateRole = store::updateRole,
+            deleteRole = store::deleteRole,
+            moveRole = store::moveRole,
+            setMemberRole = store::setMemberRole,
+            createEmoji = store::createEmoji,
+            renameEmoji = store::renameEmoji,
+            deleteEmoji = store::deleteEmoji,
         )
     }
 }

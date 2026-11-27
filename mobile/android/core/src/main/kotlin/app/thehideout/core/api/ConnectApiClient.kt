@@ -43,6 +43,7 @@ import com.thehideout.v1.ListMyGuildsRequest
 import com.thehideout.v1.ListRolesRequest
 import com.thehideout.v1.LoginRequest
 import com.thehideout.v1.LookupInviteRequest
+import com.thehideout.v1.MediaServiceClient
 import com.thehideout.v1.MessageServiceClient
 import com.thehideout.v1.RemoveReactionRequest
 import com.thehideout.v1.RequestEmailCodeRequest
@@ -52,6 +53,7 @@ import com.thehideout.v1.RoleServiceClient
 import com.thehideout.v1.SendMessageRequest
 import com.thehideout.v1.SubscribeRequest
 import com.thehideout.v1.VerifyEmailCodeRequest
+import com.google.protobuf.ByteString
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -137,6 +139,7 @@ class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, O
     private val messages = MessageServiceClient(client)
     private val roles = RoleServiceClient(client)
     private val emojiService = EmojiServiceClient(client)
+    private val media = MediaServiceClient(client)
     private val gateway = GatewayServiceClient(client)
     private val invites = InviteServiceClient(client)
 
@@ -337,6 +340,97 @@ class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, O
 
     override suspend fun resendInvite(inviteId: Long): Invite {
         return call { invites.resendInvite(com.thehideout.v1.ResendInviteRequest.newBuilder().setInviteId(inviteId).build()) }.invite.toModel()
+    }
+
+    // ---- management: server settings, roles, moderation, emojis (phase 4b-1) -------------------
+
+    override suspend fun updateGuildName(guild: Long, name: String): Guild {
+        val r = call { guilds.updateGuild(com.thehideout.v1.UpdateGuildRequest.newBuilder().setGuildId(guild).setName(name).build()) }
+        return r.guild.toModel()
+    }
+
+    override suspend fun uploadGuildIcon(guild: Long, data: ByteArray, contentType: String): Guild {
+        val req = com.thehideout.v1.UploadGuildIconRequest.newBuilder().setGuildId(guild).setData(ByteString.copyFrom(data)).setContentType(contentType).build()
+        return call { media.uploadGuildIcon(req) }.guild.toModel()
+    }
+
+    override suspend fun removeGuildIcon(guild: Long): Guild {
+        return call { media.removeGuildIcon(com.thehideout.v1.RemoveGuildIconRequest.newBuilder().setGuildId(guild).build()) }.guild.toModel()
+    }
+
+    override suspend fun deleteGuild(guild: Long, confirmName: String) {
+        call { guilds.deleteGuild(com.thehideout.v1.DeleteGuildRequest.newBuilder().setGuildId(guild).setConfirmName(confirmName).build()) }
+    }
+
+    override suspend fun transferOwnership(guild: Long, user: Long, confirmName: String): Guild {
+        val req = com.thehideout.v1.TransferOwnershipRequest.newBuilder().setGuildId(guild).setUserId(user).setConfirmName(confirmName).build()
+        return call { guilds.transferOwnership(req) }.guild.toModel()
+    }
+
+    override suspend fun leaveGuild(guild: Long) {
+        call { guilds.leaveGuild(com.thehideout.v1.LeaveGuildRequest.newBuilder().setGuildId(guild).build()) }
+    }
+
+    override suspend fun kickMember(guild: Long, user: Long) {
+        call { guilds.kickMember(com.thehideout.v1.KickMemberRequest.newBuilder().setGuildId(guild).setUserId(user).build()) }
+    }
+
+    override suspend fun banMember(guild: Long, user: Long, reason: String, deleteMessageSeconds: Int?) {
+        val b = com.thehideout.v1.BanMemberRequest.newBuilder().setGuildId(guild).setUserId(user).setReason(reason)
+        deleteMessageSeconds?.let { b.deleteMessageSeconds = it }
+        call { guilds.banMember(b.build()) }
+    }
+
+    override suspend fun unbanMember(guild: Long, user: Long) {
+        call { guilds.unbanMember(com.thehideout.v1.UnbanMemberRequest.newBuilder().setGuildId(guild).setUserId(user).build()) }
+    }
+
+    override suspend fun listBans(guild: Long): List<Ban> {
+        val r = call { guilds.listBans(com.thehideout.v1.ListBansRequest.newBuilder().setGuildId(guild).build()) }
+        return r.bansList.map { it.toModel() }
+    }
+
+    override suspend fun createRole(guild: Long, name: String, color: String, permissions: Long): RoleResult {
+        val req = com.thehideout.v1.CreateRoleRequest.newBuilder().setGuildId(guild).setName(name).setColor(color).setPermissions(permissions).build()
+        val r = call { roles.createRole(req) }
+        return RoleResult(r.role.toModel(), r.version)
+    }
+
+    override suspend fun updateRole(guild: Long, roleId: Long, name: String?, color: String?, permissions: Long?): Role {
+        val b = com.thehideout.v1.UpdateRoleRequest.newBuilder().setGuildId(guild).setRoleId(roleId)
+        name?.let { b.name = it }
+        color?.let { b.color = it }
+        permissions?.let { b.permissions = it }
+        return call { roles.updateRole(b.build()) }.role.toModel()
+    }
+
+    override suspend fun deleteRole(guild: Long, roleId: Long): Long {
+        return call { roles.deleteRole(com.thehideout.v1.DeleteRoleRequest.newBuilder().setGuildId(guild).setRoleId(roleId).build()) }.version
+    }
+
+    override suspend fun reorderRoles(guild: Long, expectedVersion: Long, roleIds: List<Long>): GuildRoles {
+        val req = com.thehideout.v1.ReorderRolesRequest.newBuilder().setGuildId(guild).setExpectedVersion(expectedVersion).addAllRoleIds(roleIds).build()
+        val r = call { roles.reorderRoles(req) }
+        return GuildRoles(r.rolesList.map { it.toModel() }, r.version)
+    }
+
+    override suspend fun setMemberRoles(guild: Long, userId: Long, roleIds: List<Long>): Member {
+        val req = com.thehideout.v1.SetMemberRolesRequest.newBuilder().setGuildId(guild).setUserId(userId).addAllRoleIds(roleIds).build()
+        return call { roles.setMemberRoles(req) }.member.toModel()
+    }
+
+    override suspend fun createEmoji(guild: Long, name: String, data: ByteArray, contentType: String): Emoji {
+        val req = com.thehideout.v1.CreateEmojiRequest.newBuilder().setGuildId(guild).setName(name).setData(ByteString.copyFrom(data)).setContentType(contentType).build()
+        return call { emojiService.createEmoji(req) }.emoji.toModel()
+    }
+
+    override suspend fun renameEmoji(guild: Long, emojiId: Long, name: String): Emoji {
+        val req = com.thehideout.v1.RenameEmojiRequest.newBuilder().setGuildId(guild).setEmojiId(emojiId).setName(name).build()
+        return call { emojiService.renameEmoji(req) }.emoji.toModel()
+    }
+
+    override suspend fun deleteEmoji(guild: Long, emojiId: Long) {
+        call { emojiService.deleteEmoji(com.thehideout.v1.DeleteEmojiRequest.newBuilder().setGuildId(guild).setEmojiId(emojiId).build()) }
     }
 
     // ---- authentication and onboarding ---------------------------------------------------------

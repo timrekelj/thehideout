@@ -9,11 +9,16 @@ import app.thehideout.core.attachment.MAX_CONCURRENT_UPLOADS
 import app.thehideout.core.cache.SessionCache
 import app.thehideout.core.gateway.Backoff
 import app.thehideout.core.gateway.GatewayStream
+import app.thehideout.core.model.Ban
 import app.thehideout.core.model.Channel
 import app.thehideout.core.model.ChannelKind
+import app.thehideout.core.model.Emoji
 import app.thehideout.core.model.Guild
 import app.thehideout.core.model.Invite
+import app.thehideout.core.model.Member
 import app.thehideout.core.model.ReactionEmoji
+import app.thehideout.core.model.RemovalReason
+import app.thehideout.core.model.Role
 import app.thehideout.core.model.Section
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -160,6 +165,144 @@ class AppStore(
     suspend fun listInvites(guild: Long): Result<List<Invite>> = guard(runCatching { api.listInvites(guild) })
     suspend fun revokeInvite(inviteId: Long): Result<Invite> = guard(runCatching { api.revokeInvite(inviteId) })
     suspend fun resendInvite(inviteId: Long): Result<Invite> = guard(runCatching { api.resendInvite(inviteId) })
+
+    // ---- management: server settings, roles, moderation, emojis (phase 4b-1) -------------------
+
+    suspend fun renameGuild(guild: Long, name: String): Result<Guild> =
+        guard(runCatching { api.updateGuildName(guild, name) }).also { r -> r.onSuccess { dispatch(Action.GuildPatched(it)) } }
+
+    suspend fun uploadGuildIcon(guild: Long, data: ByteArray, contentType: String): Result<Guild> =
+        guard(runCatching { api.uploadGuildIcon(guild, data, contentType) }).also { r -> r.onSuccess { dispatch(Action.GuildPatched(it)) } }
+
+    suspend fun removeGuildIcon(guild: Long): Result<Guild> =
+        guard(runCatching { api.removeGuildIcon(guild) }).also { r -> r.onSuccess { dispatch(Action.GuildPatched(it)) } }
+
+    /** Leaves [guild] at once (optimistic, like desktop's `exiting`): rolled back on refusal. The
+     * caller's own dialog shows the error inline; this only undoes the optimistic mark. */
+    suspend fun leaveGuild(guild: Long): Result<Unit> {
+        dispatch(Action.Exiting(guild))
+        return guard(runCatching { api.leaveGuild(guild) }).also { r ->
+            r.onSuccess { dispatch(Action.GuildDropped(guild)) }
+            r.onFailure { dispatch(Action.ExitingFailed(guild)) }
+        }
+    }
+
+    /** Deletes [guild] for good; [confirmName] must be its name. The caller's own dialog shows the
+     * error inline; this only undoes the optimistic mark. */
+    suspend fun deleteGuild(guild: Long, confirmName: String): Result<Unit> {
+        dispatch(Action.Exiting(guild))
+        return guard(runCatching { api.deleteGuild(guild, confirmName) }).also { r ->
+            r.onSuccess { dispatch(Action.GuildDropped(guild)) }
+            r.onFailure { dispatch(Action.ExitingFailed(guild)) }
+        }
+    }
+
+    /** Hands [guild] to [user] (a member other than the caller); [confirmName] must be its name. */
+    suspend fun transferOwnership(guild: Long, user: Long, confirmName: String): Result<Guild> =
+        guard(runCatching { api.transferOwnership(guild, user, confirmName) }).also { r -> r.onSuccess { dispatch(Action.GuildPatched(it)) } }
+
+    /** Kicks [user]; the caller's own confirm dialog shows a failure inline. */
+    suspend fun kickMember(guild: Long, user: Long): Result<Unit> =
+        guard(runCatching { api.kickMember(guild, user) }).also { r -> r.onSuccess { dispatch(Action.MemberGone(guild, user, RemovalReason.Kicked)) } }
+
+    /** Bans [user]; [deleteSeconds] also deletes their recent messages (at most 7 days). The
+     * caller's own dialog shows a failure inline. */
+    suspend fun banMember(guild: Long, user: Long, reason: String, deleteSeconds: Int?): Result<Unit> =
+        guard(runCatching { api.banMember(guild, user, reason, deleteSeconds) }).also { r -> r.onSuccess { dispatch(Action.MemberGone(guild, user, RemovalReason.Banned)) } }
+
+    suspend fun unbanMember(guild: Long, user: Long): Result<Unit> =
+        guard(runCatching { api.unbanMember(guild, user) }).also { r ->
+            r.onSuccess { dispatch(Action.BanLifted(guild, user)) }
+            r.onFailure { dispatch(Action.Notice(NoticeKind.Danger, "Couldn't unban them. ${moderationErrorText(it)}")) }
+        }
+
+    suspend fun loadBans(guild: Long): Result<List<Ban>> =
+        guard(runCatching { api.listBans(guild) }).also { r -> dispatch(Action.BansLoaded(guild, r)) }
+
+    /** Creates a role at the bottom of the hierarchy; the caller's own editor sheet shows a failure inline. */
+    suspend fun createRole(guild: Long, name: String, color: String, permissions: Long): Result<Role> =
+        guard(runCatching { api.createRole(guild, name, color, permissions) }).also { r ->
+            r.onSuccess { dispatch(Action.RoleCreated(guild, it.role, it.version)) }
+        }.map { it.role }
+
+    /** Updates a role; the caller's own editor sheet shows a failure inline. */
+    suspend fun updateRole(guild: Long, roleId: Long, name: String?, color: String?, permissions: Long?): Result<Role> =
+        guard(runCatching { api.updateRole(guild, roleId, name, color, permissions) }).also { r ->
+            r.onSuccess {
+                // Patches only the fields this call actually changed onto whatever's current, instead of
+                // overwriting the whole row with this reply: a newer gateway update to the same role that
+                // landed while this request was in flight (e.g. someone else edited it too) stays intact.
+                dispatch(
+                    Action.RolesReplaced(
+                        guild,
+                        state.value.rolesOf(guild).map { current ->
+                            if (current.id != roleId) current
+                            else current.copy(name = name ?: current.name, color = color ?: current.color, permissions = permissions ?: current.permissions)
+                        },
+                        state.value.roleVersion(guild),
+                    ),
+                )
+            }
+        }
+
+    /** Deletes a role; the caller's own confirm dialog shows a failure inline. */
+    suspend fun deleteRole(guild: Long, roleId: Long): Result<Unit> =
+        guard(runCatching { api.deleteRole(guild, roleId) }).also { r ->
+            r.onSuccess { version -> dispatch(Action.RoleDeleted(guild, roleId, version)) }
+        }.map { }
+
+    /** Moves a role one step up ([delta] -1) or down (+1) the hierarchy: applied at once, rolled back on refusal, with a notice (there is no dialog here to show it inline). */
+    suspend fun moveRole(guild: Long, roleId: Long, delta: Int): Result<Unit> {
+        val before = state.value.rolesOf(guild)
+        val beforeVersion = state.value.roleVersion(guild)
+        val from = before.indexOfFirst { it.id == roleId }
+        val to = from + delta
+        if (from < 0 || to < 0 || to >= before.size) return Result.success(Unit)
+        val reordered = before.toMutableList().apply { add(to, removeAt(from)) }
+        val n = before.size
+        val renumbered = reordered.mapIndexed { i, r -> r.copy(position = n - 1 - i) }
+        dispatch(Action.RolesReplaced(guild, renumbered, beforeVersion))
+        return guard(runCatching { api.reorderRoles(guild, beforeVersion, renumbered.map { it.id }) }).also { r ->
+            r.onSuccess { dispatch(Action.RolesReplaced(guild, it.roles, it.version)) }
+            r.onFailure {
+                dispatch(Action.RolesReplaced(guild, before, beforeVersion))
+                dispatch(Action.Notice(NoticeKind.Danger, "Couldn't move the role. ${moderationErrorText(it)}"))
+            }
+        }.map { }
+    }
+
+    suspend fun setMemberRoles(guild: Long, userId: Long, roleIds: List<Long>): Result<Member> =
+        guard(runCatching { api.setMemberRoles(guild, userId, roleIds) }).also { r ->
+            r.onSuccess { dispatch(Action.MemberRolesPatched(guild, it)) }
+            r.onFailure { dispatch(Action.Notice(NoticeKind.Danger, "Couldn't change their roles. ${moderationErrorText(it)}")) }
+        }
+
+    /** Gives or takes a single role from [userId] (the Members page's "+ role" / chip ✕). */
+    suspend fun setMemberRole(guild: Long, userId: Long, roleId: Long, grant: Boolean): Result<Member> {
+        val held = state.value.memberRoles[guild]?.get(userId).orEmpty()
+        val next = if (grant) held + roleId else held - roleId
+        return setMemberRoles(guild, userId, next)
+    }
+
+    /** Creates an emoji; the caller's own naming dialog shows a failure inline. */
+    suspend fun createEmoji(guild: Long, name: String, data: ByteArray, contentType: String): Result<Emoji> =
+        guard(runCatching { api.createEmoji(guild, name, data, contentType) }).also { r -> r.onSuccess { dispatch(Action.EmojiUpserted(guild, it)) } }
+
+    /** Renames an emoji; the caller's own naming dialog shows a failure inline. */
+    suspend fun renameEmoji(guild: Long, emojiId: Long, name: String): Result<Emoji> =
+        guard(runCatching { api.renameEmoji(guild, emojiId, name) }).also { r -> r.onSuccess { dispatch(Action.EmojiUpserted(guild, it)) } }
+
+    /** Deletes an emoji; the caller's own confirm dialog shows a failure inline. */
+    suspend fun deleteEmoji(guild: Long, emojiId: Long): Result<Unit> =
+        guard(runCatching { api.deleteEmoji(guild, emojiId) }).also { r -> r.onSuccess { dispatch(Action.EmojiRemoved(guild, emojiId)) } }.map { }
+
+    /** What a refused moderation call says to the user (desktop's `moderation_error_text`). */
+    private fun moderationErrorText(e: Throwable): String = when (e) {
+        is AppError.RateLimited -> "You're doing that too fast. Wait a moment and try again."
+        is AppError.NotFound -> "That no longer exists."
+        is AppError.Precondition -> if (e.detail.contains("owner cannot leave")) "The owner can't leave. Transfer ownership or delete the server first." else Reducer.sentence(e.message.orEmpty())
+        else -> Reducer.sentence(e.message.orEmpty())
+    }
 
     fun signOut() {
         stopGateway()
