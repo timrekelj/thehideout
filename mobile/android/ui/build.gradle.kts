@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.media3.ui.compose)
     implementation(libs.media3.common)
+    implementation(libs.zxing.core)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit4)

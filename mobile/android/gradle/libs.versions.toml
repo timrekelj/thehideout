@@ -23,6 +23,7 @@ browser = "1.9.0"
 coil = "3.6.3"
 media3 = "1.11.1"
 exifinterface = "1.4.1"
+zxingCore = "3.5.3"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -78,6 +79,7 @@ media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-ui-compose = { module = "androidx.media3:media3-ui-compose", version.ref = "media3" }
 media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
 androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxingCore" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

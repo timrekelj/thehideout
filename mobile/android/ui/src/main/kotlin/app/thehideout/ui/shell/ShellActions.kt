@@ -1,6 +1,8 @@
 package app.thehideout.ui.shell
 
 import app.thehideout.core.api.AppError
+import app.thehideout.core.auth.PasskeyCeremony
+import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.model.Ban
 import app.thehideout.core.model.Channel
 import app.thehideout.core.model.ChannelKind
@@ -8,9 +10,17 @@ import app.thehideout.core.model.Emoji
 import app.thehideout.core.model.Guild
 import app.thehideout.core.model.Invite
 import app.thehideout.core.model.Member
+import app.thehideout.core.model.NotificationLevel
+import app.thehideout.core.model.NotificationOverride
+import app.thehideout.core.model.NotificationSettings
 import app.thehideout.core.model.ReactionEmoji
 import app.thehideout.core.model.Role
 import app.thehideout.core.model.Section
+import app.thehideout.core.model.User
+import app.thehideout.core.security.DeviceSession
+import app.thehideout.core.security.Passkey
+import app.thehideout.core.security.SecurityInfo
+import app.thehideout.core.security.TotpSetup
 import app.thehideout.core.store.AppStore
 import app.thehideout.core.store.PickedFile
 
@@ -78,6 +88,34 @@ data class ShellActions(
     val createEmoji: suspend (Long, String, ByteArray, String) -> Result<Emoji> = { _, _, _, _ -> unavailable },
     val renameEmoji: suspend (Long, Long, String) -> Result<Emoji> = { _, _, _ -> unavailable },
     val deleteEmoji: suspend (Long, Long) -> Result<Unit> = { _, _ -> unavailable },
+
+    // ---- account security: email, password, two-factor, passkeys, devices (phase 5) ----
+    val getSecurity: suspend () -> Result<SecurityInfo> = { unavailable },
+    val changePassword: suspend (String, String) -> Result<Unit> = { _, _ -> unavailable },
+    val changeEmail: suspend (String, String) -> Result<Unit> = { _, _ -> unavailable },
+    val confirmEmailChange: suspend (String) -> Result<User> = { unavailable },
+    val beginTotpSetup: suspend () -> Result<TotpSetup> = { unavailable },
+    val confirmTotp: suspend (String) -> Result<List<String>> = { unavailable },
+    val disableTotp: suspend (String) -> Result<Unit> = { unavailable },
+    val regenerateRecoveryCodes: suspend (String) -> Result<List<String>> = { unavailable },
+    val listPasskeys: suspend () -> Result<List<Passkey>> = { unavailable },
+    val renamePasskey: suspend (Long, String) -> Result<Passkey> = { _, _ -> unavailable },
+    val deletePasskey: suspend (Long) -> Result<Unit> = { unavailable },
+    val beginPasskeyRegistration: suspend (String) -> Result<PasskeyCeremony> = { unavailable },
+    val finishPasskeyRegistration: suspend (String, String) -> Result<PasskeyRegistered> = { _, _ -> unavailable },
+    val listSessions: suspend () -> Result<List<DeviceSession>> = { unavailable },
+    val revokeSession: suspend (Long) -> Result<Unit> = { unavailable },
+    val revokeOtherSessions: suspend () -> Result<Int> = { unavailable },
+
+    // ---- account: export, deletion (phase 5) ----
+    val requestAccountDeletionCode: suspend () -> Result<Unit> = { unavailable },
+    val deleteAccount: suspend (String?, String?, String?) -> Result<Unit> = { _, _, _ -> unavailable },
+    val exportData: suspend () -> Result<String> = { unavailable },
+
+    // ---- notification settings (MOB-02) ----
+    val loadNotificationSettings: suspend () -> Result<NotificationSettings> = { unavailable },
+    val updateNotificationSettings: suspend (Boolean?, NotificationLevel?, Boolean?, List<NotificationOverride>, List<NotificationOverride>) -> Result<NotificationSettings> =
+        { _, _, _, _, _ -> unavailable },
 ) {
     companion object {
         fun of(store: AppStore, useDemo: (() -> Unit)? = null) = ShellActions(
@@ -130,6 +168,27 @@ data class ShellActions(
             createEmoji = store::createEmoji,
             renameEmoji = store::renameEmoji,
             deleteEmoji = store::deleteEmoji,
+            getSecurity = store::getSecurity,
+            changePassword = store::changePassword,
+            changeEmail = store::changeEmail,
+            confirmEmailChange = store::confirmEmailChange,
+            beginTotpSetup = store::beginTotpSetup,
+            confirmTotp = store::confirmTotp,
+            disableTotp = store::disableTotp,
+            regenerateRecoveryCodes = store::regenerateRecoveryCodes,
+            listPasskeys = store::listPasskeys,
+            renamePasskey = store::renamePasskey,
+            deletePasskey = store::deletePasskey,
+            beginPasskeyRegistration = store::beginPasskeyRegistration,
+            finishPasskeyRegistration = store::finishPasskeyRegistration,
+            listSessions = store::listSessions,
+            revokeSession = store::revokeSession,
+            revokeOtherSessions = store::revokeOtherSessions,
+            requestAccountDeletionCode = store::requestAccountDeletionCode,
+            deleteAccount = store::deleteAccount,
+            exportData = store::exportData,
+            loadNotificationSettings = store::loadNotificationSettings,
+            updateNotificationSettings = store::updateNotificationSettings,
         )
     }
 }
