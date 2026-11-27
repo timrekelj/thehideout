@@ -33,6 +33,7 @@ data class GuildMembers(val users: List<User>, val members: List<Member>)
 data class GuildRoles(val roles: List<Role>, val version: Long)
 data class GuildChannels(val channels: List<Channel>, val layout: GuildLayout)
 data class SectionResult(val section: Section, val layout: GuildLayout)
+data class RoleResult(val role: Role, val version: Long)
 
 /**
  * The server, as the store sees it. [ConnectApiClient] is the real thing; `FakeBackend` is the
@@ -91,6 +92,46 @@ interface ApiClient {
     suspend fun revokeInvite(inviteId: Long): Invite
     /** Emails a pending (or expired) invite again with a fresh code, link and expiry. */
     suspend fun resendInvite(inviteId: Long): Invite
+
+    // ---- management: server settings, roles, moderation, emojis (phase 4b-1) -------------------
+
+    /** Renames a guild; MANAGE_SERVER required. */
+    suspend fun updateGuildName(guild: Long, name: String): Guild
+    /** Sets a guild's icon (server crops to a centre square and resizes); MANAGE_SERVER required. */
+    suspend fun uploadGuildIcon(guild: Long, data: ByteArray, contentType: String): Guild
+    /** Removes a guild's icon (no-op if none); MANAGE_SERVER required. */
+    suspend fun removeGuildIcon(guild: Long): Guild
+    /** Deletes a guild with everything in it; owner only, `confirmName` must equal the guild's name. */
+    suspend fun deleteGuild(guild: Long, confirmName: String)
+    /** Hands the guild to another member; owner only, `confirmName` must equal the guild's name. */
+    suspend fun transferOwnership(guild: Long, user: Long, confirmName: String): Guild
+    /** Leaves a guild; the owner cannot (transfer or delete first). */
+    suspend fun leaveGuild(guild: Long)
+    /** Removes a member; KICK_MEMBERS and a top role above theirs required. */
+    suspend fun kickMember(guild: Long, user: Long)
+    /** Bans a member (or former member); BAN_MEMBERS and the same hierarchy rule as [kickMember].
+     * [deleteMessageSeconds] also deletes their recent messages (at most 604800, 7 days). */
+    suspend fun banMember(guild: Long, user: Long, reason: String, deleteMessageSeconds: Int?)
+    /** Lifts a ban; BAN_MEMBERS required. */
+    suspend fun unbanMember(guild: Long, user: Long)
+    /** The guild's bans, newest first; BAN_MEMBERS required. */
+    suspend fun listBans(guild: Long): List<Ban>
+    /** Creates a role at the bottom of the hierarchy; MANAGE_ROLES required. */
+    suspend fun createRole(guild: Long, name: String, color: String, permissions: Long): RoleResult
+    /** Updates a role; unset fields are left unchanged. MANAGE_ROLES required. */
+    suspend fun updateRole(guild: Long, roleId: Long, name: String?, color: String?, permissions: Long?): Role
+    /** Deletes a role and removes it from every member; MANAGE_ROLES required. Returns the new roles version. */
+    suspend fun deleteRole(guild: Long, roleId: Long): Long
+    /** Sets the full role order; MANAGE_ROLES required. `ABORTED` if [expectedVersion] is stale. */
+    suspend fun reorderRoles(guild: Long, expectedVersion: Long, roleIds: List<Long>): GuildRoles
+    /** Replaces the set of roles held by a member; MANAGE_ROLES required. */
+    suspend fun setMemberRoles(guild: Long, userId: Long, roleIds: List<Long>): Member
+    /** Creates a custom emoji from at most 2 MiB of PNG/JPEG/WebP/GIF; MANAGE_EMOJIS required. */
+    suspend fun createEmoji(guild: Long, name: String, data: ByteArray, contentType: String): Emoji
+    /** Renames a custom emoji; MANAGE_EMOJIS required. */
+    suspend fun renameEmoji(guild: Long, emojiId: Long, name: String): Emoji
+    /** Deletes a custom emoji; existing reactions/messages using it render as text. MANAGE_EMOJIS required. */
+    suspend fun deleteEmoji(guild: Long, emojiId: Long)
 
     // ---- authentication and onboarding (the unauthenticated RPCs; the rest need the token) ----
 

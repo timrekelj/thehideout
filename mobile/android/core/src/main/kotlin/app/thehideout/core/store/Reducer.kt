@@ -105,6 +105,26 @@ sealed interface Action {
     /** A section create/rename/delete the caller just did: the resulting layout (handled like `layout_updated`). */
     data class LayoutReplaced(val guildId: Long, val layout: GuildLayout) : Action
     data class GuildCodeRotated(val guildId: Long, val code: String) : Action
+
+    // ---- server settings, roles, moderation, emojis (phase 4b-1) ----
+    /** A guild we patched ourselves (rename, icon, ownership transfer): applied like `guild_updated`. */
+    data class GuildPatched(val guild: Guild) : Action
+    /** We kicked or banned someone: applied like `guild_member_removed` (never ourselves; see [canKick]/[canBan]). */
+    data class MemberGone(val guildId: Long, val userId: Long) : Action
+    /** We left or deleted a guild ourselves: forgets everything about it at once (not waiting for the gateway echo). */
+    data class GuildDropped(val guildId: Long) : Action
+    /** Leaving or deleting [guildId] failed: undoes the optimistic [Exiting] mark. */
+    data class ExitingFailed(val guildId: Long) : Action
+    /** A role we created, edited, or a reorder's reply/rollback: the full roles list and version (like `roles_updated`). */
+    data class RolesReplaced(val guildId: Long, val roles: List<Role>, val version: Long) : Action
+    /** We set a member's roles: applied like `member_updated`. */
+    data class MemberRolesPatched(val guildId: Long, val member: Member) : Action
+    /** We lifted a ban. */
+    data class BanLifted(val guildId: Long, val userId: Long) : Action
+    data class BansLoaded(val guildId: Long, val result: Result<List<Ban>>) : Action
+    /** An emoji we created or renamed. */
+    data class EmojiUpserted(val guildId: Long, val emoji: Emoji) : Action
+    data class EmojiRemoved(val guildId: Long, val emojiId: Long) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -199,6 +219,30 @@ object Reducer {
         is Action.ChannelCreated -> event(s, GatewayEvent.ChannelCreated(a.channel))
         is Action.LayoutReplaced -> event(s, GatewayEvent.LayoutUpdated(a.guildId, a.layout))
         is Action.GuildCodeRotated -> Reduction(s.copy(guilds = s.guilds.map { if (it.id == a.guildId) it.copy(inviteCode = a.code) else it }))
+        is Action.GuildPatched -> Reduction(s.copy(guilds = s.guilds.map { if (it.id == a.guild.id) a.guild else it }))
+        is Action.MemberGone -> memberRemoved(s, a.guildId, a.userId, RemovalReason.Unspecified)
+        is Action.GuildDropped -> guildDropped(s, a.guildId)
+        is Action.ExitingFailed -> Reduction(s.copy(exiting = s.exiting - a.guildId))
+        is Action.RolesReplaced -> Reduction(s.copy(roles = s.roles + (a.guildId to sortRoles(a.roles)), roleVersions = s.roleVersions + (a.guildId to a.version)))
+        is Action.MemberRolesPatched -> {
+            val mr = s.memberRoles[a.guildId]
+            Reduction(
+                s.copy(
+                    memberRoles = if (mr != null) s.memberRoles + (a.guildId to (mr + (a.member.user.id to a.member.roleIds))) else s.memberRoles,
+                    users = s.users + (a.member.user.id to a.member.user),
+                ),
+            )
+        }
+        is Action.BanLifted -> Reduction(s.copy(bans = s.bans[a.guildId]?.let { s.bans + (a.guildId to it.filter { b -> b.user.id != a.userId }) } ?: s.bans))
+        is Action.BansLoaded -> a.result.fold(
+            { list -> Reduction(s.copy(bans = s.bans + (a.guildId to list), users = s.users + list.associate { it.user.id to it.user })) },
+            { e -> Reduction(notice(s, NoticeKind.Danger, "Couldn't load the bans. ${sentence(e.message.orEmpty())}")) },
+        )
+        is Action.EmojiUpserted -> {
+            val list = (s.emojis[a.guildId].orEmpty().filter { it.id != a.emoji.id } + a.emoji).sortedWith(compareBy({ it.name }, { it.id }))
+            Reduction(s.copy(emojis = s.emojis + (a.guildId to list)))
+        }
+        is Action.EmojiRemoved -> Reduction(s.copy(emojis = s.emojis[a.guildId]?.let { s.emojis + (a.guildId to it.filter { e -> e.id != a.emojiId }) } ?: s.emojis))
     }
 
     // ---- data in ------------------------------------------------------------------------------
@@ -634,6 +678,7 @@ object Reducer {
             membersAsked = s.membersAsked - guild,
             emojis = s.emojis - guild,
             emojisAsked = s.emojisAsked - guild,
+            bans = s.bans - guild,
             guildChannel = s.guildChannel - guild,
         )
         return if (wasOpen) goHome(next.copy(place = Place.InGuild(guild))) else Reduction(next)

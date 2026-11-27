@@ -101,19 +101,22 @@ class FakeBackend(
         COOKING to listOf(TIM, BRUNO),
     )
 
-    private val roles = mapOf(
-        HIDEOUT to listOf(
-            role(1001, HIDEOUT, "Moderator", "teal", 3, Perm.MANAGE_CHANNELS or Perm.MANAGE_MESSAGES or Perm.KICK_MEMBERS),
+    private val roles = mutableMapOf(
+        HIDEOUT to mutableListOf(
+            role(1001, HIDEOUT, "Moderator", "teal", 3, Perm.MANAGE_CHANNELS or Perm.MANAGE_MESSAGES or Perm.KICK_MEMBERS or Perm.BAN_MEMBERS),
             role(1002, HIDEOUT, "Admin", "red", 4, Perm.ADMINISTRATOR),
             role(1003, HIDEOUT, "Designer", "pink", 2, Perm.MANAGE_EMOJIS),
         ),
-        GARAGE to emptyList(),
-        COOKING to emptyList(),
+        GARAGE to mutableListOf(),
+        COOKING to mutableListOf(),
     )
+    private val roleVersions = mutableMapOf(HIDEOUT to 4L, GARAGE to 1L, COOKING to 1L)
+    private var nextRoleId = 1004L
 
-    private val memberRoles = mapOf(
-        HIDEOUT to mapOf(BRUNO to listOf(1001L), CVETKA to listOf(1002L), ANA to listOf(1003L)),
+    private val memberRoles = mutableMapOf(
+        HIDEOUT to mutableMapOf(BRUNO to mutableListOf(1001L), CVETKA to mutableListOf(1002L), ANA to mutableListOf(1003L)),
     )
+    private val bans = mutableMapOf<Long, MutableList<Ban>>()
 
     private val voiceStates = listOf(
         VoiceState(HIDEOUT, LOUNGE, ANA, joinedAt = now - Duration.ofMinutes(25)),
@@ -330,8 +333,10 @@ class FakeBackend(
 
     override suspend fun listRoles(guild: Long): GuildRoles {
         pause()
-        return GuildRoles(roles[guild].orEmpty(), version = 4)
+        return GuildRoles(sortedRoles(guild), version = roleVersions[guild] ?: 0L)
     }
+
+    private fun sortedRoles(guild: Long): List<Role> = roles[guild].orEmpty().sortedByDescending { it.position }
 
     override suspend fun listEmojis(guild: Long): List<Emoji> {
         pause()
@@ -519,6 +524,237 @@ class FakeBackend(
         val fresh = invites[at].copy(code = randomInviteCode(), token = "tok-${invites[at].id}-${nextInviteId++}", status = InviteStatus.Pending, expiresAt = now + Duration.ofDays(7))
         invites[at] = fresh
         return fresh.toModel(includeSecret = true)
+    }
+
+    // ---- management: server settings, roles, moderation, emojis (phase 4b-1) -------------------
+
+    /** Whether [currentUserId] holds [bit] in [guild] and outranks [user] there (or is [user]). */
+    private fun canModerateFake(guild: Long, user: Long, bit: Long): Boolean {
+        val g = guilds.firstOrNull { it.id == guild } ?: return false
+        if (!Perm.has(effectivePerms(guild), bit)) return false
+        if (user == currentUserId) return true
+        return outranksMember(g, currentUserId, memberRoles[guild]?.get(currentUserId).orEmpty(), user, memberRoles[guild]?.get(user).orEmpty(), roles[guild].orEmpty())
+    }
+
+    override suspend fun updateGuildName(guild: Long, name: String): Guild {
+        pause()
+        val at = guilds.indexOfFirst { it.id == guild }
+        if (at < 0) throw AppError.NotFound
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_SERVER)) throw AppError.PermissionDenied
+        guilds[at] = guilds[at].copy(name = name)
+        emit(GatewayEvent.GuildUpdated(guilds[at]))
+        return guilds[at]
+    }
+
+    override suspend fun uploadGuildIcon(guild: Long, data: ByteArray, contentType: String): Guild {
+        pause()
+        val at = guilds.indexOfFirst { it.id == guild }
+        if (at < 0) throw AppError.NotFound
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_SERVER)) throw AppError.PermissionDenied
+        guilds[at] = guilds[at].copy(icon = "$FAKE_EMOJI_PREFIX/wave.webp")
+        emit(GatewayEvent.GuildUpdated(guilds[at]))
+        return guilds[at]
+    }
+
+    override suspend fun removeGuildIcon(guild: Long): Guild {
+        pause()
+        val at = guilds.indexOfFirst { it.id == guild }
+        if (at < 0) throw AppError.NotFound
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_SERVER)) throw AppError.PermissionDenied
+        guilds[at] = guilds[at].copy(icon = "")
+        emit(GatewayEvent.GuildUpdated(guilds[at]))
+        return guilds[at]
+    }
+
+    override suspend fun deleteGuild(guild: Long, confirmName: String) {
+        pause()
+        val g = guilds.firstOrNull { it.id == guild } ?: throw AppError.NotFound
+        if (g.ownerId != currentUserId) throw AppError.PermissionDenied
+        if (confirmName.trim() != g.name) throw AppError.InvalidArgument("the name doesn't match")
+        guilds.remove(g)
+        emit(GatewayEvent.GuildRemoved(guild))
+    }
+
+    override suspend fun transferOwnership(guild: Long, user: Long, confirmName: String): Guild {
+        pause()
+        val at = guilds.indexOfFirst { it.id == guild }
+        if (at < 0) throw AppError.NotFound
+        val g = guilds[at]
+        if (g.ownerId != currentUserId) throw AppError.PermissionDenied
+        if (user == currentUserId || members[guild]?.contains(user) != true) throw AppError.InvalidArgument("not a member")
+        if (confirmName.trim() != g.name) throw AppError.InvalidArgument("the name doesn't match")
+        guilds[at] = g.copy(ownerId = user)
+        emit(GatewayEvent.GuildUpdated(guilds[at]))
+        return guilds[at]
+    }
+
+    override suspend fun leaveGuild(guild: Long) {
+        pause()
+        val g = guilds.firstOrNull { it.id == guild } ?: throw AppError.NotFound
+        if (g.ownerId == currentUserId) throw AppError.Precondition("owner cannot leave")
+        members[guild] = members[guild].orEmpty().filter { it != currentUserId }
+        emit(GatewayEvent.MemberRemoved(guild, currentUserId, RemovalReason.Left))
+        emit(GatewayEvent.GuildRemoved(guild))
+    }
+
+    override suspend fun kickMember(guild: Long, user: Long) {
+        pause()
+        if (user == currentUserId || !canModerateFake(guild, user, Perm.KICK_MEMBERS)) throw AppError.PermissionDenied
+        members[guild] = members[guild].orEmpty().filter { it != user }
+        memberRoles[guild]?.remove(user)
+        emit(GatewayEvent.MemberRemoved(guild, user, RemovalReason.Kicked))
+    }
+
+    override suspend fun banMember(guild: Long, user: Long, reason: String, deleteMessageSeconds: Int?) {
+        pause()
+        if (user == currentUserId || !canModerateFake(guild, user, Perm.BAN_MEMBERS)) throw AppError.PermissionDenied
+        val wasMember = members[guild]?.contains(user) == true
+        members[guild] = members[guild].orEmpty().filter { it != user }
+        memberRoles[guild]?.remove(user)
+        val list = bans.getOrPut(guild) { mutableListOf() }
+        list.removeAll { it.user.id == user }
+        list.add(0, Ban(users.getValue(user), currentUserId, reason, now))
+        if (deleteMessageSeconds != null && deleteMessageSeconds > 0) {
+            val cutoff = now.minusSeconds(deleteMessageSeconds.toLong())
+            for (c in channels.filter { it.guildId == guild }) {
+                messages[c.id]?.removeAll { it.authorId == user && !it.createdAt.isBefore(cutoff) }
+            }
+        }
+        if (wasMember) emit(GatewayEvent.MemberRemoved(guild, user, RemovalReason.Banned))
+    }
+
+    override suspend fun unbanMember(guild: Long, user: Long) {
+        pause()
+        if (!Perm.has(effectivePerms(guild), Perm.BAN_MEMBERS)) throw AppError.PermissionDenied
+        val list = bans[guild] ?: throw AppError.NotFound
+        if (list.none { it.user.id == user }) throw AppError.NotFound
+        list.removeAll { it.user.id == user }
+    }
+
+    override suspend fun listBans(guild: Long): List<Ban> {
+        pause()
+        if (!Perm.has(effectivePerms(guild), Perm.BAN_MEMBERS)) throw AppError.PermissionDenied
+        return bans[guild].orEmpty().toList()
+    }
+
+    override suspend fun createRole(guild: Long, name: String, color: String, permissions: Long): RoleResult {
+        pause()
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES)) throw AppError.PermissionDenied
+        if ((permissions and effectivePerms(guild)) != permissions) throw AppError.PermissionDenied
+        val list = roles.getOrPut(guild) { mutableListOf() }
+        val position = (list.minOfOrNull { it.position } ?: 1) - 1
+        val r = role(nextRoleId++, guild, name, color, position, permissions)
+        list.add(r)
+        val version = (roleVersions[guild] ?: 0L) + 1
+        roleVersions[guild] = version
+        emit(GatewayEvent.RolesUpdated(guild, sortedRoles(guild), version))
+        return RoleResult(r, version)
+    }
+
+    override suspend fun updateRole(guild: Long, roleId: Long, name: String?, color: String?, permissions: Long?): Role {
+        pause()
+        val list = roles[guild] ?: throw AppError.NotFound
+        val at = list.indexOfFirst { it.id == roleId }
+        if (at < 0) throw AppError.NotFound
+        val current = list[at]
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES) || !outranksTarget(guild, current.position)) throw AppError.PermissionDenied
+        if (permissions != null && (permissions and effectivePerms(guild)) != permissions) throw AppError.PermissionDenied
+        val updated = current.copy(name = name ?: current.name, color = color ?: current.color, permissions = permissions ?: current.permissions)
+        list[at] = updated
+        // Unlike create/delete/reorder, editing a role's name/colour/permissions doesn't change its
+        // order, so the roles version (ReorderRoles' optimistic-concurrency token) is left alone.
+        emit(GatewayEvent.RolesUpdated(guild, sortedRoles(guild), roleVersions[guild] ?: 0L))
+        return updated
+    }
+
+    override suspend fun deleteRole(guild: Long, roleId: Long): Long {
+        pause()
+        val list = roles[guild] ?: throw AppError.NotFound
+        val r = list.firstOrNull { it.id == roleId } ?: throw AppError.NotFound
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES) || !outranksTarget(guild, r.position)) throw AppError.PermissionDenied
+        list.remove(r)
+        memberRoles[guild]?.replaceAll { _, ids -> ids.toMutableList().also { it.remove(roleId) } }
+        val version = (roleVersions[guild] ?: 0L) + 1
+        roleVersions[guild] = version
+        emit(GatewayEvent.RolesUpdated(guild, sortedRoles(guild), version))
+        return version
+    }
+
+    override suspend fun reorderRoles(guild: Long, expectedVersion: Long, roleIds: List<Long>): GuildRoles {
+        pause()
+        val list = roles[guild] ?: throw AppError.NotFound
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES)) throw AppError.PermissionDenied
+        if ((roleVersions[guild] ?: 0L) != expectedVersion) throw AppError.Conflict
+        if (roleIds.toSet() != list.map { it.id }.toSet() || roleIds.size != list.size) throw AppError.InvalidArgument("not every role, once each")
+        val base = list.size
+        val byId = list.associateBy { it.id }
+        val reordered = roleIds.mapIndexed { i, id -> byId.getValue(id).copy(position = base - i) }
+        roles[guild] = reordered.toMutableList()
+        val version = expectedVersion + 1
+        roleVersions[guild] = version
+        emit(GatewayEvent.RolesUpdated(guild, sortedRoles(guild), version))
+        return GuildRoles(sortedRoles(guild), version)
+    }
+
+    override suspend fun setMemberRoles(guild: Long, userId: Long, roleIds: List<Long>): Member {
+        pause()
+        if (members[guild]?.contains(userId) != true) throw AppError.NotFound
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES)) throw AppError.PermissionDenied
+        val existing = roles[guild].orEmpty().map { it.id }.toSet()
+        if (!existing.containsAll(roleIds)) throw AppError.NotFound
+        val before = memberRoles[guild]?.get(userId).orEmpty()
+        val changed = (before.toSet() - roleIds.toSet()) + (roleIds.toSet() - before.toSet())
+        for (rid in changed) {
+            val position = roles[guild].orEmpty().firstOrNull { it.id == rid }?.position ?: continue
+            if (!outranksTarget(guild, position)) throw AppError.PermissionDenied
+        }
+        memberRoles.getOrPut(guild) { mutableMapOf() }[userId] = roleIds.toMutableList()
+        val member = Member(users.getValue(userId), roleIds, now - Duration.ofDays(70))
+        emit(GatewayEvent.MemberUpdated(guild, member))
+        return member
+    }
+
+    /** Whether [currentUserId] outranks a role at [position] (the owner always; anyone else only strictly below their own highest role). */
+    private fun outranksTarget(guild: Long, position: Int): Boolean {
+        val g = guilds.firstOrNull { it.id == guild } ?: return false
+        if (g.ownerId == currentUserId) return true
+        val top = topPosition(memberRoles[guild]?.get(currentUserId).orEmpty(), roles[guild].orEmpty()) ?: return false
+        return position < top
+    }
+
+    override suspend fun createEmoji(guild: Long, name: String, data: ByteArray, contentType: String): Emoji {
+        pause()
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_EMOJIS)) throw AppError.PermissionDenied
+        val list = emojis.getOrPut(guild) { mutableListOf() }
+        if (list.any { it.name == name }) throw AppError.AlreadyExists
+        if (data.size > MAX_EMOJI_BYTES) throw AppError.InvalidArgument("image is too large")
+        val animated = contentType == "image/gif"
+        val e = Emoji(nextId++, guild, name, animated, "$FAKE_EMOJI_PREFIX/wave.webp", currentUserId, now)
+        list.add(e)
+        emit(GatewayEvent.EmojisUpdated(guild, list.toList()))
+        return e
+    }
+
+    override suspend fun renameEmoji(guild: Long, emojiId: Long, name: String): Emoji {
+        pause()
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_EMOJIS)) throw AppError.PermissionDenied
+        val list = emojis[guild] ?: throw AppError.NotFound
+        val at = list.indexOfFirst { it.id == emojiId }
+        if (at < 0) throw AppError.NotFound
+        if (list.any { it.id != emojiId && it.name == name }) throw AppError.AlreadyExists
+        val updated = list[at].copy(name = name)
+        list[at] = updated
+        emit(GatewayEvent.EmojisUpdated(guild, list.toList()))
+        return updated
+    }
+
+    override suspend fun deleteEmoji(guild: Long, emojiId: Long) {
+        pause()
+        if (!Perm.has(effectivePerms(guild), Perm.MANAGE_EMOJIS)) throw AppError.PermissionDenied
+        val list = emojis[guild] ?: throw AppError.NotFound
+        if (list.none { it.id == emojiId }) throw AppError.NotFound
+        list.removeAll { it.id == emojiId }
+        emit(GatewayEvent.EmojisUpdated(guild, list.toList()))
     }
 
     private fun FakeInvite.toModel(includeSecret: Boolean): Invite = Invite(
@@ -1044,6 +1280,8 @@ class FakeBackend(
         const val SECOND_FACTOR_TRIES = 5
         const val MIN_PASSWORD = 8
         const val MINIMUM_AGE = 16
+        /** The server's per-emoji input cap (`emoji_service.proto`): 2 MiB. */
+        const val MAX_EMOJI_BYTES = 2L * 1024 * 1024
 
         /** Dora's recovery codes (each works once). */
         val RECOVERY_CODES = listOf(
