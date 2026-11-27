@@ -1,0 +1,15 @@
+appId: si.zabit.thehideout
+---
+# SEC-04: continues settings-live-check.yaml once on You > Security > Authenticator app > "Set up"
+# (the QR/secret screen is FLAG_SECURE, so get the secret from `adb shell uiautomator dump`'s
+# accessibility tree, not a screenshot, and compute the 6-digit code with a local TOTP script —
+# never print the secret itself). Replace the code below with a freshly computed one.
+- tapOn: "Code from the app"
+- inputText: "541367"
+- hideKeyboard
+- tapOn: "Turn on"
+- assertVisible: "Save your recovery codes"
+- tapOn: "I saved these codes somewhere safe"
+- tapOn: "Done"
+- assertVisible:
+    text: "On .* 10 recovery codes left"

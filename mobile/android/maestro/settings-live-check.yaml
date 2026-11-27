@@ -1,0 +1,44 @@
+appId: si.zabit.thehideout
+---
+# Phase 5 live check (see mobile/android/README.md "E2E check, phase 5" for the full run and what
+# it verified against a real server + Mailpit over curl). This flow: set the server URL, accept a
+# bootstrap admin invite, land signed in, then change the password from Security (SEC-02).
+#
+# Needs: the debug app installed and showing the sign-in screen (fresh `pm clear`), a real server
+# reachable at the URL below with a bootstrap admin invite code already created
+# (`thehideout-server invite <email> --admin`), and Settings > Developer options > "Don't keep
+# activities" off (so the keyboard's IME doesn't fight the sheet's own state restore).
+- tapOn: "Change"
+- tapOn: "http://.*"
+- eraseText
+- eraseText
+- inputText: "http://127.0.0.1:8090"
+- tapOn: "Save"
+- tapOn: "Join with a code"
+- inputText: "GDX74HH5" # replace with the invite's own code
+- tapOn: "Continue"
+- tapOn: "ana"
+- inputText: "tim"
+- tapOn: "At least 8 characters"
+- inputText: "sup3rSecret!"
+- tapOn: "I agree to the Terms and Privacy Policy"
+- hideKeyboard
+- scroll
+- tapOn:
+    text: ".*or older"
+- tapOn: "Create account"
+- assertVisible: "No servers yet"
+
+# ---- SEC-02: change password --------------------------------------------------------------------
+- tapOn: "You"
+- tapOn: "Security"
+- tapOn: "Change your password"
+- tapOn: "Current password"
+- inputText: "sup3rSecret!"
+- tapOn: "New password"
+- inputText: "even-s3cureR!"
+- tapOn: "Confirm new password"
+- inputText: "even-s3cureR!"
+- hideKeyboard
+- tapOn: "Save"
+- assertNotVisible: "Change password"
