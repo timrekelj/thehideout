@@ -42,6 +42,12 @@ class FakeBackend(
     private var currentUserId = TIM
     private val me: User get() = users.getValue(currentUserId)
 
+    /** Test-only: switches which user subsequent calls run as, to exercise the backend's own
+     * permission/hierarchy checks as someone other than the default (TIM, The Hideout's owner). */
+    fun actingAs(userId: Long) {
+        currentUserId = userId
+    }
+
     // Mixed-case, like a real server's (GuildService.claim_invite_code: rand's Alphanumeric,
     // case-sensitive), not the all-caps `XXXX-XXXX` of an email invite's Crockford code.
     private val guilds = mutableListOf(
@@ -642,8 +648,9 @@ class FakeBackend(
         if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES)) throw AppError.PermissionDenied
         if ((permissions and effectivePerms(guild)) != permissions) throw AppError.PermissionDenied
         val list = roles.getOrPut(guild) { mutableListOf() }
-        val position = (list.minOfOrNull { it.position } ?: 1) - 1
-        val r = role(nextRoleId++, guild, name, color, position, permissions)
+        // Mirrors role.rs's create_role: the new role goes to the bottom (position 0); everyone else moves up one.
+        for (i in list.indices) list[i] = list[i].copy(position = list[i].position + 1)
+        val r = role(nextRoleId++, guild, name, color, 0, permissions)
         list.add(r)
         val version = (roleVersions[guild] ?: 0L) + 1
         roleVersions[guild] = version
@@ -658,7 +665,13 @@ class FakeBackend(
         if (at < 0) throw AppError.NotFound
         val current = list[at]
         if (!Perm.has(effectivePerms(guild), Perm.MANAGE_ROLES) || !outranksTarget(guild, current.position)) throw AppError.PermissionDenied
-        if (permissions != null && (permissions and effectivePerms(guild)) != permissions) throw AppError.PermissionDenied
+        // Mirrors role.rs's update_role: every bit in the new value, and every bit that actually
+        // changes (granted or revoked), must be one the caller holds. Untouched fields (null) skip this.
+        if (permissions != null) {
+            if ((permissions and effectivePerms(guild)) != permissions) throw AppError.PermissionDenied
+            val changed = permissions xor current.permissions
+            if ((changed and effectivePerms(guild)) != changed) throw AppError.PermissionDenied
+        }
         val updated = current.copy(name = name ?: current.name, color = color ?: current.color, permissions = permissions ?: current.permissions)
         list[at] = updated
         // Unlike create/delete/reorder, editing a role's name/colour/permissions doesn't change its
@@ -688,6 +701,15 @@ class FakeBackend(
         if (roleIds.toSet() != list.map { it.id }.toSet() || roleIds.size != list.size) throw AppError.InvalidArgument("not every role, once each")
         val base = list.size
         val byId = list.associateBy { it.id }
+        // Mirrors role.rs's reorder_roles: for every role whose position actually changes, the caller
+        // must outrank both its old and new position (so a swap needs both roles involved to be editable).
+        for ((i, id) in roleIds.withIndex()) {
+            val role = byId.getValue(id)
+            val newPosition = base - i
+            if (role.position != newPosition && !(outranksTarget(guild, role.position) && outranksTarget(guild, newPosition))) {
+                throw AppError.PermissionDenied
+            }
+        }
         val reordered = roleIds.mapIndexed { i, id -> byId.getValue(id).copy(position = base - i) }
         roles[guild] = reordered.toMutableList()
         val version = expectedVersion + 1
