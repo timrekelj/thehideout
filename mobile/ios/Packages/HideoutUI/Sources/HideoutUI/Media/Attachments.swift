@@ -209,7 +209,7 @@ final class ClipPlayerState {
         // pause at the end of the clip — so without this, `isPlaying` would freeze at `true` forever
         // once a clip plays through to its end.
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main) { [weak self] _ in
-            self?.isPlaying = false
+            Task { @MainActor [weak self] in self?.isPlaying = false }
         }
     }
 
