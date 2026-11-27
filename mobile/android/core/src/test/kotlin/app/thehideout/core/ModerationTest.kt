@@ -10,6 +10,7 @@ import app.thehideout.core.fake.FakeBackend.Companion.HIDEOUT
 import app.thehideout.core.fake.FakeBackend.Companion.TIM
 import app.thehideout.core.model.Ban
 import app.thehideout.core.model.Emoji
+import app.thehideout.core.model.GatewayEvent
 import app.thehideout.core.model.Guild
 import app.thehideout.core.model.Member
 import app.thehideout.core.model.Perm
@@ -138,7 +139,7 @@ class ModerationTest {
 
     @Test fun `MemberGone removes someone we kicked or banned, like guild_member_removed`() {
         val loaded = s0.reduce(Action.MembersLoaded(HIDEOUT, Result.success(app.thehideout.core.api.GuildMembers(emptyList(), listOf(TIM, ANA, BRUNO).map { Member(User(it, "u$it", T0), emptyList(), T0) }))))
-        val s = loaded.reduce(Action.MemberGone(HIDEOUT, BRUNO))
+        val s = loaded.reduce(Action.MemberGone(HIDEOUT, BRUNO, RemovalReason.Kicked))
         assertEquals(listOf(TIM, ANA), s.members[HIDEOUT])
     }
 
@@ -175,6 +176,86 @@ class ModerationTest {
         assertEquals(listOf("aaa", "alpha"), renamed.emojis[HIDEOUT]!!.map { it.name })
         val removed = renamed.reduce(Action.EmojiRemoved(HIDEOUT, 2))
         assertEquals(listOf("aaa"), removed.emojis[HIDEOUT]!!.map { it.name })
+    }
+
+    @Test fun `RoleCreated upserts by id, so a gateway echo landing before our own reply doesn't duplicate it`() {
+        val created = Role(500, HIDEOUT, "Helper", "teal", 0, 0, T0)
+        // The gateway's own echo of the create (everyone else shifted up, version bumped) lands first.
+        val afterEcho = s0.event(GatewayEvent.RolesUpdated(HIDEOUT, listOf(created), 1))
+        // Our own createRole RPC reply arrives after: RolesPage's items(key = id) must not see it twice.
+        val afterReply = afterEcho.reduce(Action.RoleCreated(HIDEOUT, created, 1))
+        assertEquals(1, afterReply.roles[HIDEOUT]!!.count { it.id == 500L })
+        assertEquals(1L, afterReply.roleVersions[HIDEOUT])
+    }
+
+    @Test fun `RoleCreated shifts existing roles up one and puts the new role at the bottom, when no echo arrived yet`() {
+        val existing = listOf(Role(1, HIDEOUT, "senior", "", 2, 0, T0), Role(2, HIDEOUT, "junior", "", 0, 0, T0))
+        val withRoles = s0.copy(roles = mapOf(HIDEOUT to existing), roleVersions = mapOf(HIDEOUT to 4L))
+        val created = Role(3, HIDEOUT, "Helper", "", 0, 0, T0)
+        val s = withRoles.reduce(Action.RoleCreated(HIDEOUT, created, 5))
+        val byId = s.roles[HIDEOUT]!!.associateBy { it.id }
+        assertEquals(3, byId.getValue(1).position)
+        assertEquals(1, byId.getValue(2).position)
+        assertEquals(0, byId.getValue(3).position)
+        assertEquals(5L, s.roleVersions[HIDEOUT])
+    }
+
+    @Test fun `a late updateRole or reorder reply doesn't clobber a newer gateway version`() {
+        val stale = listOf(Role(1, HIDEOUT, "stale-name", "", 0, 0, T0))
+        val fresh = listOf(Role(1, HIDEOUT, "fresh-name", "", 0, 0, T0))
+        val s = s0.reduce(Action.RolesReplaced(HIDEOUT, fresh, 9)).reduce(Action.RolesReplaced(HIDEOUT, stale, 7))
+        assertEquals("fresh-name", s.roles[HIDEOUT]!!.single().name, "the stale reply (lower version) was dropped")
+        assertEquals(9L, s.roleVersions[HIDEOUT])
+    }
+
+    // ---- as a non-owner manager: still bound by the hierarchy and by their own permissions -----
+
+    @Test fun `a manager lacking one of a role's bits can still rename it, sending only the changed field`() = runTest {
+        val fake = FakeBackend()
+        // As TIM (the owner): a "Manager" role senior to "Held", which carries MANAGE_EMOJIS - a bit
+        // ANA (made a manager, but not an admin) doesn't hold herself.
+        val manager = fake.createRole(HIDEOUT, "Manager", "", Perm.MANAGE_ROLES)
+        val held = fake.createRole(HIDEOUT, "Held", "blue", Perm.MANAGE_EMOJIS)
+        fake.setMemberRoles(HIDEOUT, ANA, listOf(manager.role.id))
+        fake.actingAs(ANA)
+        val renamed = fake.updateRole(HIDEOUT, held.role.id, name = "Renamed", color = null, permissions = null)
+        assertEquals("Renamed", renamed.name)
+        assertTrue(Perm.has(renamed.permissions, Perm.MANAGE_EMOJIS), "the bit ANA doesn't hold herself stayed untouched, since it wasn't sent")
+        // Sending the unchanged permissions back explicitly (the old, buggy behaviour) is refused.
+        val blocked = runCatching { fake.updateRole(HIDEOUT, held.role.id, name = null, color = null, permissions = renamed.permissions) }
+        assertTrue(blocked.exceptionOrNull() is AppError.PermissionDenied)
+    }
+
+    @Test fun `a non-owner manager can't move a role into or above their own rank`() = runTest {
+        val fake = FakeBackend()
+        // Created in this order so "Mine" ends up senior to "Below" (each new role lands at the
+        // bottom and pushes the rest up, like the server - see RoleCreated's test above). The seed
+        // (Moderator/Admin/Designer) stays untouched around them.
+        val mine = fake.createRole(HIDEOUT, "Mine", "", Perm.MANAGE_ROLES)
+        val below = fake.createRole(HIDEOUT, "Below", "", 0)
+        fake.setMemberRoles(HIDEOUT, ANA, listOf(mine.role.id))
+        fake.actingAs(ANA)
+        val before = fake.listRoles(HIDEOUT)
+        val bySeniority = before.roles.sortedByDescending { it.position }.map { it.id }
+        val mineAt = bySeniority.indexOf(mine.role.id)
+        val belowAt = bySeniority.indexOf(below.role.id)
+        assertEquals(mineAt + 1, belowAt, "Mine and Below are adjacent, Mine the more senior")
+        // Swapping just these two would put "Below" at or above ANA's own rank.
+        val swapped = bySeniority.toMutableList().also { it[mineAt] = below.role.id; it[belowAt] = mine.role.id }
+        val ex = runCatching { fake.reorderRoles(HIDEOUT, before.version, swapped) }
+        assertTrue(ex.exceptionOrNull() is AppError.PermissionDenied)
+        assertEquals(bySeniority, fake.listRoles(HIDEOUT).roles.sortedByDescending { it.position }.map { it.id }, "refused: order unchanged")
+    }
+
+    @Test fun `setMemberRole on a role the actor doesn't outrank is blocked`() = runTest {
+        val fake = FakeBackend()
+        // Created in this order so "Above" ends up senior to "Mine" (and so, to ANA herself).
+        val above = fake.createRole(HIDEOUT, "Above", "", 0)
+        val mine = fake.createRole(HIDEOUT, "Mine", "", Perm.MANAGE_ROLES)
+        fake.setMemberRoles(HIDEOUT, ANA, listOf(mine.role.id))
+        fake.actingAs(ANA)
+        val r = runCatching { fake.setMemberRoles(HIDEOUT, BRUNO, listOf(above.role.id)) }
+        assertTrue(r.exceptionOrNull() is AppError.PermissionDenied)
     }
 
     // ---- end to end against FakeBackend, as the owner (TIM owns The Hideout) ------------------

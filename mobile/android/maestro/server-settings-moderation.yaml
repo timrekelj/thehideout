@@ -23,7 +23,9 @@ appId: si.zabit.thehideout
 - tapOn:
     id: "member-add-.*"
     index: 0
-- tapOn: "Helper"
+- tapOn:
+    id: "assign-role-.*"
+    index: 0
 - assertVisible: "Helper"
 - tapOn:
     id: "member-ban-.*"

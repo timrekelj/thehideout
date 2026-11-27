@@ -97,6 +97,15 @@ class ServerSettingsUiTest {
         }
     }
 
+    @Test fun `closing server settings (the top bar's back arrow) returns to the channel list`() {
+        harness()
+        openServerSettings()
+        compose.onNodeWithTag("server-settings-close").performClick()
+        compose.settle()
+        compose.onNodeWithTag("server-menu").assertIsDisplayed()
+        compose.onAllNodesWithTag("server-name-input").assertCountEquals(0)
+    }
+
     @Test fun `renaming the server`() {
         val store = harness()
         openServerSettings()
@@ -113,8 +122,9 @@ class ServerSettingsUiTest {
         compose.settle()
         compose.onNodeWithTag("role-new").performClick()
         compose.settle()
-        compose.onNodeWithTag("role-save").performScrollTo().assertIsDisplayed()
-        kotlinx.coroutines.runBlocking { store.createRole(FakeBackend.HIDEOUT, "Helper", "", 0) }.getOrThrow()
+        compose.onNodeWithTag("role-name-input").performTextReplacement("Helper")
+        compose.onNodeWithTag("role-save").performScrollTo().performClick()
+        compose.settle { store.state.value.rolesOf(FakeBackend.HIDEOUT).any { it.name == "Helper" } }
         assertTrue(store.state.value.rolesOf(FakeBackend.HIDEOUT).any { it.name == "Helper" })
     }
 
@@ -143,6 +153,39 @@ class ServerSettingsUiTest {
         compose.settle()
         compose.onNodeWithTag("role-name-input").assert(androidx.compose.ui.test.hasText("Moderator"))
         compose.onNodeWithTag("role-colour-teal").assertIsDisplayed()
+    }
+
+    @Test fun `editing an existing role's name and colour through Save changes`() {
+        val store = harness()
+        openServerSettings()
+        compose.onNodeWithTag("server-settings-tab-Roles").performClick()
+        compose.settle()
+        compose.onNodeWithTag("role-row-1001").performClick()
+        compose.settle()
+        compose.onNodeWithTag("role-name-input").performTextReplacement("Mod Squad")
+        compose.onNodeWithTag("role-colour-blue").performClick()
+        compose.settle()
+        compose.onNodeWithTag("role-save").performScrollTo().performClick()
+        compose.settle { store.state.value.rolesOf(FakeBackend.HIDEOUT).first { it.id == 1001L }.name == "Mod Squad" }
+        val updated = store.state.value.rolesOf(FakeBackend.HIDEOUT).first { it.id == 1001L }
+        assertEquals("Mod Squad", updated.name)
+        assertEquals("blue", updated.color)
+    }
+
+    @Test fun `moving a role up and down with the arrows`() {
+        val store = harness()
+        openServerSettings()
+        compose.onNodeWithTag("server-settings-tab-Roles").performClick()
+        compose.settle()
+        val before = store.state.value.rolesOf(FakeBackend.HIDEOUT).map { it.id }
+        // Moderator (1001) sits right below Admin (1002); move it up one step (more senior).
+        compose.onNodeWithTag("role-up-1001").performScrollTo().performClick()
+        compose.settle { store.state.value.rolesOf(FakeBackend.HIDEOUT).map { it.id }.indexOf(1001L) < before.indexOf(1001L) }
+        val afterUp = store.state.value.rolesOf(FakeBackend.HIDEOUT).map { it.id }
+        assertTrue(afterUp.indexOf(1001L) < before.indexOf(1001L))
+        compose.onNodeWithTag("role-down-1001").performScrollTo().performClick()
+        compose.settle { store.state.value.rolesOf(FakeBackend.HIDEOUT).map { it.id } == before }
+        assertEquals(before, store.state.value.rolesOf(FakeBackend.HIDEOUT).map { it.id })
     }
 
     @Test fun `assigning a role to a member shows its chip, removing it takes it back`() {
@@ -206,6 +249,45 @@ class ServerSettingsUiTest {
         compose.onNodeWithTag("emoji-delete-${emoji.id}").performScrollTo().performClick()
         compose.onNodeWithTag("emoji-delete-confirm").performClick()
         compose.settle { store.state.value.emojis[FakeBackend.HIDEOUT]!!.none { it.id == emoji.id } }
+    }
+
+    @Test fun `renaming a custom emoji via the rename dialog`() {
+        val store = harness()
+        val emoji = kotlinx.coroutines.runBlocking { store.createEmoji(FakeBackend.HIDEOUT, "new_face", byteArrayOf(1, 2), "image/png") }.getOrThrow()
+        openServerSettings()
+        compose.onNodeWithTag("server-settings-tab-Emojis").performScrollTo().performClick()
+        compose.settle { compose.onAllNodesWithTag("emoji-row-${emoji.id}").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("emoji-rename-${emoji.id}").performScrollTo().performClick()
+        compose.settle()
+        compose.onNodeWithTag("emoji-name-input").performTextReplacement("newer_face")
+        compose.onNodeWithTag("emoji-name-submit").performClick()
+        compose.settle { store.state.value.emojis[FakeBackend.HIDEOUT]!!.any { it.id == emoji.id && it.name == "newer_face" } }
+        assertTrue(store.state.value.emojis[FakeBackend.HIDEOUT]!!.any { it.id == emoji.id && it.name == "newer_face" })
+    }
+
+    @Test fun `transferring ownership to another member via the dialog`() {
+        val store = harness()
+        openServerSettings()
+        compose.onNodeWithTag("server-transfer").performScrollTo().performClick()
+        compose.settle()
+        compose.onNodeWithTag("transfer-target").performClick()
+        compose.onAllNodesWithText("bruno").onLast().performClick()
+        compose.onNodeWithTag("transfer-confirm-name").performTextInput("The Hideout")
+        compose.onNodeWithTag("transfer-submit").performClick()
+        compose.settle { store.state.value.guild(FakeBackend.HIDEOUT)?.ownerId == FakeBackend.BRUNO }
+        assertEquals(FakeBackend.BRUNO, store.state.value.guild(FakeBackend.HIDEOUT)?.ownerId)
+    }
+
+    @Test fun `leaving a server (one TIM doesn't own) via the leave dialog`() {
+        val store = harness()
+        store.openGuild(FakeBackend.GARAGE)
+        compose.settle()
+        compose.onNodeWithTag("server-menu").performClick()
+        compose.onNodeWithTag("server-menu-leave").performClick()
+        compose.settle()
+        compose.onNodeWithTag("leave-server-submit").performClick()
+        compose.settle { store.state.value.guild(FakeBackend.GARAGE) == null }
+        assertNull(store.state.value.guild(FakeBackend.GARAGE))
     }
 
     @Test fun `deleting the server requires the exact name`() {
