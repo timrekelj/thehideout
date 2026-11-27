@@ -681,12 +681,16 @@ async fn ban_can_delete_recent_messages_in_the_background() {
     let w = world().await;
     let second = channel(&w.app, &w.alice, w.guild.id, "second").await.unwrap();
     let old = send(&w.app, &w.carol, w.channel, "recent 0").await.unwrap();
-    // Backdate `old`: re-key it to a time well before the purge window.
-    let long_ago = thehideout_server::snowflake::make_id(
-        thehideout_server::snowflake::millis_of(old.id) - 3 * 24 * 3600 * 1000,
-        1,
-        0,
-    );
+    // Backdate `old`: re-key it to a time well before the purge window, but
+    // never earlier than the start of the channel's own bucket. `fetch_older`
+    // stops at `bucket_of(channel_id)` because a message can't predate its
+    // channel (see server/src/services/message.rs); a plain "3 days ago"
+    // can violate that for a channel created near the start of its 10-day
+    // bucket, dropping `old` from `list_messages` depending on the date.
+    let channel_bucket = thehideout_server::snowflake::bucket_of(w.channel);
+    let three_days_ago = thehideout_server::snowflake::millis_of(old.id).saturating_sub(3 * 24 * 3600 * 1000);
+    let long_ago_ms = three_days_ago.max(channel_bucket as u64 * thehideout_server::snowflake::BUCKET_MS);
+    let long_ago = thehideout_server::snowflake::make_id(long_ago_ms, 1, 0);
     w.app
         .state
         .session
