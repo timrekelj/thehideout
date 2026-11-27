@@ -33,6 +33,7 @@ public struct HideoutRoot: View {
         .environment(server)
         .environment(themeStore)
         .environment(\.initialTab, options.tab)
+        .environment(\.allowsFakeAssets, options.fake || options.gallery)
         .themed(themeStore)
         .task {
             await store.bootstrap()

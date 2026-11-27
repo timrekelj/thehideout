@@ -80,6 +80,7 @@ targets:
         NSMicrophoneUsageDescription: thehideout uses your microphone for voice channels.
         NSCameraUsageDescription: thehideout uses your camera when you turn on video in a voice channel.
         NSPhotoLibraryUsageDescription: thehideout lets you attach photos and videos from your library to messages.
+        NSPhotoLibraryAddUsageDescription: thehideout saves pictures and videos you choose to your photo library.
         CFBundleURLTypes:
           - CFBundleURLName: si.zabit.thehideout
             CFBundleURLSchemes: [thehideout]

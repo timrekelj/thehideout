@@ -104,6 +104,13 @@ These tests are **not** run in CI (see `.github/workflows/ci.yml`, job `ios`): a
   ```sh
   maestro --device <udid> test mobile/ios/maestro/fake-smoke.yaml
   ```
+- `attachments.yaml`: launches with `--fake`, opens #design (seeded with one message per attachment
+  kind — image grids of every size, a video, an audio note, a file and a removed placeholder), plays
+  the audio row inline, scrolls to the image grids, opens the full-screen viewer, swipes between
+  pictures, and dismisses it.
+  ```sh
+  maestro --device <udid> test mobile/ios/maestro/attachments.yaml
+  ```
 - `invite-code.yaml`: launches with `--fake --signed-out`, opens "Join with a code", types a code into
   the 8-box field (the 8th character looks it up at once) and reaches the accept step, then opens an
   invite deep link (the same `AuthFlow.handle(url:)` path a pasted link's extracted code or a universal

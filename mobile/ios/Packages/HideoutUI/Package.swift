@@ -17,6 +17,7 @@ let package = Package(
         .target(
             name: "HideoutUI",
             dependencies: ["HideoutDesign", "HideoutCore"],
+            resources: [.copy("Resources/FakeMedia")],
             swiftSettings: [.treatAllWarnings(as: .error)]
         ),
     ]

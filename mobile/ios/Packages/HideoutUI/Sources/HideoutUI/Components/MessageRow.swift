@@ -21,6 +21,7 @@ public struct MessageRow: View {
     let time: Date
     let text: String
     let reactions: [Reaction]
+    let attachments: [Attachment]
     let me: String?
     let grouped: Bool
     let delivery: Delivery?
@@ -34,18 +35,21 @@ public struct MessageRow: View {
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     var onMoreReactions: (() -> Void)?
+    var onOpenLightbox: (([LightboxItem], Int) -> Void)?
 
     @State private var dragX: CGFloat = 0
     @State private var confirmDelete = false
 
-    public init(author: String, authorID: String? = nil, roleColor: String? = nil, time: Date, text: String, reactions: [Reaction] = [], me: String? = nil,
+    public init(author: String, authorID: String? = nil, roleColor: String? = nil, time: Date, text: String, reactions: [Reaction] = [], attachments: [Attachment] = [], me: String? = nil,
                 grouped: Bool = false, delivery: Delivery? = nil, edited: Bool = false, mentionsMe: Bool = false, isOwn: Bool = false, canModerate: Bool = false,
                 onRetry: (() -> Void)? = nil, onReact: ((ReactionEmoji, Bool) -> Void)? = nil, onReply: (() -> Void)? = nil,
-                onEdit: (() -> Void)? = nil, onDelete: (() -> Void)? = nil, onMoreReactions: (() -> Void)? = nil) {
+                onEdit: (() -> Void)? = nil, onDelete: (() -> Void)? = nil, onMoreReactions: (() -> Void)? = nil,
+                onOpenLightbox: (([LightboxItem], Int) -> Void)? = nil) {
         self.author = author; self.authorID = authorID ?? author; self.roleColor = roleColor; self.time = time; self.text = text
-        self.reactions = reactions; self.me = me; self.grouped = grouped; self.delivery = delivery; self.edited = edited
+        self.reactions = reactions; self.attachments = attachments; self.me = me; self.grouped = grouped; self.delivery = delivery; self.edited = edited
         self.mentionsMe = mentionsMe; self.isOwn = isOwn; self.canModerate = canModerate
         self.onRetry = onRetry; self.onReact = onReact; self.onReply = onReply; self.onEdit = onEdit; self.onDelete = onDelete; self.onMoreReactions = onMoreReactions
+        self.onOpenLightbox = onOpenLightbox
     }
 
     private var clock: Date.FormatStyle { Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone) }
@@ -81,7 +85,10 @@ public struct MessageRow: View {
                             if edited { Text("edited").typeStyle(\.caption, color: \.textFaint) }
                         }
                     }
-                    MessageBody(text, me: me)
+                    if !text.isEmpty { MessageBody(text, me: me) }
+                    if !attachments.isEmpty {
+                        MessageAttachmentsView(attachments: attachments, onOpenLightbox: { items, i in onOpenLightbox?(items, i) })
+                    }
                     if !reactions.isEmpty {
                         FlowReactions(reactions: reactions, onToggle: onReact, onMore: onMoreReactions)
                             .padding(.top, 4)

@@ -17,6 +17,7 @@ struct TranscriptScreen: View {
     @State private var showMembers = false
     @State private var scrolledID: String?
     @State private var leftBottomAt: Int?
+    @State private var lightboxRequest: LightboxRequest?
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -48,14 +49,15 @@ struct TranscriptScreen: View {
                         }
                         MessageRow(
                             author: state.userName(m.authorID), authorID: String(m.authorID), time: m.createdAt, text: m.content,
-                            reactions: m.reactions, me: state.me?.username, grouped: isFollowUp(m, previous), edited: m.editedAt != nil,
+                            reactions: m.reactions, attachments: m.attachments, me: state.me?.username, grouped: isFollowUp(m, previous), edited: m.editedAt != nil,
                             mentionsMe: m.authorID != state.myID && state.mentionsMe(m.content),
                             isOwn: m.authorID == state.myID, canModerate: guildChannel != nil && state.perms(guildChannel!.guildID).allows(.manageMessages),
                             onReact: { emoji, on in store.react(channel: channelID, message: m.id, emoji: emoji, on: on) },
                             onReply: { reply(to: state.userName(m.authorID)) },
                             onEdit: { beginEdit(m) },
                             onDelete: { store.deleteMessage(channel: channelID, message: m.id) },
-                            onMoreReactions: { showEmojiPicker = true }
+                            onMoreReactions: { showEmojiPicker = true },
+                            onOpenLightbox: { items, i in lightboxRequest = LightboxRequest(items: items, startIndex: i) }
                         )
                         .id(state.rowID(m))
                     }
@@ -115,6 +117,9 @@ struct TranscriptScreen: View {
         .sheet(isPresented: $showMembers) { if let g = guildChannel?.guildID { MembersSheet(guildID: g) } }
         .sheet(isPresented: $showEmojiPicker) {
             EmojiPickerSheet(serverEmojis: guildChannel.map { state.emojis[$0.guildID] ?? [] } ?? []) { entry in insert(entry.insertion) }
+        }
+        .fullScreenCover(item: $lightboxRequest) { request in
+            MediaViewerView(request: request) { lightboxRequest = nil }
         }
         .task(id: channelID) {
             store.open(channel: channelID)
