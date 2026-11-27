@@ -485,7 +485,6 @@ fn the_suspend_dialog_sends_the_picked_duration_and_the_reason() {
         });
         settle(&mut rt, 6);
         assert!(has(&rt, "suspend-submit"));
-        let before = (crate::app::fake_now(), crate::app::fake_now() + Duration::from_secs(5));
         press(&mut rt, "suspend-submit");
         let cmd = fake
             .sent()
@@ -503,11 +502,7 @@ fn the_suspend_dialog_sends_the_picked_duration_and_the_reason() {
         match (days, cmd.1) {
             (None, None) => {}
             (Some(d), Some(at)) => {
-                let want = Duration::from_secs(d * 86_400);
-                assert!(
-                    at >= before.0 + want - Duration::from_secs(5) && at <= before.1 + want,
-                    "{choice}: {at:?}"
-                );
+                assert_eq!(at, crate::app::fake_now() + Duration::from_secs(d * 86_400), "{choice}");
             }
             other => panic!("{choice}: {other:?}"),
         }
