@@ -42,6 +42,8 @@
 	<string>thehideout uses your camera when you turn on video in a voice channel.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>thehideout uses your microphone for voice channels.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>thehideout saves pictures and videos you choose to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>thehideout lets you attach photos and videos from your library to messages.</string>
 	<key>UIAppFonts</key>
