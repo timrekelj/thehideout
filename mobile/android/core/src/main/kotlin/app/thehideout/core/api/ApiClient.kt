@@ -5,6 +5,10 @@ import app.thehideout.core.auth.PasskeyCeremony
 import app.thehideout.core.auth.PasskeyFinish
 import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.model.*
+import app.thehideout.core.security.DeviceSession
+import app.thehideout.core.security.Passkey
+import app.thehideout.core.security.SecurityInfo
+import app.thehideout.core.security.TotpSetup
 import kotlinx.coroutines.flow.Flow
 
 data class Session(val token: String, val me: User)
@@ -170,6 +174,60 @@ interface ApiClient {
     ): Session
     /** Accepts the current terms version. */
     suspend fun acceptTerms(version: String)
+
+    // ---- account security (phase 5): email, password, two-factor, passkeys, devices -------------
+
+    /** How the caller's account is protected, for the Security page's section summaries. */
+    suspend fun getSecurity(): SecurityInfo
+    /** Changes the caller's password (empty [currentPassword] for accounts without one yet); signs out their other sessions. */
+    suspend fun changePassword(currentPassword: String, newPassword: String)
+    /** Starts changing (or adding) the caller's email: emails a code to [newEmail]. */
+    suspend fun changeEmail(newEmail: String, currentPassword: String)
+    /** Finishes [changeEmail] with the emailed code. */
+    suspend fun confirmEmailChange(code: String): User
+    /** Starts enabling an authenticator app: a fresh secret, valid for 10 minutes. */
+    suspend fun beginTotpSetup(): TotpSetup
+    /** Enables the authenticator app with a current code from it; the 10 recovery codes, shown only now. */
+    suspend fun confirmTotp(code: String): List<String>
+    /** Disables the authenticator app (and deletes the recovery codes) with a code from it or a recovery code. */
+    suspend fun disableTotp(code: String)
+    /** Replaces the recovery codes (old ones stop working); the new 10, shown only now. */
+    suspend fun regenerateRecoveryCodes(code: String): List<String>
+    /** The caller's passkeys, oldest first. */
+    suspend fun listPasskeys(): List<Passkey>
+    /** Renames one of the caller's passkeys. */
+    suspend fun renamePasskey(id: Long, name: String): Passkey
+    /** Deletes one of the caller's passkeys. */
+    suspend fun deletePasskey(id: Long)
+    /** The caller's signed-in sessions (devices), newest first. */
+    suspend fun listSessions(): List<DeviceSession>
+    /** Signs out one of the caller's sessions (may be the current one). */
+    suspend fun revokeSession(id: Long)
+    /** Signs out every session of the caller except the current one; returns how many. */
+    suspend fun revokeOtherSessions(): Int
+    /** Emails a 6-digit code DeleteAccount accepts instead of a password (passwordless accounts). */
+    suspend fun requestAccountDeletionCode()
+    /**
+     * Deletes the caller's account: [password], or [emailCode] for accounts without one, plus
+     * [totpCode] when two-factor authentication is on. Throws [AppError.OwnsGuilds] while the
+     * caller still owns guilds.
+     */
+    suspend fun deleteAccount(password: String?, emailCode: String?, totpCode: String?)
+    /** Queues a data export; the masked address the download link will be emailed to. Rate limited to once per 24h. */
+    suspend fun exportData(): String
+
+    // ---- notification settings (MOB-02) -----------------------------------------------------------
+
+    /** The caller's notification settings (defaults when never changed). */
+    suspend fun getNotificationSettings(): NotificationSettings
+    /** Changes settings; unset fields are unchanged. Returns the full settings. */
+    suspend fun updateNotificationSettings(
+        dmsEnabled: Boolean? = null,
+        guildDefault: NotificationLevel? = null,
+        showPreviews: Boolean? = null,
+        guilds: List<NotificationOverride> = emptyList(),
+        channels: List<NotificationOverride> = emptyList(),
+    ): NotificationSettings
 
     /**
      * One subscription to the event stream: emits until the stream ends, then completes; fails with

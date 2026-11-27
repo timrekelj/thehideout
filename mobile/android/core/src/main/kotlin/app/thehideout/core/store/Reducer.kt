@@ -131,6 +131,10 @@ sealed interface Action {
     /** An emoji we created or renamed. */
     data class EmojiUpserted(val guildId: Long, val emoji: Emoji) : Action
     data class EmojiRemoved(val guildId: Long, val emojiId: Long) : Action
+
+    // ---- settings and security (phase 5) ----
+    /** `GetNotificationSettings`/`UpdateNotificationSettings`'s reply: applied like the gateway's own event. */
+    data class NotificationSettingsReplaced(val settings: NotificationSettings) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -282,6 +286,7 @@ object Reducer {
             Reduction(s.copy(emojis = s.emojis + (a.guildId to list)))
         }
         is Action.EmojiRemoved -> Reduction(s.copy(emojis = s.emojis[a.guildId]?.let { s.emojis + (a.guildId to it.filter { e -> e.id != a.emojiId }) } ?: s.emojis))
+        is Action.NotificationSettingsReplaced -> Reduction(s.copy(notificationSettings = a.settings))
     }
 
     // ---- data in ------------------------------------------------------------------------------

@@ -296,6 +296,58 @@ class AppStore(
     suspend fun deleteEmoji(guild: Long, emojiId: Long): Result<Unit> =
         guard(runCatching { api.deleteEmoji(guild, emojiId) }).also { r -> r.onSuccess { dispatch(Action.EmojiRemoved(guild, emojiId)) } }.map { }
 
+    // ---- account security: email, password, two-factor, passkeys, devices (phase 5) -----------
+
+    suspend fun getSecurity(): Result<app.thehideout.core.security.SecurityInfo> = guard(runCatching { api.getSecurity() })
+    suspend fun changePassword(currentPassword: String, newPassword: String): Result<Unit> = guard(runCatching { api.changePassword(currentPassword, newPassword) })
+    suspend fun changeEmail(newEmail: String, currentPassword: String): Result<Unit> = guard(runCatching { api.changeEmail(newEmail, currentPassword) })
+    suspend fun confirmEmailChange(code: String): Result<app.thehideout.core.model.User> =
+        guard(runCatching { api.confirmEmailChange(code) }).also { r -> r.onSuccess { dispatch(Action.SessionStarted(it)) } }
+    suspend fun beginTotpSetup(): Result<app.thehideout.core.security.TotpSetup> = guard(runCatching { api.beginTotpSetup() })
+    suspend fun confirmTotp(code: String): Result<List<String>> = guard(runCatching { api.confirmTotp(code) })
+    suspend fun disableTotp(code: String): Result<Unit> = guard(runCatching { api.disableTotp(code) })
+    suspend fun regenerateRecoveryCodes(code: String): Result<List<String>> = guard(runCatching { api.regenerateRecoveryCodes(code) })
+    suspend fun listPasskeys(): Result<List<app.thehideout.core.security.Passkey>> = guard(runCatching { api.listPasskeys() })
+    suspend fun renamePasskey(id: Long, name: String): Result<app.thehideout.core.security.Passkey> = guard(runCatching { api.renamePasskey(id, name) })
+    suspend fun deletePasskey(id: Long): Result<Unit> = guard(runCatching { api.deletePasskey(id) })
+    suspend fun listSessions(): Result<List<app.thehideout.core.security.DeviceSession>> = guard(runCatching { api.listSessions() })
+    suspend fun revokeSession(id: Long): Result<Unit> = guard(runCatching { api.revokeSession(id) })
+    suspend fun revokeOtherSessions(): Result<Int> = guard(runCatching { api.revokeOtherSessions() })
+
+    /** Starts adding a passkey (shared with AUTH-06/SEC-06): the native ceremony via [app.thehideout.core.auth.PasskeyCeremony]. */
+    suspend fun beginPasskeyRegistration(name: String): Result<app.thehideout.core.auth.PasskeyCeremony> = guard(runCatching { api.beginPasskeyRegistration(name) })
+    suspend fun finishPasskeyRegistration(ceremonyId: String, credentialJson: String): Result<app.thehideout.core.auth.PasskeyRegistered> =
+        guard(runCatching { api.finishPasskeyRegistration(ceremonyId, credentialJson) })
+
+    // ---- account: export, deletion (phase 5) ----------------------------------------------------
+
+    suspend fun requestAccountDeletionCode(): Result<Unit> = guard(runCatching { api.requestAccountDeletionCode() })
+
+    /**
+     * Deletes the account; the server already revoked every session. Does not sign out itself, so
+     * the caller's dialog can show "Account deleted" for a moment before leaving — call [signOut]
+     * once it has.
+     */
+    suspend fun deleteAccount(password: String?, emailCode: String?, totpCode: String?): Result<Unit> =
+        guard(runCatching { api.deleteAccount(password, emailCode, totpCode) })
+
+    suspend fun exportData(): Result<String> = guard(runCatching { api.exportData() })
+
+    // ---- notification settings (MOB-02) -----------------------------------------------------------
+
+    suspend fun loadNotificationSettings(): Result<app.thehideout.core.model.NotificationSettings> =
+        guard(runCatching { api.getNotificationSettings() }).also { r -> r.onSuccess { dispatch(Action.NotificationSettingsReplaced(it)) } }
+
+    suspend fun updateNotificationSettings(
+        dmsEnabled: Boolean? = null,
+        guildDefault: app.thehideout.core.model.NotificationLevel? = null,
+        showPreviews: Boolean? = null,
+        guilds: List<app.thehideout.core.model.NotificationOverride> = emptyList(),
+        channels: List<app.thehideout.core.model.NotificationOverride> = emptyList(),
+    ): Result<app.thehideout.core.model.NotificationSettings> =
+        guard(runCatching { api.updateNotificationSettings(dmsEnabled, guildDefault, showPreviews, guilds, channels) })
+            .also { r -> r.onSuccess { dispatch(Action.NotificationSettingsReplaced(it)) } }
+
     /** What a refused moderation call says to the user (desktop's `moderation_error_text`). */
     private fun moderationErrorText(e: Throwable): String = when (e) {
         is AppError.RateLimited -> "You're doing that too fast. Wait a moment and try again."

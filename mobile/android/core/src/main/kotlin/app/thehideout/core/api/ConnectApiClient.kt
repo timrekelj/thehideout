@@ -6,6 +6,10 @@ import app.thehideout.core.auth.PasskeyFinish
 import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
+import app.thehideout.core.security.DeviceSession
+import app.thehideout.core.security.Passkey
+import app.thehideout.core.security.SecurityInfo
+import app.thehideout.core.security.TotpSetup
 import com.connectrpc.ConnectException
 import com.connectrpc.MethodSpec
 import com.connectrpc.ProtocolClientConfig
@@ -45,6 +49,7 @@ import com.thehideout.v1.LoginRequest
 import com.thehideout.v1.LookupInviteRequest
 import com.thehideout.v1.MediaServiceClient
 import com.thehideout.v1.MessageServiceClient
+import com.thehideout.v1.NotificationServiceClient
 import com.thehideout.v1.RemoveReactionRequest
 import com.thehideout.v1.RequestEmailCodeRequest
 import com.thehideout.v1.RequestPasswordResetRequest
@@ -142,6 +147,7 @@ class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, O
     private val media = MediaServiceClient(client)
     private val gateway = GatewayServiceClient(client)
     private val invites = InviteServiceClient(client)
+    private val notifications = NotificationServiceClient(client)
 
     private suspend fun <T> call(block: suspend () -> ResponseMessage<T>): T {
         val r = try {
@@ -554,6 +560,104 @@ class ConnectApiClient(private val config: ApiConfig, http: Pair<OkHttpClient, O
 
     override suspend fun acceptTerms(version: String) {
         call { auth.acceptTerms(AcceptTermsRequest.newBuilder().setVersion(version).build()) }
+    }
+
+    // ---- account security (phase 5) ------------------------------------------------------------
+
+    override suspend fun getSecurity(): SecurityInfo {
+        val r = call { auth.getSecurity(com.thehideout.v1.GetSecurityRequest.getDefaultInstance()) }
+        return SecurityInfo(r.totpEnabled, r.hasPassword, r.passkeyCount, r.recoveryCodesRemaining, r.emailVerified)
+    }
+
+    override suspend fun changePassword(currentPassword: String, newPassword: String) {
+        call { auth.changePassword(com.thehideout.v1.ChangePasswordRequest.newBuilder().setCurrentPassword(currentPassword).setNewPassword(newPassword).build()) }
+    }
+
+    override suspend fun changeEmail(newEmail: String, currentPassword: String) {
+        call { auth.changeEmail(com.thehideout.v1.ChangeEmailRequest.newBuilder().setNewEmail(newEmail).setCurrentPassword(currentPassword).build()) }
+    }
+
+    override suspend fun confirmEmailChange(code: String): User {
+        return call { auth.confirmEmailChange(com.thehideout.v1.ConfirmEmailChangeRequest.newBuilder().setCode(code).build()) }.user.toModel()
+    }
+
+    override suspend fun beginTotpSetup(): TotpSetup {
+        val r = call { auth.beginTotpSetup(com.thehideout.v1.BeginTotpSetupRequest.getDefaultInstance()) }
+        return TotpSetup(r.otpauthUri, r.secret)
+    }
+
+    override suspend fun confirmTotp(code: String): List<String> {
+        return call { auth.confirmTotp(com.thehideout.v1.ConfirmTotpRequest.newBuilder().setCode(code).build()) }.recoveryCodesList
+    }
+
+    override suspend fun disableTotp(code: String) {
+        call { auth.disableTotp(com.thehideout.v1.DisableTotpRequest.newBuilder().setCode(code).build()) }
+    }
+
+    override suspend fun regenerateRecoveryCodes(code: String): List<String> {
+        return call { auth.regenerateRecoveryCodes(com.thehideout.v1.RegenerateRecoveryCodesRequest.newBuilder().setCode(code).build()) }.recoveryCodesList
+    }
+
+    override suspend fun listPasskeys(): List<Passkey> {
+        return call { auth.listPasskeys(com.thehideout.v1.ListPasskeysRequest.getDefaultInstance()) }.passkeysList.map { it.toModel() }
+    }
+
+    override suspend fun renamePasskey(id: Long, name: String): Passkey {
+        return call { auth.renamePasskey(com.thehideout.v1.RenamePasskeyRequest.newBuilder().setPasskeyId(id).setName(name).build()) }.passkey.toModel()
+    }
+
+    override suspend fun deletePasskey(id: Long) {
+        call { auth.deletePasskey(com.thehideout.v1.DeletePasskeyRequest.newBuilder().setPasskeyId(id).build()) }
+    }
+
+    override suspend fun listSessions(): List<DeviceSession> {
+        return call { auth.listSessions(com.thehideout.v1.ListSessionsRequest.getDefaultInstance()) }.sessionsList.map { it.toModel() }
+    }
+
+    override suspend fun revokeSession(id: Long) {
+        call { auth.revokeSession(com.thehideout.v1.RevokeSessionRequest.newBuilder().setSessionId(id).build()) }
+    }
+
+    override suspend fun revokeOtherSessions(): Int {
+        return call { auth.revokeOtherSessions(com.thehideout.v1.RevokeOtherSessionsRequest.getDefaultInstance()) }.revoked
+    }
+
+    override suspend fun requestAccountDeletionCode() {
+        call { auth.requestAccountDeletionCode(com.thehideout.v1.RequestAccountDeletionCodeRequest.getDefaultInstance()) }
+    }
+
+    override suspend fun deleteAccount(password: String?, emailCode: String?, totpCode: String?) {
+        val b = com.thehideout.v1.DeleteAccountRequest.newBuilder()
+        password?.let { b.password = it }
+        emailCode?.let { b.emailCode = it }
+        totpCode?.let { b.totpCode = it }
+        call { auth.deleteAccount(b.build()) }
+    }
+
+    override suspend fun exportData(): String {
+        return call { auth.exportData(com.thehideout.v1.ExportDataRequest.getDefaultInstance()) }.maskedEmail
+    }
+
+    // ---- notification settings (MOB-02) ----------------------------------------------------------
+
+    override suspend fun getNotificationSettings(): NotificationSettings {
+        return call { notifications.getNotificationSettings(com.thehideout.v1.GetNotificationSettingsRequest.getDefaultInstance()) }.settings.toModel()
+    }
+
+    override suspend fun updateNotificationSettings(
+        dmsEnabled: Boolean?,
+        guildDefault: NotificationLevel?,
+        showPreviews: Boolean?,
+        guilds: List<NotificationOverride>,
+        channels: List<NotificationOverride>,
+    ): NotificationSettings {
+        val b = com.thehideout.v1.UpdateNotificationSettingsRequest.newBuilder()
+        dmsEnabled?.let { b.dmsEnabled = it }
+        guildDefault?.let { b.guildDefault = it.toProto() }
+        showPreviews?.let { b.showPreviews = it }
+        b.addAllGuilds(guilds.map { it.toProto() })
+        b.addAllChannels(channels.map { it.toProto() })
+        return call { notifications.updateNotificationSettings(b.build()) }.settings.toModel()
     }
 
     override fun subscribe(): Flow<GatewayEvent> = flow {
