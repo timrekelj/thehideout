@@ -87,7 +87,7 @@ whether an account exists.
   `RequestPasswordReset`, `ResetPassword`, `Begin/FinishPasskeyLogin`, `Begin/FinishPasskeyRegistration`,
   `LookupInvite`, `AcceptInvite`, `AcceptTerms`). `ConnectApiClient` implements them over
   connect-kotlin; `FakeBackend` mirrors desktop's `fake_account.rs` (code `123456`, `dora` has TOTP,
-  `tim` has a passkey, invites `WXYZ-2345`/`EXPD-0001`/`RVKD-0001`/`USED-0001`).
+  `tim` has a passkey, invites `WXYZ-2345`/`EXPD-0001`/`RVKD-0001`/`TAKN-0001`).
 - **Session restore.** `MainActivity` uses the SplashScreen API (`installSplashScreen` +
   `setKeepOnScreenCondition { phase == Loading }`), so a saved session never flashes the sign-in
   screen. `AppStore.bootstrap` loads the cache, asks `GetMe` (an unaccepted `terms_update_required`

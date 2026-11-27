@@ -121,13 +121,13 @@ class AuthUiTest {
         compose.onNodeWithText("http://10.0.2.2:8080").assertIsDisplayed()
     }
 
-    @Test fun `a pasted invite link is rejected with the code-only hint`() {
+    @Test fun `a pasted invite link yields its code and joins`() {
         harness()
         compose.onNodeWithText("Join with a code").performClick()
         compose.waitForIdle()
-        field(0, "https://thehideout.zabit.si/invite/tok-wxyz")
+        field(0, "https://thehideout.zabit.si/invite/WXYZ-2345")
         compose.onNodeWithText("Continue").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Paste just the code from your invite email, not the link.").assertIsDisplayed()
+        compose.onNodeWithText("tim invited you to join The Hideout").assertIsDisplayed()
     }
 }

@@ -707,6 +707,44 @@ class ReducerTest {
         assertFalse(s.reduce(Action.DismissNotice(first.id)).notices.any { it.id == first.id })
     }
 
+    // ---- management: create/join servers, channels, sections (phase 4a) ----
+
+    @Test fun `GuildEntered lists a new server and opens it on its channel`() {
+        val created = Guild(900, "New Server", TIM, "ABCD-EFGH", T0)
+        val s = s0.reduce(Action.GuildEntered(created))
+        assertTrue(s.guilds.any { it.id == 900L })
+        assertEquals(Place.InGuild(900), s.place)
+        // Channels are not known yet: fetched like a `guild_added` from another device.
+        assertFalse(900L in s.channels)
+    }
+
+    @Test fun `GuildEntered on a server we already have updates it in place without moving`() {
+        val updated = s0.guild(HIDEOUT)!!.copy(name = "Renamed")
+        val s = s0.reduce(Action.GuildEntered(updated))
+        assertEquals("Renamed", s.guild(HIDEOUT)?.name)
+        assertEquals(Place.InGuild(HIDEOUT), s.place)
+    }
+
+    @Test fun `ChannelCreated adds the channel, like channel_created`() {
+        val c = Channel(910, HIDEOUT, "new-channel", T0)
+        val s = s0.reduce(Action.ChannelCreated(c))
+        assertTrue(s.channelsOf(HIDEOUT).any { it.id == 910L })
+        // A later echo of the same channel from the gateway does not duplicate it.
+        assertEquals(1, s.event(GatewayEvent.ChannelCreated(c)).channelsOf(HIDEOUT).count { it.id == 910L })
+    }
+
+    @Test fun `LayoutReplaced takes the new layout, like layout_updated`() {
+        val layout = GuildLayout(99, entries = listOf(LayoutEntry(0, listOf(GENERAL))))
+        val s = s0.reduce(Action.LayoutReplaced(HIDEOUT, layout))
+        assertEquals(99L, s.layouts[HIDEOUT]?.version)
+    }
+
+    @Test fun `GuildCodeRotated replaces the invite code of that server only`() {
+        val s = s0.reduce(Action.GuildCodeRotated(HIDEOUT, "ZZZZ-9999"))
+        assertEquals("ZZZZ-9999", s.guild(HIDEOUT)?.inviteCode)
+        assertEquals(s0.guild(GARAGE)?.inviteCode, s.guild(GARAGE)?.inviteCode)
+    }
+
     @Test fun `mentions match whole words only`() {
         assertTrue(mentions("hi @Tim!", "tim"))
         assertTrue(mentions("@tim", "tim"))

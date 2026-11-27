@@ -324,14 +324,20 @@ class AuthFlowTest {
         assertEquals("WXYZ", InviteCodes.normalize("wxyz"), "a partial code stays as typed, uppercased")
     }
 
-    @Test fun `pasted invite links are rejected with the code-only hint`() = runTest(UnconfinedTestDispatcher()) {
+    @Test fun `a pasted invite link yields just its code`() = runTest(UnconfinedTestDispatcher()) {
         val f = flow()
         f.setMode(AuthMode.Invite)
-        f.updateInvite("https://thehideout.zabit.si/invite/tok-wxyz")
-        assertEquals("https://thehideout.zabit.si/invite/tok-wxyz", state(f).invite, "a link is kept as is for the check")
+        f.updateInvite("https://thehideout.zabit.si/invite/WXYZ-2345")
+        assertEquals("WXYZ-2345", state(f).invite, "the link is reduced to its code at once")
+    }
+
+    @Test fun `an incomplete code is refused on submit`() = runTest(UnconfinedTestDispatcher()) {
+        val f = flow()
+        f.setMode(AuthMode.Invite)
+        f.updateInvite("wxyz")
         f.submit()
         settle()
-        assertEquals("Paste just the code from your invite email, not the link.", state(f).error?.message)
+        assertEquals("Enter the 8-character code from your invite email.", state(f).error?.message)
         assertEquals(AuthField.Invite, state(f).error?.field)
     }
 
@@ -395,7 +401,7 @@ class AuthFlowTest {
         f.submit()
         settle()
         assertEquals("This invite was withdrawn. Ask for a new one.", state(f).error?.message)
-        f.updateInvite("USED-0001")
+        f.updateInvite("TAKN-0001")
         f.submit()
         settle()
         assertEquals("This invite was already used. Sign in instead.", state(f).error?.message)
@@ -420,12 +426,12 @@ class AuthFlowTest {
         assertNull(inviteTokenFromUrl("thehideout://invite/"))
     }
 
-    @Test fun `a deep link goes straight to the invite, token as is`() = runTest(UnconfinedTestDispatcher()) {
+    @Test fun `a deep link goes straight to the invite, its code normalised`() = runTest(UnconfinedTestDispatcher()) {
         val f = flow()
-        f.openLink("thehideout://invite/tok-wxyz")
+        f.openLink("thehideout://invite/wxyz2345")
         settle()
         assertEquals(AuthMode.Invite, state(f).mode)
-        assertEquals("tok-wxyz", state(f).invite, "the token is sent as is, not normalised")
+        assertEquals("WXYZ-2345", state(f).invite, "the code is normalised like typed input")
         assertTrue(state(f).step is AuthStep.InviteAccept, "looked up already")
     }
 

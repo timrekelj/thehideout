@@ -75,8 +75,9 @@ fun MembersSheet(state: AppState, guildId: Long, onDismiss: () -> Unit, onMessag
     }
 
     profile?.let { u ->
+        val myRoles = roles.filter { it.id in memberRoles[u.id].orEmpty() }.sortedByDescending { it.position }
         ModalBottomSheet(onDismissRequest = { profile = null }, containerColor = c.surface) {
-            Column(Modifier.heightIn(min = 160.dp).padding(horizontal = 20.dp, vertical = 12.dp)) {
+            Column(Modifier.heightIn(min = 160.dp).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Avatar(u.id, u.displayName, size = 56.dp)
                     Column {
@@ -84,8 +85,16 @@ fun MembersSheet(state: AppState, guildId: Long, onDismiss: () -> Unit, onMessag
                         Text("@${u.username}", style = MaterialTheme.typography.bodyMedium, color = c.textMuted)
                     }
                 }
+                if (myRoles.isNotEmpty()) {
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        myRoles.forEach { r ->
+                            val ink = c.channel(r.color)?.text ?: c.textMuted
+                            androidx.compose.material3.SuggestionChip(onClick = {}, label = { Text(r.name, color = ink) })
+                        }
+                    }
+                }
                 if (u.id != state.myId) {
-                    Button(onClick = { onMessage(u.id) }, modifier = Modifier.padding(top = 16.dp)) { Text("Message") }
+                    Button(onClick = { onMessage(u.id) }) { Text("Message") }
                 }
             }
         }

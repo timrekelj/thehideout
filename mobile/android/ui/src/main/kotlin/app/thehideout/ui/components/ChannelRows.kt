@@ -117,9 +117,16 @@ private fun ChannelGlyph(channel: Channel, ink: Color) {
     }
 }
 
-/** A section's header: its name, a chevron that turns when it folds, and the unread total while folded. */
+/** A section's header: its name, a chevron that turns when it folds, the unread total while folded, and an optional trailing slot (the manage menu, SIDE-08). */
 @Composable
-fun SectionHeader(name: String, open: Boolean, modifier: Modifier = Modifier, unread: Unread = Unread(), onToggle: () -> Unit = {}) {
+fun SectionHeader(
+    name: String,
+    open: Boolean,
+    modifier: Modifier = Modifier,
+    unread: Unread = Unread(),
+    onToggle: () -> Unit = {},
+    trailing: @Composable (() -> Unit)? = null,
+) {
     val c = Hideout.colors
     val turn by animateFloatAsState(if (open) 0f else -90f, label = "chevron")
     val m = Hideout.metrics
@@ -140,5 +147,6 @@ fun SectionHeader(name: String, open: Boolean, modifier: Modifier = Modifier, un
         if (!open) {
             if (unread.mentions > 0) MentionBadge(unread.mentions) else if (unread.count > 0) UnreadPill(unread.count)
         }
+        trailing?.invoke()
     }
 }

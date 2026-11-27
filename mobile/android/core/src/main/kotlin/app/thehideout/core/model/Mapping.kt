@@ -64,9 +64,11 @@ fun PbChannel.toModel(): Channel {
     )
 }
 
+fun com.thehideout.v1.Section.toModel() = Section(id, guildId, name, position)
+
 fun PbLayout.toModel() = GuildLayout(
     version = version,
-    sections = sectionsList.map { Section(it.id, it.guildId, it.name, it.position) },
+    sections = sectionsList.map { it.toModel() },
     entries = entriesList.map { LayoutEntry(it.sectionId, it.channelIdsList.toList()) },
 )
 
