@@ -96,6 +96,15 @@ sealed interface Action {
     /** The shell's tab that can show [AppState.currentChannel]'s transcript (Servers for a guild,
      * DMs for home) became, or stopped being, the foreground destination. */
     data class SetChannelForeground(val visible: Boolean) : Action
+
+    // ---- management: create/join servers, channels, sections, invites (phase 4a) ----
+    /** A server was created or joined by the caller: lists it (if new) and opens it. */
+    data class GuildEntered(val guild: Guild) : Action
+    /** A channel the caller just created (handled like the gateway's `channel_created`, so a later echo dedupes). */
+    data class ChannelCreated(val channel: Channel) : Action
+    /** A section create/rename/delete the caller just did: the resulting layout (handled like `layout_updated`). */
+    data class LayoutReplaced(val guildId: Long, val layout: GuildLayout) : Action
+    data class GuildCodeRotated(val guildId: Long, val code: String) : Action
 }
 
 data class Reduction(val state: AppState, val effects: List<Effect> = emptyList())
@@ -179,6 +188,17 @@ object Reducer {
             if (a.visible && !s.channelForeground) arrive(s.copy(channelForeground = true))
             else Reduction(s.copy(channelForeground = a.visible))
         }
+        is Action.GuildEntered -> {
+            val withGuild = if (s.guilds.any { it.id == a.guild.id }) {
+                s.copy(guilds = s.guilds.map { if (it.id == a.guild.id) a.guild else it })
+            } else {
+                s.copy(guilds = s.guilds + a.guild)
+            }
+            goGuild(withGuild, a.guild.id)
+        }
+        is Action.ChannelCreated -> event(s, GatewayEvent.ChannelCreated(a.channel))
+        is Action.LayoutReplaced -> event(s, GatewayEvent.LayoutUpdated(a.guildId, a.layout))
+        is Action.GuildCodeRotated -> Reduction(s.copy(guilds = s.guilds.map { if (it.id == a.guildId) it.copy(inviteCode = a.code) else it }))
     }
 
     // ---- data in ------------------------------------------------------------------------------
