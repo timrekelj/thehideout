@@ -260,7 +260,7 @@ fn row(app: &App, id: u64) -> thehideout_api::AdminUserRow {
 #[test]
 fn an_admin_suspends_and_unsuspends_a_user() {
     let (mut app, fake) = admin_users();
-    let until = SystemTime::now() + Duration::from_secs(3600);
+    let until = fake_now() + Duration::from_secs(3600);
     app.act(|s| s.admin_suspend(BRUNO, "  spamming ", Some(until)));
     assert!(app.state.admin().unwrap().busy_users.contains(&BRUNO));
     // Busy: a second call is ignored.
