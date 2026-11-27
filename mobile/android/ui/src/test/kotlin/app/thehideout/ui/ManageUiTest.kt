@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -174,13 +175,19 @@ class ManageUiTest {
         assertTrue(store.state.value.layouts[FakeBackend.HIDEOUT]!!.sections.none { it.id == FakeBackend.BUILDING })
     }
 
-    @Test fun `the server and section menus are hidden without MANAGE_CHANNELS or INVITE_PEOPLE`() {
+    @Test fun `the section menu is hidden and the server menu has only Server settings without MANAGE_CHANNELS or INVITE_PEOPLE`() {
         val store = harness()
-        // ana (role 1003 on The Hideout: MANAGE_EMOJIS only) has neither permission.
+        // ana (role 1003 on The Hideout: MANAGE_EMOJIS only) has neither permission, but the server
+        // menu still offers Server settings (she can open its Emojis page).
         store.dispatch(Action.SessionStarted(store.state.value.users.getValue(FakeBackend.ANA)))
         compose.settle()
-        compose.onAllNodesWithTag("server-menu").assertCountEquals(0)
         compose.onAllNodesWithTag("section-menu-${FakeBackend.BUILDING}").assertCountEquals(0)
+        compose.onNodeWithTag("server-menu").performClick()
+        compose.settle()
+        compose.onAllNodesWithText("Invite people").assertCountEquals(0)
+        compose.onAllNodesWithText("Create channel").assertCountEquals(0)
+        compose.onAllNodesWithText("Create section").assertCountEquals(0)
+        compose.onNodeWithText("Server settings").assertIsDisplayed()
         // The "+" to create/join a server has nothing to do with this guild's permissions.
         compose.onNodeWithTag("add-server").assertIsDisplayed()
     }

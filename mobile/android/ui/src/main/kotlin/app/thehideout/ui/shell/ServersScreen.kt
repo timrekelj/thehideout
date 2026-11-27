@@ -122,6 +122,8 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
     var showCreateChannel by remember { mutableStateOf(false) }
     var showCreateSection by remember { mutableStateOf(false) }
     var showInvite by remember { mutableStateOf(false) }
+    var showServerSettings by remember { mutableStateOf(false) }
+    var showLeaveServer by remember { mutableStateOf(false) }
     var sectionMenuFor by remember { mutableStateOf<Long?>(null) }
     var renameSectionFor by remember { mutableStateOf<app.thehideout.core.model.Section?>(null) }
     var deleteSectionFor by remember { mutableStateOf<app.thehideout.core.model.Section?>(null) }
@@ -136,6 +138,8 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
         showCreateChannel = false
         showCreateSection = false
         showInvite = false
+        showServerSettings = false
+        showLeaveServer = false
         sectionMenuFor = null
         renameSectionFor = null
         deleteSectionFor = null
@@ -144,6 +148,9 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
     val canManageChannels = guild != null && Perm.has(state.perms(guild.id), Perm.MANAGE_CHANNELS)
     val canManageServer = guild != null && Perm.has(state.perms(guild.id), Perm.MANAGE_SERVER)
     val canInvite = guild != null && Perm.has(state.perms(guild.id), Perm.INVITE_PEOPLE)
+    val canOpenServerSettings = guild != null && state.canOpenServerSettings(guild.id)
+    val canLeaveGuild = guild != null && state.canLeaveGuild(guild.id)
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().background(c.bg)) {
         Column(Modifier.statusBarsPadding()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -170,7 +177,7 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
             if (guild != null) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(guild.name, style = MaterialTheme.typography.headlineSmall, color = c.text, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                    if (canInvite || canManageChannels) {
+                    if (canInvite || canManageChannels || canOpenServerSettings || canLeaveGuild) {
                         Box {
                             IconButton(onClick = { guildMenu = true }, modifier = Modifier.testTag("server-menu")) { SymIcon(Sym.MoreVert, "Server menu") }
                             DropdownMenu(expanded = guildMenu, onDismissRequest = { guildMenu = false }) {
@@ -179,6 +186,8 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
                                     DropdownMenuItem(text = { Text("Create channel") }, onClick = { guildMenu = false; createChannelSectionId = null; showCreateChannel = true })
                                     DropdownMenuItem(text = { Text("Create section") }, onClick = { guildMenu = false; showCreateSection = true })
                                 }
+                                if (canOpenServerSettings) DropdownMenuItem(text = { Text("Server settings") }, onClick = { guildMenu = false; showServerSettings = true }, modifier = Modifier.testTag("server-menu-settings"))
+                                if (canLeaveGuild) DropdownMenuItem(text = { Text("Leave server") }, onClick = { guildMenu = false; showLeaveServer = true }, modifier = Modifier.testTag("server-menu-leave"))
                             }
                         }
                     }
@@ -272,6 +281,13 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
                 onDismiss = { showInvite = false },
             )
         }
+        if (showLeaveServer) {
+            LeaveServerDialog(guild.name, onDismiss = { showLeaveServer = false }, onConfirm = { actions.leaveGuild(guild.id) })
+        }
+    }
+    if (guild != null && showServerSettings) {
+        ServerSettingsScreen(state, guild.id, actions, onDismiss = { showServerSettings = false }, modifier = Modifier.fillMaxSize())
+    }
     }
 }
 

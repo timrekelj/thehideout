@@ -196,6 +196,9 @@ class ModerationTest {
         assertTrue(s.state.value.rolesOf(HIDEOUT).any { it.id == role.id && it.name == "Helper" })
         val updated = s.updateRole(HIDEOUT, role.id, name = "Helpers", color = null, permissions = null).getOrThrow()
         assertEquals("Helpers", updated.name)
+        val repermed = s.updateRole(HIDEOUT, role.id, name = null, color = null, permissions = Perm.MANAGE_EMOJIS).getOrThrow()
+        assertTrue(Perm.has(repermed.permissions, Perm.MANAGE_EMOJIS))
+        assertFalse(Perm.has(repermed.permissions, Perm.MANAGE_MESSAGES), "replaced, not OR'd in")
         val before = s.state.value.rolesOf(HIDEOUT).map { it.id }
         s.moveRole(HIDEOUT, role.id, -1).getOrThrow()
         assertTrue(s.state.value.rolesOf(HIDEOUT).indexOfFirst { it.id == role.id } < before.indexOf(role.id), "moved up (more senior)")
