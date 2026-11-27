@@ -14,9 +14,6 @@ use thehideout_api::{
 use crate::backend::{Command, Reply};
 use crate::format::{DAY, utc};
 
-/// "Today" of the fake world (see `fake::now_unix`): the day of its last activity point.
-const TODAY: (i64, u32, u32) = (2026, 11, 19);
-
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
 const KIB: u64 = 1024;
@@ -47,8 +44,9 @@ fn time(unix: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(unix.max(0) as u64)
 }
 
+/// The fake world's clock (same instant as `fake::now_unix`): never the real wall clock.
 fn today_unix() -> i64 {
-    utc(TODAY.0, TODAY.1, TODAY.2, 11, 30)
+    crate::fake::now_unix()
 }
 
 struct Lcg(u64);
@@ -387,7 +385,7 @@ impl AdminWorld {
     }
 
     fn seed_activity(&mut self, rng: &mut Lcg) {
-        let today = utc(TODAY.0, TODAY.1, TODAY.2, 0, 0).div_euclid(DAY);
+        let today = today_unix().div_euclid(DAY);
         for back in (0..90i64).rev() {
             let day = today - back;
             // 1970-01-01 was a Thursday: day % 7 == 2 is a Saturday, 3 a Sunday.
@@ -719,7 +717,7 @@ impl AdminWorld {
         if reason.chars().count() > 512 {
             return Err(ApiError::InvalidArgument("reason is too long".into()));
         }
-        if until.is_some_and(|t| t <= SystemTime::now()) {
+        if until.is_some_and(|t| t <= time(today_unix())) {
             return Err(ApiError::InvalidArgument("until must be in the future".into()));
         }
         let name = t.username.clone();
@@ -974,6 +972,20 @@ mod tests {
             w.overview().storage_bytes_total,
             before.storage_bytes_total - big.bytes
         );
+    }
+
+    #[test]
+    fn suspend_judges_until_by_the_fake_clock_not_the_wall_clock() {
+        let now = crate::app::fake_now();
+        let (mut w, me) = world();
+        assert!(w.suspend(&me, 2, "r", Some(now + Duration::from_secs(DAY as u64))).is_ok());
+        let (mut w, me) = world();
+        assert!(matches!(w.suspend(&me, 2, "r", Some(now)), Err(ApiError::InvalidArgument(_))));
+        let (mut w, me) = world();
+        assert!(matches!(
+            w.suspend(&me, 2, "r", Some(now - Duration::from_secs(1))),
+            Err(ApiError::InvalidArgument(_))
+        ));
     }
 
     #[test]
