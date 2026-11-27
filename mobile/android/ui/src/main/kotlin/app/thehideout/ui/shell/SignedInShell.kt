@@ -42,6 +42,8 @@ fun SignedInShell(
     onLookChange: (Look) -> Unit,
     actions: ShellActions,
     versionName: String,
+    serverUrl: String = "",
+    onOpenUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     initial: Destination = Destination.Servers,
 ) {
@@ -94,7 +96,7 @@ fun SignedInShell(
                 Destination.Servers -> ServersScreen(state, navActions)
                 Destination.Messages -> DmsScreen(state, navActions)
                 Destination.Mentions -> MentionsScreen(state, navActions)
-                Destination.You -> YouScreen(state.me, look, onLookChange, actions.signOut, versionName)
+                Destination.You -> YouScreen(state, look, onLookChange, actions, versionName, serverUrl, onOpenUrl)
             }
         }
     }

@@ -214,6 +214,36 @@ Gotchas:
   last-selected channel in whichever tab shows it, Servers or DMs, even while a different tab is
   in front). See `AppState.channelForeground`'s doc for how the store knows.
 
+## E2E check (phase 5 settings and security, against the real server)
+
+A manual pass as the bootstrap admin, verified at every step against the real server (curl) and
+Mailpit, not just the app's own screens:
+
+1. Set the server URL, accept a bootstrap admin invite (`thehideout-server invite <email> --admin`),
+   land signed in with no servers.
+2. SEC-02: change the password from Security; a curl `Login` with the old password now fails,
+   the new one succeeds.
+3. SEC-04: set up an authenticator app — the QR/secret screen is `FLAG_SECURE` (confirmed: a
+   screenshot of it is solid black), so the secret came from `adb shell uiautomator dump`'s
+   accessibility tree (screenshots are pixels only; the tree is unaffected) and a local script
+   computed the 6-digit TOTP code; the secret itself is never printed. Confirmed, recovery codes
+   shown once; the Security summary reads "On · 10 recovery codes left" from a real `GetSecurity`.
+4. Signed out, signed back in with username/password: a second-factor challenge appeared; a freshly
+   computed TOTP code signed in.
+5. SEC-07: a second session from curl's own `Login` response showed up in Devices as "curl-check";
+   revoking it from the app made a follow-up curl call with that token answer `unauthenticated`.
+6. ACCT-02: requested a data export; the Security row showed "Link emailed to t\*\*\*@example.com",
+   and Mailpit's API (`GET /api/v1/messages`) listed "Your thehideout data export" for the account.
+7. ACCT-01: deleted the account (password + TOTP code, no owned servers); the app returned to the
+   sign-in screen, and a curl `Login` with the deleted account's credentials now fails.
+
+To rerun: `mobile/android/maestro/settings-live-check.yaml` drives the sign-up and password change;
+`settings-live-check-totp-setup.yaml` continues into the authenticator setup once on that screen.
+The sign-in screen's own username/password fields (phase 2, unrelated to this phase) and the
+delete-account form needed `adb shell input tap <x> <y>` from a fresh `uiautomator dump` instead of
+Maestro's text matcher: tapping the field's empty-state label text sometimes focused a sibling field
+instead (the README gotcha above about fresh dumps, not a phase 5 regression).
+
 ## Attachments and the lightbox (phase 3b)
 
 Rendering only (ATT-01..05, ATT-12): uploading, embeds and custom emoji images are later tasks.

@@ -19,7 +19,7 @@ enum class Sym(@DrawableRes val res: Int) {
     ChevronRight(R.drawable.ic_chevron_right),
     Close(R.drawable.ic_close), ContentCopy(R.drawable.ic_content_copy), Contrast(R.drawable.ic_contrast),
     Code(R.drawable.ic_code), DarkMode(R.drawable.ic_dark_mode), Delete(R.drawable.ic_delete), DensityMedium(R.drawable.ic_density_medium),
-    Description(R.drawable.ic_description), Dns(R.drawable.ic_dns), Download(R.drawable.ic_download), Draft(R.drawable.ic_draft),
+    Description(R.drawable.ic_description), Devices(R.drawable.ic_devices), Dns(R.drawable.ic_dns), Download(R.drawable.ic_download), Draft(R.drawable.ic_draft),
     Edit(R.drawable.ic_edit), ExpandMore(R.drawable.ic_expand_more), Fingerprint(R.drawable.ic_fingerprint),
     FolderZip(R.drawable.ic_folder_zip), FormatSize(R.drawable.ic_format_size), Forum(R.drawable.ic_forum),
     Fullscreen(R.drawable.ic_fullscreen), Headphones(R.drawable.ic_headphones),
@@ -33,7 +33,7 @@ enum class Sym(@DrawableRes val res: Int) {
     Reply(R.drawable.ic_reply), ScreenShare(R.drawable.ic_screen_share), Search(R.drawable.ic_search),
     Send(R.drawable.ic_send), Settings(R.drawable.ic_settings), Share(R.drawable.ic_share), Stack(R.drawable.ic_stack), Tag(R.drawable.ic_tag),
     TextFields(R.drawable.ic_text_fields), Tune(R.drawable.ic_tune), Videocam(R.drawable.ic_videocam),
-    Visibility(R.drawable.ic_visibility), VolumeOff(R.drawable.ic_volume_off), VolumeUp(R.drawable.ic_volume_up),
+    Visibility(R.drawable.ic_visibility), VisibilityOff(R.drawable.ic_visibility_off), VolumeOff(R.drawable.ic_volume_off), VolumeUp(R.drawable.ic_volume_up),
     Warning(R.drawable.ic_warning),
 }
 

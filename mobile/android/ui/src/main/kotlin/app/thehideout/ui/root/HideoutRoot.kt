@@ -99,7 +99,7 @@ fun HideoutRoot(
                 useDemo = actions.useDemo,
             )
             SessionPhase.SignedIn -> CompositionLocalProvider(LocalMediaBase provides mediaBase) {
-                SignedInShell(state, look, onLookChange, actions, versionName)
+                SignedInShell(state, look, onLookChange, actions, versionName, serverUrl, onOpenUrl)
             }
             is SessionPhase.TermsRequired -> TermsGate(
                 version = phase.version,

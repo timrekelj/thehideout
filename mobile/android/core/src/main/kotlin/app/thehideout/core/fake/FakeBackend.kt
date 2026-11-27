@@ -10,6 +10,10 @@ import app.thehideout.core.auth.PasskeyFinish
 import app.thehideout.core.auth.PasskeyRegistered
 import app.thehideout.core.auth.SecondFactorMethod
 import app.thehideout.core.model.*
+import app.thehideout.core.security.DeviceSession
+import app.thehideout.core.security.Passkey
+import app.thehideout.core.security.SecurityInfo
+import app.thehideout.core.security.TotpSetup
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -173,6 +177,26 @@ class FakeBackend(
     val secondFactorPasskeyUsers = setOf(DORA)
     /** Users who have a passkey for sign-in. */
     val passkeyUsers = mutableSetOf(TIM)
+    /** Account security (phase 5): who has no password (`ChangePassword`/`DeleteAccount` take a code instead). */
+    val passwordlessUsers = mutableSetOf(BRUNO)
+    private val passkeysByUser = mutableMapOf(
+        TIM to mutableListOf(Passkey(9101L, "Pixel 8 Pro", now - Duration.ofDays(90), now - Duration.ofDays(2))),
+    )
+    private var nextPasskeyId = 9200L
+    private val pendingPasskeyName = mutableMapOf<String, String>()
+    private val sessionsByUser = mutableMapOf(
+        TIM to mutableListOf(
+            DeviceSession(8001L, "Pixel 8 Pro", now - Duration.ofDays(90), now - Duration.ofMinutes(2), current = true),
+            DeviceSession(8002L, "Chrome on Mac", now - Duration.ofDays(30), now - Duration.ofDays(1)),
+        ),
+    )
+    private var nextSessionId = 8100L
+    /** Pending `ChangeEmail`: the new address waiting for `ConfirmEmailChange`'s code. */
+    private val pendingEmailChange = mutableMapOf<Long, String>()
+    /** `BeginTotpSetup`'s secret, waiting for `ConfirmTotp`. */
+    private val pendingTotpSecret = mutableMapOf<Long, String>()
+    private val deletionCodeRequested = mutableSetOf<Long>()
+    private val exportRequested = mutableSetOf<Long>()
     /** Second-factor challenges: id, username, wrong answers so far (five kills the challenge). */
     private val challenges = mutableListOf<Triple<String, String, Int>>()
     private var nextChallenge = 0L
@@ -935,7 +959,9 @@ class FakeBackend(
 
     override suspend fun beginPasskeyRegistration(name: String): PasskeyCeremony {
         pause()
-        return newCeremony()
+        val ceremony = newCeremony()
+        pendingPasskeyName[ceremony.ceremonyId] = name.ifBlank { "Passkey" }
+        return ceremony
     }
 
     override suspend fun finishPasskeyRegistration(ceremonyId: String, credentialJson: String): PasskeyRegistered {
@@ -946,7 +972,9 @@ class FakeBackend(
             if (left >= 0) return PasskeyRegistered("", true)
         }
         passkeyUsers += currentUserId
-        return PasskeyRegistered("Passkey", false)
+        val name = pendingPasskeyName.remove(ceremonyId) ?: "Passkey"
+        passkeysByUser.getOrPut(currentUserId) { mutableListOf() } += Passkey(nextPasskeyId++, name, now)
+        return PasskeyRegistered(name, false)
     }
 
     override suspend fun lookupInvite(tokenOrCode: String): InvitePreview {
@@ -998,6 +1026,194 @@ class FakeBackend(
         pause()
         if (version != termsVersion) throw AppError.Precondition("the current terms version is $termsVersion")
         termsOutdated = false
+    }
+
+    // ---- account security (phase 5) ------------------------------------------------------------
+
+    private fun hasPassword(user: Long) = user !in passwordlessUsers
+
+    /** A current password is accepted unless blank or [wrongPassword] (same rule as [login]). */
+    private fun checkPassword(password: String) {
+        if (password.isEmpty() || password == wrongPassword) throw AppError.PermissionDenied
+    }
+
+    override suspend fun getSecurity(): SecurityInfo {
+        pause()
+        return SecurityInfo(
+            totpEnabled = totpUsers.containsKey(currentUserId),
+            hasPassword = hasPassword(currentUserId),
+            passkeyCount = passkeysByUser[currentUserId].orEmpty().size,
+            recoveryCodesRemaining = totpUsers[currentUserId]?.size ?: 0,
+            emailVerified = me.email != null,
+        )
+    }
+
+    override suspend fun changePassword(currentPassword: String, newPassword: String) {
+        pause()
+        if (hasPassword(currentUserId)) checkPassword(currentPassword)
+        if (newPassword.length < MIN_PASSWORD) throw AppError.InvalidArgument("password must be at least 8 characters")
+        passwordlessUsers.remove(currentUserId)
+    }
+
+    override suspend fun changeEmail(newEmail: String, currentPassword: String) {
+        pause()
+        if (hasPassword(currentUserId)) checkPassword(currentPassword)
+        pendingEmailChange[currentUserId] = newEmail.trim()
+    }
+
+    override suspend fun confirmEmailChange(code: String): User {
+        pause()
+        val newEmail = pendingEmailChange[currentUserId] ?: throw AppError.CodeExpired
+        if (code.trim() != emailCode) throw AppError.WrongCode(2)
+        pendingEmailChange.remove(currentUserId)
+        val updated = users.getValue(currentUserId).copy(email = newEmail)
+        users[currentUserId] = updated
+        return updated
+    }
+
+    override suspend fun beginTotpSetup(): TotpSetup {
+        pause()
+        val secret = "JBSWY3DPEHPK3PXP"
+        pendingTotpSecret[currentUserId] = secret
+        return TotpSetup("otpauth://totp/thehideout:${me.username}?secret=$secret&issuer=thehideout", secret)
+    }
+
+    override suspend fun confirmTotp(code: String): List<String> {
+        pause()
+        if (!pendingTotpSecret.containsKey(currentUserId)) throw AppError.CodeExpired
+        if (code.trim() != emailCode) throw AppError.WrongCode(2)
+        pendingTotpSecret.remove(currentUserId)
+        val codes = RECOVERY_CODES.toMutableList()
+        totpUsers[currentUserId] = codes
+        return codes
+    }
+
+    override suspend fun disableTotp(code: String) {
+        pause()
+        val codes = totpUsers[currentUserId] ?: throw AppError.Precondition("two-factor authentication is not on")
+        if (code.trim() != emailCode && codes.none { plain(it) == plain(code) }) throw AppError.WrongCode(2)
+        totpUsers.remove(currentUserId)
+    }
+
+    override suspend fun regenerateRecoveryCodes(code: String): List<String> {
+        pause()
+        if (!totpUsers.containsKey(currentUserId)) throw AppError.Precondition("two-factor authentication is not on")
+        if (code.trim() != emailCode) throw AppError.WrongCode(2)
+        val fresh = RECOVERY_CODES.shuffled().toMutableList()
+        totpUsers[currentUserId] = fresh
+        return fresh
+    }
+
+    override suspend fun listPasskeys(): List<Passkey> {
+        pause()
+        return passkeysByUser[currentUserId].orEmpty().sortedBy { it.createdAt }
+    }
+
+    override suspend fun renamePasskey(id: Long, name: String): Passkey {
+        pause()
+        val list = passkeysByUser[currentUserId] ?: throw AppError.NotFound
+        val at = list.indexOfFirst { it.id == id }
+        if (at < 0) throw AppError.NotFound
+        val updated = list[at].copy(name = name)
+        list[at] = updated
+        return updated
+    }
+
+    override suspend fun deletePasskey(id: Long) {
+        pause()
+        val list = passkeysByUser[currentUserId] ?: throw AppError.NotFound
+        if (!list.removeAll { it.id == id }) throw AppError.NotFound
+        if (list.isEmpty()) passkeyUsers.remove(currentUserId)
+    }
+
+    override suspend fun listSessions(): List<DeviceSession> {
+        pause()
+        return sessionsByUser[currentUserId].orEmpty().sortedByDescending { it.createdAt }
+    }
+
+    override suspend fun revokeSession(id: Long) {
+        pause()
+        val list = sessionsByUser[currentUserId] ?: throw AppError.NotFound
+        if (!list.removeAll { it.id == id }) throw AppError.NotFound
+    }
+
+    override suspend fun revokeOtherSessions(): Int {
+        pause()
+        val list = sessionsByUser[currentUserId] ?: return 0
+        val before = list.size
+        sessionsByUser[currentUserId] = list.filter { it.current }.toMutableList()
+        return before - sessionsByUser.getValue(currentUserId).size
+    }
+
+    override suspend fun requestAccountDeletionCode() {
+        pause()
+        deletionCodeRequested += currentUserId
+    }
+
+    override suspend fun deleteAccount(password: String?, emailCode: String?, totpCode: String?) {
+        pause()
+        val owned = guilds.filter { it.ownerId == currentUserId }
+        if (owned.isNotEmpty()) {
+            throw AppError.OwnsGuilds(owned.map { OwnedGuild(it.id, it.name, members[it.id].orEmpty().size.coerceAtLeast(1)) })
+        }
+        if (hasPassword(currentUserId)) {
+            checkPassword(password.orEmpty())
+        } else {
+            if (currentUserId !in deletionCodeRequested) throw AppError.Precondition("request a deletion code first")
+            if (emailCode?.trim() != this.emailCode) throw AppError.WrongCode(2)
+        }
+        if (totpUsers.containsKey(currentUserId)) {
+            val codes = totpUsers.getValue(currentUserId)
+            if (totpCode?.trim() != this.emailCode && codes.none { plain(it) == plain(totpCode.orEmpty()) }) throw AppError.WrongCode(2)
+        }
+        users[currentUserId] = users.getValue(currentUserId).copy(deleted = true)
+        sessionsByUser.remove(currentUserId)
+    }
+
+    override suspend fun exportData(): String {
+        pause()
+        if (!exportRequested.add(currentUserId)) throw AppError.RateLimited
+        return mask(me.email ?: "${me.username}@example.com")
+    }
+
+    // ---- notification settings (MOB-02) ----------------------------------------------------------
+
+    private var notificationSettings = NotificationSettings(dmsEnabled = true, guildDefault = NotificationLevel.Mentions, showPreviews = true)
+
+    override suspend fun getNotificationSettings(): NotificationSettings {
+        pause()
+        return notificationSettings
+    }
+
+    override suspend fun updateNotificationSettings(
+        dmsEnabled: Boolean?,
+        guildDefault: NotificationLevel?,
+        showPreviews: Boolean?,
+        guilds: List<NotificationOverride>,
+        channels: List<NotificationOverride>,
+    ): NotificationSettings {
+        pause()
+        var s = notificationSettings
+        dmsEnabled?.let { s = s.copy(dmsEnabled = it) }
+        guildDefault?.let { s = s.copy(guildDefault = it) }
+        showPreviews?.let { s = s.copy(showPreviews = it) }
+        if (guilds.isNotEmpty()) {
+            val byId = s.guilds.associateBy { it.id }.toMutableMap()
+            for (o in guilds) {
+                if (o.level == NotificationLevel.Inherit && o.mutedUntil == null) byId.remove(o.id) else byId[o.id] = o
+            }
+            s = s.copy(guilds = byId.values.toList())
+        }
+        if (channels.isNotEmpty()) {
+            val byId = s.channels.associateBy { it.id }.toMutableMap()
+            for (o in channels) {
+                if (o.level == NotificationLevel.Inherit && o.mutedUntil == null) byId.remove(o.id) else byId[o.id] = o
+            }
+            s = s.copy(channels = byId.values.toList())
+        }
+        notificationSettings = s
+        emit(GatewayEvent.NotificationSettingsUpdated(s))
+        return s
     }
 
     override fun subscribe(): Flow<GatewayEvent> = flow {

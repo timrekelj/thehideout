@@ -62,11 +62,13 @@ fun LookSheet(look: Look, onChange: (Look) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-fun LookControls(look: Look, onChange: (Look) -> Unit, modifier: Modifier = Modifier) {
+fun LookControls(look: Look, onChange: (Look) -> Unit, modifier: Modifier = Modifier, scrollable: Boolean = true) {
     val spec = look.spec
     fun spec(f: ThemeSpec.() -> ThemeSpec) = onChange(look.copy(spec = spec.f()))
     val c = Hideout.colors
-    Column(modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+    Column(
+        modifier.fillMaxWidth().navigationBarsPadding().then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier).padding(bottom = 24.dp),
+    ) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Look", style = MaterialTheme.typography.headlineSmall, color = c.text, modifier = Modifier.weight(1f))
             TextButton(onClick = { onChange(Look()) }, enabled = look != Look()) { Text("Reset") }

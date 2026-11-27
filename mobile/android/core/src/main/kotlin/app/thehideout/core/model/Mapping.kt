@@ -198,6 +198,35 @@ fun com.thehideout.v1.NotificationSettings.toModel() = NotificationSettings(
     channels = channelsList.map { it.toModel() },
 )
 
+fun NotificationLevel.toProto(): com.thehideout.v1.NotificationLevel = when (this) {
+    NotificationLevel.Inherit -> com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_INHERIT
+    NotificationLevel.All -> com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_ALL
+    NotificationLevel.Mentions -> com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_MENTIONS
+    NotificationLevel.Nothing -> com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_NOTHING
+    NotificationLevel.Unspecified -> com.thehideout.v1.NotificationLevel.NOTIFICATION_LEVEL_UNSPECIFIED
+}
+
+fun NotificationOverride.toProto(): com.thehideout.v1.NotificationOverride {
+    val b = com.thehideout.v1.NotificationOverride.newBuilder().setId(id).setLevel(level.toProto())
+    mutedUntil?.let { b.mutedUntil = it.toTimestamp() }
+    return b.build()
+}
+
+fun com.thehideout.v1.Passkey.toModel() = app.thehideout.core.security.Passkey(
+    id = id,
+    name = name,
+    createdAt = createdAt.toInstant(),
+    lastUsedAt = if (hasLastUsedAt()) lastUsedAt.toInstant() else null,
+)
+
+fun com.thehideout.v1.Session.toModel() = app.thehideout.core.security.DeviceSession(
+    id = id,
+    deviceName = deviceName,
+    createdAt = createdAt.toInstant(),
+    lastSeenAt = if (hasLastSeenAt()) lastSeenAt.toInstant() else null,
+    current = current,
+)
+
 /** Maps a stream item to a domain event; `null` for a payload this client does not know yet. */
 fun com.thehideout.v1.Event.toModel(): GatewayEvent? {
     val e = this
