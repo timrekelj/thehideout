@@ -268,10 +268,10 @@ private struct World {
         Snapshot(me: user(meID), guilds: guilds, channels: channels, layouts: layouts, dms: dms)
     }
 
-    mutating func push(channel: ID, author: ID, at: Date, content: String) -> Message {
+    mutating func push(channel: ID, author: ID, at: Date, content: String, attachments: [Attachment] = []) -> Message {
         nextID += 1
         let guild = channels.first { $0.id == channel }?.guildID
-        let m = Message(id: nextID, channelID: channel, guildID: guild, authorID: author, content: content, createdAt: at)
+        let m = Message(id: nextID, channelID: channel, guildID: guild, authorID: author, content: content, createdAt: at, attachments: attachments)
         messages[channel, default: []].append(m)
         return m
     }
@@ -395,6 +395,63 @@ private struct World {
         }
         _ = push(channel: 20, author: Ids.ana, at: now.addingTimeInterval(-6 * 86_400), content: "rehearsal moved to Thursday")
         _ = push(channel: 30, author: Ids.bruno, at: now.addingTimeInterval(-7 * 86_400), content: "sourdough starter is alive")
+        seedAttachments(now: now)
+    }
+
+    private var nextAttachmentID: ID = 1
+
+    /// A generated attachment: `displayName` is what the message shows (unique per attachment, like a real
+    /// upload's name); `asset` is which bundled sample file it points to (`HideoutUI/Resources/FakeMedia`,
+    /// several attachments can share one, as several real uploads could share a generated thumbnail).
+    private mutating func asset(_ displayName: String, _ asset: String, _ contentType: String, _ size: UInt64,
+                                 width: Int? = nil, height: Int? = nil, thumbnail: String? = nil, removed: Bool = false) -> Attachment {
+        nextAttachmentID += 1
+        return Attachment(id: nextAttachmentID, filename: displayName, contentType: contentType, size: size,
+                           file: removed ? "" : fakeAssetPrefix + asset, width: width, height: height,
+                           thumbnail: thumbnail.map { fakeAssetPrefix + $0 }, removed: removed)
+    }
+
+    /// Pictures (1, 2, 3 and 4+ up, for every grid layout), a video, an audio note, a file and one an admin
+    /// removed — desktop's `fake_files.rs::seed_attachments`, into #design. iOS ATT-01..04 phase: uploads,
+    /// link embeds and custom emoji images are separate later tasks, so this channel is left with only attachments.
+    private mutating func seedAttachments(now: Date) {
+        var t = now.addingTimeInterval(-3 * 86_400)
+        _ = push(channel: Ids.design, author: Ids.bruno, at: t, content: "the new dashboard, before the polish pass",
+                  attachments: [asset("dashboard.jpg", "square-1.jpg", "image/jpeg", 420_000, width: 1000, height: 1000)])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.tim, at: t, content: "shots from the hike", attachments: [
+            asset("hike-1.jpg", "landscape-3.jpg", "image/jpeg", 480_000, width: 1200, height: 800),
+            asset("hike-2.jpg", "square-1.jpg", "image/jpeg", 410_000, width: 1000, height: 1000),
+        ])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.ana, at: t, content: "Photos from Saturday", attachments: [
+            asset("saturday-1.jpg", "landscape-1.jpg", "image/jpeg", 840_000, width: 1200, height: 800),
+            asset("saturday-2.jpg", "portrait-1.jpg", "image/jpeg", 910_000, width: 900, height: 1200),
+            asset("saturday-3.jpg", "landscape-2.jpg", "image/jpeg", 1_200_000, width: 1200, height: 800),
+        ])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.cvetka, at: t, content: "moodboard", attachments: [
+            asset("mood-1.jpg", "landscape-4.jpg", "image/jpeg", 300_000, width: 1200, height: 800),
+            asset("mood-2.jpg", "landscape-5.jpg", "image/jpeg", 300_000, width: 1200, height: 800),
+            asset("mood-3.jpg", "portrait-1.jpg", "image/jpeg", 300_000, width: 900, height: 1200),
+            asset("mood-4.jpg", "square-1.jpg", "image/jpeg", 300_000, width: 1000, height: 1000),
+        ])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.ana, at: t, content: "screen recording of the bug", attachments: [
+            asset("demo.mp4", "clip-1.mp4", "video/mp4", 590_746, width: 960, height: 540, thumbnail: "clip-1-poster.jpg"),
+        ])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.ana, at: t, content: "", attachments: [
+            asset("voice-note.m4a", "tone-1.m4a", "audio/mp4", 98_808),
+        ])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.bruno, at: t, content: "notes from the planning session", attachments: [
+            asset("meeting-notes.txt", "notes-1.txt", "text/plain", 218),
+        ])
+        t = t.addingTimeInterval(360)
+        _ = push(channel: Ids.design, author: Ids.cvetka, at: t, content: "this was the wrong sheet", attachments: [
+            asset("invoice.xlsx", "notes-1.txt", "application/vnd.ms-excel", 88_000, removed: true),
+        ])
     }
 
     static func generalLine(_ i: Int, total: Int) -> String {
