@@ -86,6 +86,21 @@ struct MessageFlowTests {
         #expect(log.loaded && log.fetch == .idle && log.hasMore && log.messages.map(\.id) == [2, 3] && log.oldestID == 2)
     }
 
+    /// A failed first load no longer gets an implicit retry from a second `open()` for the same (already
+    /// open) channel — that call is now a no-op, so the marker it placed cannot be wiped by a redundant
+    /// call. `reloadOpen()` is the dedicated retry for this.
+    @Test func aFailedFirstLoadRecoversThroughReloadOpenNotASecondOpen() async throws {
+        var s = try await makeState()
+        s.open(channel: Ids.general)
+        s.outbox.removeAll()
+        s.applyMessages(channel: Ids.general, before: nil, result: .failure(.network("offline")))
+        #expect(!(s.log(Ids.general)?.loaded ?? false) && s.notices.count == 1)
+        s.open(channel: Ids.general)
+        #expect(s.outbox.isEmpty, "a second open for the already-open channel does not retry the failed load")
+        s.reloadOpen()
+        #expect(s.outbox == [.loadMessages(channel: Ids.general, before: nil)], "reloadOpen is the dedicated retry")
+    }
+
     @Test func olderPagesAreAskedOnceAndPrependedWithAGroupBreak() async throws {
         var s = try await makeState()
         loaded(&s, ids: [10, 11])
@@ -150,6 +165,10 @@ struct MessageFlowTests {
         s.open(channel: Ids.general)
         #expect(s.marker == .after(channel: Ids.general, id: 3))
         #expect(s.outbox.isEmpty)
+        // A second open for the same (already open) channel is a no-op: it does not re-read `unread` (already
+        // consumed) and wipe the marker it just placed.
+        s.open(channel: Ids.general)
+        #expect(s.marker == .after(channel: Ids.general, id: 3), "a second open does not wipe the marker")
     }
 
     // MARK: layout edits

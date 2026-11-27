@@ -134,18 +134,19 @@ final class AuthSnapshotTests: SnapshotCase {
         shoot(r)
     }
 
-    func testInviteCodeLinkRejected() async {
+    func testInviteCodeFromPastedLink() async {
         let r = await rig()
         r.flow.startInvite()
-        r.flow.invite = "https://thehideout.zabit.si/invite/abcDEF"
-        r.flow.submit()
+        // A short code in the link: too few characters to auto-submit, so the boxes show exactly what the
+        // paste extracted (not the whole link, not garbage from its query or another path segment).
+        r.flow.setInvite("https://thehideout.zabit.si/invite/AB")
         shoot(r)
     }
 
     private func acceptStep(_ r: Rig) async {
         r.flow.startInvite()
-        r.flow.invite = FakeAccounts.inviteCode
-        r.flow.submit(); await r.flow.settle()
+        r.flow.setInvite(FakeAccounts.inviteCode)
+        await r.flow.settle()
     }
 
     func testInviteAccept() async {

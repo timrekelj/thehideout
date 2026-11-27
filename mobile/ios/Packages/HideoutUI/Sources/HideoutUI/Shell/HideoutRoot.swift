@@ -39,7 +39,7 @@ public struct HideoutRoot: View {
             store.setActive(scenePhase == .active)
         }
         .onChange(of: scenePhase) { _, phase in store.setActive(phase == .active) }
-        // Invite links: `thehideout://invite/<token>` and `https://<server>/invite/<token>` (universal link).
+        // Invite links: `thehideout://invite/<code>` and `https://<server>/invite/<code>` (universal link).
         .onOpenURL { url in if store.state.phase == .signedOut || store.state.phase == .loading { auth.handle(url: url) } }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             if let url = activity.webpageURL, store.state.phase == .signedOut || store.state.phase == .loading { auth.handle(url: url) }
