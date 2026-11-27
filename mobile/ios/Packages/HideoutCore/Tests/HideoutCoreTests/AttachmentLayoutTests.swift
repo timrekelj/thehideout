@@ -137,10 +137,20 @@ final class AttachmentLayoutTests: XCTestCase {
         XCTAssertEqual(url.absoluteString, "https://thehideout.zabit.si/media/abc123")
     }
 
-    func testMediaSourcePassesThroughTheFakeAssetPrefix() throws {
+    func testMediaSourcePassesThroughTheFakeAssetPrefixOnlyWhenAllowed() throws {
         let base = URL(string: "https://thehideout.zabit.si")!
-        guard case .fakeAsset(let name) = try mediaSource(base: base, key: "fakeasset:landscape-1.jpg") else { return XCTFail() }
+        guard case .fakeAsset(let name) = try mediaSource(base: base, key: "fakeasset:landscape-1.jpg", allowFakeAssets: true) else { return XCTFail() }
         XCTAssertEqual(name, "landscape-1.jpg")
+    }
+
+    /// `allowFakeAssets` defaults to false: a real server's response can never make the app load a
+    /// bundled local file just by sending a key with this prefix.
+    func testMediaSourceRejectsTheFakeAssetPrefixOutsideFakeMode() {
+        let base = URL(string: "https://thehideout.zabit.si")!
+        XCTAssertThrowsError(try mediaSource(base: base, key: "fakeasset:landscape-1.jpg")) { error in
+            XCTAssertEqual(error as? MediaKeyError, .fakeAssetNotAllowed("fakeasset:landscape-1.jpg"))
+        }
+        XCTAssertThrowsError(try mediaSource(base: base, key: "fakeasset:landscape-1.jpg", allowFakeAssets: false))
     }
 
     func testMediaSourceRejectsAForeignScheme() {
@@ -149,5 +159,16 @@ final class AttachmentLayoutTests: XCTestCase {
             XCTAssertEqual(error as? MediaKeyError, .foreignScheme("file:///etc/passwd"))
         }
         XCTAssertThrowsError(try mediaSource(base: base, key: "content://evil/thing"))
+    }
+
+    /// `key` becomes one opaque, percent-encoded path segment: a `/` or `..` in it can never change
+    /// which path the request actually reaches.
+    func testMediaSourcePercentEncodesSlashesAndDotDot() throws {
+        let base = URL(string: "https://thehideout.zabit.si")!
+        guard case .remote(let url) = try mediaSource(base: base, key: "../../etc/passwd") else { return XCTFail() }
+        let encodedPath = url.path(percentEncoded: true)
+        XCTAssertTrue(encodedPath.hasPrefix("/media/"))
+        XCTAssertFalse(encodedPath.contains("/../"), "a .. must never survive as a real path separator")
+        XCTAssertTrue(encodedPath.contains("%2F"), "the key's own slashes must be encoded, not literal")
     }
 }

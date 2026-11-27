@@ -130,19 +130,36 @@ public enum MediaSource: Sendable, Equatable {
     case fakeAsset(name: String)
 }
 
-/// `mediaSource` refused a key naming its own scheme.
+/// `mediaSource` refused a key.
 public enum MediaKeyError: Error, Equatable {
+    /// The key names a scheme of its own (`file://`, a foreign host): never passed through.
     case foreignScheme(String)
+    /// The key names one of the fake backend's bundled assets, but the caller did not say this is the
+    /// fake backend (`allowFakeAssets: false`): a real server's response is never trusted to pick this
+    /// path, so a misbehaving or compromised server can't make the app load a bundled local file.
+    case fakeAssetNotAllowed(String)
 }
 
-/// The fake backend's bundled-asset keys pass through `mediaSource` as `.fakeAsset`; nothing else may.
+/// The fake backend's bundled-asset keys pass through `mediaSource` as `.fakeAsset`, when `allowFakeAssets`
+/// says so; nothing else may.
 public let fakeAssetPrefix = "fakeasset:"
 
-/// `{base}/media/{key}`, unless `key` names one of the fake backend's bundled assets (`fakeAssetPrefix`).
+/// `{base}/media/{key}`, unless `key` names one of the fake backend's bundled assets (`fakeAssetPrefix`)
+/// and `allowFakeAssets` is true (only ever passed as true by UI code running under `--fake`/`--gallery`).
 /// Any other scheme (`file://`, a foreign host) is rejected rather than passed through, so a malicious
-/// media key can't act as a tracking pixel or read a local file in production.
-public func mediaSource(base: URL, key: String) throws -> MediaSource {
-    if key.hasPrefix(fakeAssetPrefix) { return .fakeAsset(name: String(key.dropFirst(fakeAssetPrefix.count))) }
+/// media key can't act as a tracking pixel or read a local file in production; `key` is percent-encoded
+/// into one opaque path segment, so it can't contain a `/` or `..` that would change which path the
+/// request actually reaches.
+public func mediaSource(base: URL, key: String, allowFakeAssets: Bool = false) throws -> MediaSource {
+    if key.hasPrefix(fakeAssetPrefix) {
+        guard allowFakeAssets else { throw MediaKeyError.fakeAssetNotAllowed(key) }
+        return .fakeAsset(name: String(key.dropFirst(fakeAssetPrefix.count)))
+    }
     if key.contains("://") { throw MediaKeyError.foreignScheme(key) }
-    return .remote(base.appendingPathComponent("media").appendingPathComponent(key))
+    guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return .remote(base) }
+    let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key
+    // `percentEncodedPath`, not `path`: the latter re-escapes its input, which would turn the `%2F`
+    // etc. already in `encodedKey` into `%252F` instead of keeping the key one opaque segment.
+    components.percentEncodedPath += "/media/" + encodedKey
+    return .remote(components.url ?? base)
 }
