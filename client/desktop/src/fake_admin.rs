@@ -719,7 +719,7 @@ impl AdminWorld {
         if reason.chars().count() > 512 {
             return Err(ApiError::InvalidArgument("reason is too long".into()));
         }
-        if until.is_some_and(|t| t <= SystemTime::now()) {
+        if until.is_some_and(|t| t <= time(today_unix())) {
             return Err(ApiError::InvalidArgument("until must be in the future".into()));
         }
         let name = t.username.clone();

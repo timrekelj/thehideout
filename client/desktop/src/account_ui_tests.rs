@@ -447,8 +447,6 @@ fn owning_a_server_lists_it_and_opens_its_overview() {
 
 fn admin_rt() -> (Runtime<App>, FakeBackend) {
     let (mut app, fake) = booted_as(true, "cvetka");
-    // The fake admin judges "in the future" by the wall clock, so the app counts from it too.
-    app.state.now = crate::app::real_now;
     app.act(|s| s.open_admin());
     app.pump();
     app.act(|s| s.admin_page(crate::admin::AdminPage::Users));
@@ -487,7 +485,7 @@ fn the_suspend_dialog_sends_the_picked_duration_and_the_reason() {
         });
         settle(&mut rt, 6);
         assert!(has(&rt, "suspend-submit"));
-        let before = (crate::app::real_now(), crate::app::real_now() + Duration::from_secs(5));
+        let before = (crate::app::fake_now(), crate::app::fake_now() + Duration::from_secs(5));
         press(&mut rt, "suspend-submit");
         let cmd = fake
             .sent()
