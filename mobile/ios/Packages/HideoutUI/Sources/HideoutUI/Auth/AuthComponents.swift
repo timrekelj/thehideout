@@ -207,11 +207,18 @@ struct CheckRow: View {
 }
 
 /// The six boxes of a one-time code, over a real text field so iOS autofills it from Mail and Messages.
+///
+/// The real field owns a local `raw` so every keystroke (and backspace) lands in it unconditionally; `text`
+/// (the flow's cleaned value) is a no-op when the clean result doesn't change, e.g. a 7th digit or a pasted
+/// dash — without `raw`, the field would show the clean value lagging one character behind, and a backspace
+/// right after would look like it did nothing. `raw` is cleaned on every change (correcting itself if a
+/// keystroke would otherwise overshoot) and kept in sync with `text` in both directions.
 struct CodeField: View {
     @Environment(\.theme) private var theme
     @ScaledMetric(relativeTo: .title) private var digitSize: CGFloat = 24
     @ScaledMetric(relativeTo: .title) private var boxHeight: CGFloat = 56
     @Binding var text: String
+    @State private var raw = ""
     var focus: FocusState<AuthFocus?>.Binding
     let label: String
     var invalid = false
@@ -235,7 +242,7 @@ struct CodeField: View {
                 }
             }
             .accessibilityHidden(true)
-            TextField("", text: $text)
+            TextField("", text: $raw)
                 .textContentType(.oneTimeCode)
                 .keyboardType(.numberPad)
                 .focused(focus, equals: .code)
@@ -248,6 +255,13 @@ struct CodeField: View {
                 .accessibilityLabel(label)
                 .accessibilityValue(text.isEmpty ? "empty" : text.map(String.init).joined(separator: " "))
                 .onSubmit(submit)
+                .onAppear { raw = text }
+                .onChange(of: raw) { _, newValue in
+                    let clean = String(newValue.filter(\.isASCII).filter(\.isNumber).prefix(6))
+                    if clean != newValue { raw = clean }
+                    text = clean
+                }
+                .onChange(of: text) { _, newValue in if newValue != raw { raw = newValue } }
         }
         .animation(Motion.control, value: text.count)
     }
@@ -258,11 +272,16 @@ struct CodeField: View {
 /// `InviteCodeInput`. Typing, pasting a bare code or pasting a whole invite link all land the same way —
 /// `AuthFlow.setInvite` runs every change through `InviteCode.normalize`, so the field only ever shows a
 /// clean, at most eight character code.
+///
+/// The real field owns a local `raw` for the same reason as `CodeField`'s: `text` is a no-op once the clean
+/// result stops changing (a 9th character, a pasted dash), so the field itself has to resync instead of
+/// trailing `text` by one keystroke.
 struct InviteCodeField: View {
     @Environment(\.theme) private var theme
     @ScaledMetric(relativeTo: .title) private var charSize: CGFloat = 20
     @ScaledMetric(relativeTo: .title) private var boxHeight: CGFloat = 52
     @Binding var text: String
+    @State private var raw = ""
     var focus: FocusState<AuthFocus?>.Binding
     var invalid = false
     var submit: () -> Void
@@ -288,7 +307,7 @@ struct InviteCodeField: View {
                 }
             }
             .accessibilityHidden(true)
-            TextField("", text: $text)
+            TextField("", text: $raw)
                 .keyboardType(.asciiCapable)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
@@ -302,6 +321,13 @@ struct InviteCodeField: View {
                 .accessibilityLabel("Invite code")
                 .accessibilityValue(text.isEmpty ? "empty" : text.map(String.init).joined(separator: " "))
                 .onSubmit(submit)
+                .onAppear { raw = text }
+                .onChange(of: raw) { _, newValue in
+                    let clean = InviteCode.normalize(newValue)
+                    if clean != newValue { raw = clean }
+                    text = clean
+                }
+                .onChange(of: text) { _, newValue in if newValue != raw { raw = newValue } }
         }
         .animation(Motion.control, value: text.count)
     }

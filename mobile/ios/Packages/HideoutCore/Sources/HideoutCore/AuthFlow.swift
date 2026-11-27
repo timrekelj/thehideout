@@ -176,9 +176,12 @@ public final class AuthFlow {
 
     // MARK: fields
 
-    /// The code field: digits only, six at most; a full code is sent at once where nothing else is needed.
+    /// The code field: digits only, six at most; a full code is sent at once where nothing else is needed. A
+    /// no-op when the cleaned result is unchanged (a 7th digit, a pasted dash): `code` capped at 6 already holds
+    /// it, so there is nothing new to clear or resubmit — the field itself resyncs to that same value.
     public func setCode(_ raw: String) {
         let clean = String(raw.filter(\.isASCII).filter(\.isNumber).prefix(6))
+        guard clean != code else { return }
         code = clean
         if issue?.field == .code { issue = nil }
         guard clean.count == 6 else { return }
@@ -191,9 +194,11 @@ public final class AuthFlow {
 
     /// The invite code field: filtered through `InviteCode.normalize` on every change (so a pasted link gives
     /// just its code), eight characters at most. The 8th character looks it up at once, like `setCode` does for
-    /// a six-digit one; editing a code that already failed tries again.
+    /// a six-digit one; editing a code that already failed tries again. A no-op when the cleaned result is
+    /// unchanged (a 9th character, a pasted dash): nothing new to clear or resubmit.
     public func setInvite(_ raw: String) {
         let clean = InviteCode.normalize(raw)
+        guard clean != invite else { return }
         invite = clean
         if issue?.field == .invite { issue = nil }
         guard clean.count == InviteCode.length, step == .inviteCode else { return }
@@ -355,7 +360,7 @@ public final class AuthFlow {
             do { try await me.server.change(to: pending.host) }
             catch {
                 guard g == me.generation else { return }
-                me.issue = AuthIssue(.form, (error as? ServerSelection.ChangeError)?.message ?? "Couldn't switch servers.")
+                me.fail(.form, (error as? ServerSelection.ChangeError)?.message ?? "Couldn't switch servers.")
                 return
             }
             guard g == me.generation else { return }
@@ -363,7 +368,7 @@ public final class AuthFlow {
             me.issue = nil; me.notice = nil; me.suspension = nil
             me.invite = InviteCode.normalize(pending.url.absoluteString)
             guard me.invite.count == InviteCode.length else {
-                me.issue = AuthIssue(.invite, "Invite codes have 8 characters.")
+                me.fail(.invite, "Invite codes have 8 characters.")
                 return
             }
             try await me.performLookup(code: InviteCode.dashed(me.invite), generation: g)
@@ -711,10 +716,14 @@ public enum InviteCode {
 
     /// The code characters in `raw`, in order, at most `length`: anything outside the alphabet (dashes,
     /// spaces, underscores, punctuation) is dropped, so typing, pasting a bare code or pasting a whole invite
-    /// link (`.../invite/XXXX-XXXX`, counted only from after its last `/invite/`) all land the same way.
+    /// link (`.../invite/XXXX-XXXX`, counted only from after its last `/invite/`, up to the first `?`, `#` or
+    /// `/` so a query string or another path segment never leaks into the code) all land the same way.
     public static func normalize(_ raw: String) -> String {
-        let afterLink = raw.range(of: "/invite/", options: .backwards).map { String(raw[$0.upperBound...]) } ?? raw
-        return String(afterLink.compactMap(codeChar).prefix(length))
+        guard let r = raw.range(of: "/invite/", options: .backwards) else {
+            return String(raw.compactMap(codeChar).prefix(length))
+        }
+        let segment = raw[r.upperBound...].prefix { !"?#/".contains($0) }
+        return String(segment.compactMap(codeChar).prefix(length))
     }
 
     /// `normalize`'s result written `XXXX-XXXX` once it is whole (what the server expects to read, though it
@@ -726,9 +735,20 @@ public enum InviteCode {
         return "\(code[..<mid])-\(code[mid...])"
     }
 
-    /// Whether `raw` is an invite link (`thehideout://invite/<code>`, `https://host/invite/<code>`) rather
-    /// than a bare code; its code may still be short or malformed, so this alone does not mean it is usable.
-    public static func isLink(_ raw: String) -> Bool { raw.contains("/invite/") }
+    /// Whether `raw` is a real invite link rather than a bare code: the custom scheme has `invite` as its
+    /// authority (`thehideout://invite/<code>`); `http`/`https` has `invite` as the first path component
+    /// (`https://host/invite/<code>`), followed by a code segment. Its code may still be short or malformed,
+    /// so this alone does not mean it is usable.
+    public static func isLink(_ raw: String) -> Bool {
+        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased() else { return false }
+        if scheme == "thehideout" {
+            return url.host?.lowercased() == "invite" && !url.path.isEmpty && url.path != "/"
+        }
+        guard scheme == "http" || scheme == "https" else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: true)
+        return parts.count >= 2 && parts[0].lowercased() == "invite"
+    }
 }
 
 enum ServerURLCheck {

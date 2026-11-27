@@ -123,6 +123,23 @@ struct AuthFlowTests {
 
     // MARK: email code
 
+    /// The same no-resubmit guard as invite's, for the plain 6-digit code: a 7th digit or a pasted dash
+    /// cleans to the same 6 digits already held, so it is not re-verified. A network error (not a wrong
+    /// code) is used because it is the one failure that leaves the typed code in place instead of clearing
+    /// it — the case where an unchanged value could otherwise resubmit.
+    @Test func anUnchangedCleanedSixDigitCodeDoesNotResubmit() async {
+        let h = Harness()
+        h.flow.startEmailCode(); h.flow.email = "tim@example.com"
+        h.flow.submit(); await h.flow.settle()
+        h.fake.accounts.failNext(network: 1)
+        h.flow.setCode("111111"); await h.flow.settle()
+        #expect(h.flow.issue == AuthIssue(.form, "Can't reach the server. Check your connection and try again."))
+        #expect(h.flow.code == "111111")
+        h.flow.setCode("111111-")
+        #expect(!h.flow.busy, "the cleaned code did not change, so it is not resubmitted")
+        #expect(h.flow.issue == AuthIssue(.form, "Can't reach the server. Check your connection and try again."), "nor is the existing error cleared")
+    }
+
     @Test func emailCodeFlowRequestsThenVerifiesAtSixDigits() async {
         let h = Harness()
         h.flow.login = "tim@example.com"
@@ -343,6 +360,17 @@ struct AuthFlowTests {
         #expect(InviteCode.dashed("wxyz23") == "WXYZ23", "a shorter code comes back bare")
         #expect(InviteCode.normalize("https://thehideout.zabit.si/invite/wxyz-2345") == "WXYZ2345", "a pasted link gives its code")
         #expect(InviteCode.normalize("https://x.y/invite/aaaa/invite/wxyz-2345") == "WXYZ2345", "counted from after the last /invite/")
+        #expect(InviteCode.normalize("https://host/invite/AB?x=1") == "AB", "a query string does not leak into the code")
+        #expect(InviteCode.normalize("https://host/invite/AB#frag") == "AB", "nor does a fragment")
+        #expect(InviteCode.normalize("https://host/invite/AB/more") == "AB", "nor another path segment")
+    }
+
+    @Test func aLinkWithAQueryStringLandsOnTheCodeStepWithTheCleanShortCode() async {
+        let h = Harness()
+        #expect(h.flow.handle(url: URL(string: "thehideout://invite/AB?x=1")!))
+        await h.flow.settle()
+        #expect(h.flow.step == .inviteCode && h.flow.issue == AuthIssue(.invite, "Invite codes have 8 characters."))
+        #expect(h.flow.invite == "AB", "the query string is not part of the code")
     }
 
     @Test func pastingALinkInTheCodeFieldExtractsItsCode() async {
@@ -377,14 +405,32 @@ struct AuthFlowTests {
         #expect(code == "WXYZ-2345" && preview.inviter == "ana" && preview.guildNames == ["The Hideout"] && preview.minimumAge == 16)
     }
 
+    /// A 9th character or a pasted dash after the field is already full cleans to the same 8-character code:
+    /// no new lookup (every extra keystroke would otherwise re-ask the server the same question) and the
+    /// error from the first lookup is not cleared out from under the user.
+    @Test func anUnchangedCleanedCodeDoesNotResubmitOrClearTheError() async {
+        let h = Harness()
+        h.flow.startInvite()
+        h.flow.setInvite("NOPE0000")
+        await h.flow.settle()
+        let lookups = { h.fake.accounts.log.filter { $0.hasPrefix("lookupInvite") }.count }
+        #expect(lookups() == 1)
+        #expect(h.flow.issue == AuthIssue(.invite, "We couldn't find that invite. Check the code and try again."))
+        h.flow.setInvite("NOPE0000-")
+        #expect(lookups() == 1, "the cleaned code did not change, so it is not looked up again")
+        #expect(h.flow.issue == AuthIssue(.invite, "We couldn't find that invite. Check the code and try again."), "nor is the existing error cleared")
+        h.flow.setInvite("NOPE0000A")
+        #expect(lookups() == 1, "a 9th character that does not change the cleaned 8 is the same no-op")
+    }
+
     @Test func unknownUsedAndExpiredInvitesStayOnTheCodeStep() async {
         let h = Harness()
         h.flow.startInvite()
         h.flow.setInvite("NOPE0000")
-        h.flow.submit(); await h.flow.settle()
+        await h.flow.settle()
         #expect(h.flow.issue == AuthIssue(.invite, "We couldn't find that invite. Check the code and try again.") && h.flow.step == .inviteCode)
         h.flow.setInvite(FakeAccounts.usedInviteCode)
-        h.flow.submit(); await h.flow.settle()
+        await h.flow.settle()
         #expect(h.flow.issue == AuthIssue(.invite, "This invite was already used. Sign in instead."))
         #expect(AuthFlow.problem(with: .expired) == "This invite has expired. Ask for a new one.")
         #expect(AuthFlow.problem(with: .revoked) == "This invite was withdrawn. Ask for a new one.")
@@ -532,6 +578,18 @@ struct AuthFlowTests {
         #expect(h.server.url.host == "thehideout.zabit.si")
         guard case .inviteAccept(_, let code) = h.flow.step else { Issue.record("expected the accept step"); return }
         #expect(code == "WXYZ-2345")
+    }
+
+    @Test func switchingServersForAShortCodeClearsBusyAndShowsTheLengthError() async {
+        let h = Harness()
+        #expect(h.flow.handle(url: URL(string: "https://thehideout.zabit.si/invite/AB")!))
+        #expect(h.flow.pendingInviteLink?.host == "thehideout.zabit.si")
+        h.flow.switchServerForPendingInviteLink()
+        await h.flow.settle()
+        #expect(!h.flow.busy, "a short code must not leave the flow stuck busy")
+        #expect(h.flow.step == .inviteCode)
+        #expect(h.flow.issue == AuthIssue(.invite, "Invite codes have 8 characters."))
+        #expect(h.flow.invite == "AB")
     }
 
     @Test func dismissingTheServerSwitchLeavesTheStepUnchanged() {

@@ -137,8 +137,9 @@ final class AuthSnapshotTests: SnapshotCase {
     func testInviteCodeFromPastedLink() async {
         let r = await rig()
         r.flow.startInvite()
-        r.flow.setInvite("https://thehideout.zabit.si/invite/NOPE-0000")
-        await r.flow.settle()
+        // A short code in the link: too few characters to auto-submit, so the boxes show exactly what the
+        // paste extracted (not the whole link, not garbage from its query or another path segment).
+        r.flow.setInvite("https://thehideout.zabit.si/invite/AB")
         shoot(r)
     }
 

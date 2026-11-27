@@ -1,6 +1,8 @@
 # The 8-box invite code field against the bundled FakeBackend: opening "Join with a code", typing a
-# code to the lookup at the 8th character, and an invite link (deep link, same path a universal link or
-# a pasted link's extracted code takes) landing on the accept step with the invite previewed. Run with:
+# code to the lookup at the 8th character, an invite link (deep link, same path a universal link or a
+# pasted link's extracted code takes) landing on the accept step with the invite previewed, and a 9th
+# character plus a backspace behaving (no resubmit/no dead backspace once the field is already full). Run
+# with:
 #   maestro --device <udid> test mobile/ios/maestro/invite-code.yaml
 appId: si.zabit.thehideout
 ---
@@ -33,3 +35,25 @@ appId: si.zabit.thehideout
     timeout: 3000
 - assertVisible: "ana invited you to join The Hideout"
 - takeScreenshot: invite-code/03-invite-link-reaches-accept
+- launchApp:
+    arguments:
+      --fake: true
+      --signed-out: true
+- assertVisible: "Have an invite?"
+- tapOn: "Join with a code"
+- tapOn: "Invite code"
+- inputText: "NOPE0000"
+- waitForAnimationToEnd:
+    timeout: 3000
+- assertVisible: "We couldn't find that invite\\. Check the code and try again\\."
+- takeScreenshot: invite-code/04-full-and-unknown
+- inputText: "1"
+- waitForAnimationToEnd:
+    timeout: 1500
+- assertVisible: "We couldn't find that invite\\. Check the code and try again\\."
+- takeScreenshot: invite-code/05-ninth-character-is-a-no-op
+- eraseText: 1
+- waitForAnimationToEnd:
+    timeout: 1500
+- assertNotVisible: "We couldn't find that invite\\. Check the code and try again\\."
+- takeScreenshot: invite-code/06-one-backspace-drops-to-seven

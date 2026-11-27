@@ -91,6 +91,10 @@ final class ShellSnapshotTests: SnapshotCase {
         store.setActive(false)
         store.open(channel: FakeBackend.Ids.dmAna)
         await store.settle()
+        // The second call the real shell makes (its own `.task` would too, but asserting it here does not
+        // depend on that timing): the marker must survive it.
+        store.open(channel: FakeBackend.Ids.dmAna)
+        XCTAssertNotEqual(store.state.marker, .none, "the marker must survive the shell's second open")
         assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.dmAna) }, store: store, styles: [("dark", .dark)])
     }
 

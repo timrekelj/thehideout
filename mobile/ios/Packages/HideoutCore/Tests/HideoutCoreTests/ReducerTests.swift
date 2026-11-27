@@ -39,6 +39,7 @@ struct ReducerTests {
         #expect(s.outbox == [.loadMessages(channel: Ids.general, before: nil)])
         s.open(channel: Ids.general)
         #expect(s.outbox.count == 1, "a fetch in flight is not asked again")
+        #expect(s.marker == .pending(channel: Ids.general, unread: 3), "a second open does not wipe the marker")
     }
 
     @Test func perms() async throws {
