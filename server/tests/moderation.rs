@@ -676,14 +676,48 @@ async fn banning_a_non_member_pre_bans_them() {
     w.app.cleanup().await;
 }
 
+/// Hand-builds a channel of `guild_id` a fixed number of 10-day buckets in
+/// the past, bypassing `CreateChannel` so its id (and so its message
+/// partitions) do not depend on when the test happens to run.
+async fn insert_ancient_channel(app: &TestApp, guild_id: u64, buckets_ago: u64, name: &str) -> u64 {
+    let bucket = thehideout_server::snowflake::current_bucket() as u64 - buckets_ago;
+    let channel_id = thehideout_server::snowflake::make_id(bucket * thehideout_server::snowflake::BUCKET_MS, 1, 0);
+    app.state
+        .session
+        .execute_unpaged(
+            "INSERT INTO channels (guild_id, id, name, created_at) VALUES (?, ?, ?, ?)",
+            (guild_id as i64, channel_id as i64, name, thehideout_server::convert::snowflake_datetime(channel_id)),
+        )
+        .await
+        .unwrap();
+    app.state
+        .session
+        .execute_unpaged("INSERT INTO channels_by_id (id, guild_id) VALUES (?, ?)", (channel_id as i64, guild_id as i64))
+        .await
+        .unwrap();
+    channel_id
+}
+
 #[tokio::test]
 async fn ban_can_delete_recent_messages_in_the_background() {
     let w = world().await;
     let second = channel(&w.app, &w.alice, w.guild.id, "second").await.unwrap();
-    let old = send(&w.app, &w.carol, w.channel, "recent 0").await.unwrap();
-    // Backdate `old`: re-key it to a time well before the purge window.
-    let long_ago = thehideout_server::snowflake::make_id(
-        thehideout_server::snowflake::millis_of(old.id) - 3 * 24 * 3600 * 1000,
+
+    // A message from several 10-day buckets ago, in a channel just as old, so
+    // it sits well outside the ban's 1-hour purge window no matter when this
+    // test runs: both ids are built from bucket arithmetic alone, with no
+    // reference to the real "now", so there is no wall-clock value that can
+    // put the message inside the purge window or outside the channel's own
+    // bucket (`fetch_older` and `purge_author_messages` never look below
+    // `bucket_of(channel_id)`, since a message can't predate its channel).
+    const BUCKETS_AGO: u64 = 4;
+    assert!(
+        thehideout_server::snowflake::current_bucket() >= BUCKETS_AGO as i32,
+        "test assumes the clock is well past the epoch"
+    );
+    let ancient_channel = insert_ancient_channel(&w.app, w.guild.id, BUCKETS_AGO, "ancient-home").await;
+    let ancient_id = thehideout_server::snowflake::make_id(
+        thehideout_server::snowflake::millis_of(ancient_channel) + 1,
         1,
         0,
     );
@@ -692,10 +726,12 @@ async fn ban_can_delete_recent_messages_in_the_background() {
         .session
         .execute_unpaged(
             "INSERT INTO messages (channel_id, bucket, id, guild_id, author_id, content, nonce) VALUES (?, ?, ?, ?, ?, 'ancient', '')",
-            (w.channel as i64, thehideout_server::snowflake::bucket_of(long_ago), long_ago as i64, w.guild.id as i64, w.carol.id as i64),
+            (ancient_channel as i64, thehideout_server::snowflake::bucket_of(ancient_id), ancient_id as i64, w.guild.id as i64, w.carol.id as i64),
         )
         .await
         .unwrap();
+
+    send(&w.app, &w.carol, w.channel, "recent 0").await.unwrap();
     send(&w.app, &w.carol, w.channel, "recent 1").await.unwrap();
     send(&w.app, &w.carol, second.id, "recent 2").await.unwrap();
     let keep = send(&w.app, &w.bob, w.channel, "bob stays").await.unwrap();
@@ -712,9 +748,11 @@ async fn ban_can_delete_recent_messages_in_the_background() {
     assert_eq!(deleted, 3, "recent 0 + recent 1 + recent 2");
     let remaining = list(&w.app, &w.alice, w.channel).await.unwrap();
     let contents: Vec<&str> = remaining.iter().map(|m| m.content.as_str()).collect();
-    assert_eq!(contents, vec!["bob stays", "ancient"]);
+    assert_eq!(contents, vec!["bob stays"]);
     assert_eq!(remaining[0].id, keep.id);
     assert!(list(&w.app, &w.alice, second.id).await.unwrap().is_empty());
+    let ancient_remaining = list(&w.app, &w.alice, ancient_channel).await.unwrap();
+    assert_eq!(ancient_remaining.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), vec!["ancient"]);
     w.app.cleanup().await;
 }
 
