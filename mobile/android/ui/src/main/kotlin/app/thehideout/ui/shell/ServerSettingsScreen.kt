@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -70,7 +71,9 @@ import app.thehideout.ui.icons.Sym
 import app.thehideout.ui.icons.SymIcon
 import app.thehideout.ui.theme.Hideout
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The server settings page nav (desktop's `ServerPage`). */
 enum class ServerSettingsPage(val label: String) { Overview("Overview"), Roles("Roles"), Members("Members"), Bans("Bans"), Emojis("Emojis") }
@@ -94,6 +97,26 @@ private val PERMISSION_ROWS = listOf(
 /** "Delete their recent messages" on the Ban dialog (desktop's `CLEANUP`). */
 private val CLEANUP = listOf("Don't delete" to 0, "Last hour" to 3_600, "Last 24 hours" to 86_400, "Last 7 days" to 604_800)
 
+/** Reads a picked image off the main thread, rejecting it by its reported size before loading the
+ * whole thing into memory where possible (the final [ByteArray.size] check still catches a uri
+ * whose size wasn't reported). */
+private suspend fun readPickedImage(context: android.content.Context, uri: android.net.Uri, maxBytes: Int, mimeFallback: String): Result<Pair<ByteArray, String>> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val resolver = context.contentResolver
+            val mime = resolver.getType(uri) ?: mimeFallback
+            resolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (idx >= 0 && cursor.moveToFirst() && !cursor.isNull(idx) && cursor.getLong(idx) > maxBytes) {
+                    throw IllegalArgumentException("That image is over ${maxBytes / (1024 * 1024)} MiB.")
+                }
+            }
+            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("can't read the image")
+            if (bytes.size > maxBytes) throw IllegalArgumentException("That image is over ${maxBytes / (1024 * 1024)} MiB.")
+            bytes to mime
+        }
+    }
+
 /** A role's colour dot: its palette tone, or a hollow ring for no colour. */
 @Composable
 fun RoleDot(color: String, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
@@ -115,9 +138,12 @@ fun RoleDot(color: String, size: androidx.compose.ui.unit.Dp, modifier: Modifier
 @Composable
 fun ServerSettingsScreen(state: AppState, guildId: Long, actions: ShellActions, onDismiss: () -> Unit, modifier: Modifier = Modifier, initialPage: ServerSettingsPage? = null) {
     val c = Hideout.colors
-    val guild = state.guild(guildId) ?: run { onDismiss(); return }
-    val pages = remember(state, guildId) {
-        buildList {
+    val guild = state.guild(guildId)
+    // Keyed only on guildId: `state` is a new instance on every store emission, so keying on it too
+    // would never actually cache anything. Recomputing this short list each time is cheap and keeps
+    // it live as the signed-in user's permissions change (e.g. right after a role is edited).
+    val pages = buildList {
+        if (guild != null) {
             if (state.canManageServer(guildId)) add(ServerSettingsPage.Overview)
             if (state.canManageRoles(guildId)) add(ServerSettingsPage.Roles)
             if (state.canManageRoles(guildId) || state.canRemovePeople(guildId)) add(ServerSettingsPage.Members)
@@ -126,7 +152,12 @@ fun ServerSettingsScreen(state: AppState, guildId: Long, actions: ShellActions, 
         }
     }
     var page by remember(guildId) { mutableStateOf(initialPage ?: pages.firstOrNull() ?: ServerSettingsPage.Overview) }
-    LaunchedEffect(pages) { if (page !in pages && pages.isNotEmpty()) page = pages.first() }
+    // The guild vanishing (left/deleted) or every page losing its permission (e.g. right after a
+    // transfer strips the signed-in user's roles) closes the screen instead of composing empty tabs.
+    LaunchedEffect(guild == null, pages) {
+        if (guild == null || pages.isEmpty()) onDismiss() else if (page !in pages) page = pages.first()
+    }
+    if (guild == null) return
 
     Scaffold(
         modifier = modifier,
@@ -180,13 +211,7 @@ private fun OverviewPage(state: AppState, guildId: Long, actions: ShellActions, 
         scope.launch {
             iconBusy = true
             iconError = null
-            runCatching {
-                val resolver = context.contentResolver
-                val mime = resolver.getType(uri) ?: "image/jpeg"
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("can't read the image")
-                if (bytes.size > 8 * 1024 * 1024) throw IllegalArgumentException("That image is over 8 MiB.")
-                bytes to mime
-            }.fold(
+            readPickedImage(context, uri, 8 * 1024 * 1024, "image/jpeg").fold(
                 { (bytes, mime) ->
                     actions.uploadGuildIcon(guildId, bytes, mime).fold({ iconBusy = false }, { e -> iconBusy = false; iconError = e.message ?: "Couldn't upload the icon." })
                 },
@@ -452,9 +477,13 @@ private fun RolesPage(state: AppState, guildId: Long, actions: ShellActions) {
             Text("No roles yet. Create one to give members a colour and permissions.", style = MaterialTheme.typography.bodyMedium, color = c.textMuted, modifier = Modifier.padding(20.dp))
         }
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-            items(roles, key = { it.id }) { r ->
+            itemsIndexed(roles, key = { _, it -> it.id }) { index, r ->
                 val mine = state.canEditRole(guildId, r)
                 val count = state.roleMembers(guildId, r.id)
+                // Mirrors role.rs's reorder_roles: a swap changes both roles' positions, so both the
+                // role itself and the neighbour it would trade places with must be outranked.
+                val canMoveUp = mine && roles.getOrNull(index - 1)?.let { state.canEditRole(guildId, it) } == true
+                val canMoveDown = mine && roles.getOrNull(index + 1)?.let { state.canEditRole(guildId, it) } == true
                 Row(
                     Modifier.fillMaxWidth().clickable(enabled = true) { editing = r }.padding(vertical = 10.dp, horizontal = 8.dp).testTag("role-row-${r.id}"),
                     verticalAlignment = Alignment.CenterVertically,
@@ -465,12 +494,12 @@ private fun RolesPage(state: AppState, guildId: Long, actions: ShellActions) {
                     Text(count.toString(), style = MaterialTheme.typography.bodySmall, color = c.textMuted)
                     if (mine) {
                         IconButton(
-                            enabled = !busyMove,
+                            enabled = !busyMove && canMoveUp,
                             onClick = { scope.launch { busyMove = true; actions.moveRole(guildId, r.id, -1); busyMove = false } },
                             modifier = Modifier.size(32.dp).testTag("role-up-${r.id}"),
                         ) { SymIcon(Sym.ExpandMore, "Move ${r.name} up", modifier = Modifier.size(18.dp).graphicsLayer(rotationZ = 180f)) }
                         IconButton(
-                            enabled = !busyMove,
+                            enabled = !busyMove && canMoveDown,
                             onClick = { scope.launch { busyMove = true; actions.moveRole(guildId, r.id, 1); busyMove = false } },
                             modifier = Modifier.size(32.dp).testTag("role-down-${r.id}"),
                         ) { SymIcon(Sym.ExpandMore, "Move ${r.name} down", modifier = Modifier.size(18.dp)) }
@@ -486,7 +515,7 @@ private fun RolesPage(state: AppState, guildId: Long, actions: ShellActions) {
         RoleEditorSheet(
             title = "New role", role = null, editable = true,
             onDismiss = { creating = false },
-            onSave = { name, color, perms -> actions.createRole(guildId, name, color, perms) },
+            onSave = { name, color, perms -> actions.createRole(guildId, name!!, color!!, perms!!) },
             onDelete = null,
             canGrant = { bit -> state.canGrant(guildId, bit) },
         )
@@ -502,14 +531,24 @@ private fun RolesPage(state: AppState, guildId: Long, actions: ShellActions) {
         )
     }
     deleteTarget?.let { r ->
+        var deleteError by remember(r.id) { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Delete role") },
-            text = { Text("“${r.name}” is removed from everyone who has it. This can't be undone.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("“${r.name}” is removed from everyone who has it. This can't be undone.")
+                    deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
             confirmButton = {
                 TextButton(
                     modifier = Modifier.testTag("role-delete-confirm"),
-                    onClick = { scope.launch { actions.deleteRole(guildId, r.id); deleteTarget = null } },
+                    onClick = {
+                        scope.launch {
+                            actions.deleteRole(guildId, r.id).fold({ deleteTarget = null }, { e -> deleteError = e.message ?: "Couldn't delete the role." })
+                        }
+                    },
                 ) { Text("Delete role") }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
@@ -525,7 +564,7 @@ private fun RoleEditorSheet(
     role: Role?,
     editable: Boolean,
     onDismiss: () -> Unit,
-    onSave: suspend (name: String, color: String, perms: Long) -> Result<*>,
+    onSave: suspend (name: String?, color: String?, perms: Long?) -> Result<*>,
     onDelete: (() -> Unit)?,
     canGrant: (Long) -> Boolean,
 ) {
@@ -619,7 +658,13 @@ private fun RoleEditorSheet(
                         onClick = {
                             scope.launch {
                                 busy = true
-                                onSave(name.trim(), color, perms).fold({ onDismiss() }, { e -> busy = false; error = e.message ?: "Couldn't save the role." })
+                                // Send only what actually changed (null for the rest), so a manager who personally
+                                // lacks one of this role's existing permission bits can still rename it or tweak its
+                                // colour: the server checks only the bits present in the request (role.rs's update_role).
+                                val sendName = if (role == null || name.trim() != role.name) name.trim() else null
+                                val sendColor = if (role == null || color != role.color) color else null
+                                val sendPerms = if (role == null || perms != role.permissions) perms else null
+                                onSave(sendName, sendColor, sendPerms).fold({ onDismiss() }, { e -> busy = false; error = e.message ?: "Couldn't save the role." })
                             }
                         },
                         modifier = Modifier.testTag("role-save"),
@@ -702,6 +747,7 @@ private fun MembersPage(state: AppState, guildId: Long, actions: ShellActions) {
                                         DropdownMenuItem(
                                             text = { Text(r.name) },
                                             onClick = { menuFor = null; scope.launch { busyUser = userId; actions.setMemberRole(guildId, userId, r.id, true); busyUser = null } },
+                                            modifier = Modifier.testTag("assign-role-${r.id}"),
                                         )
                                     }
                                 }
@@ -714,14 +760,24 @@ private fun MembersPage(state: AppState, guildId: Long, actions: ShellActions) {
     }
 
     kickTarget?.let { u ->
+        var kickError by remember(u.id) { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { kickTarget = null },
             title = { Text("Remove ${u.displayName}") },
-            text = { Text("${u.displayName} is removed from the server. They can rejoin with an invite.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${u.displayName} is removed from the server. They can rejoin with an invite.")
+                    kickError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
             confirmButton = {
                 TextButton(
                     modifier = Modifier.testTag("kick-confirm"),
-                    onClick = { scope.launch { actions.kickMember(guildId, u.id); kickTarget = null } },
+                    onClick = {
+                        scope.launch {
+                            actions.kickMember(guildId, u.id).fold({ kickTarget = null }, { e -> kickError = e.message ?: "Couldn't remove them." })
+                        }
+                    },
                 ) { Text("Remove") }
             },
             dismissButton = { TextButton(onClick = { kickTarget = null }) { Text("Cancel") } },
@@ -839,13 +895,7 @@ private fun EmojisPage(state: AppState, guildId: Long, actions: ShellActions) {
     val pickEmoji = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            runCatching {
-                val resolver = context.contentResolver
-                val mime = resolver.getType(uri) ?: "image/png"
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("can't read the image")
-                if (bytes.size > 2 * 1024 * 1024) throw IllegalArgumentException("That image is over 2 MiB.")
-                bytes to mime
-            }.fold({ pendingUpload = it }, { e -> uploadError = e.message ?: "Couldn't read that image." })
+            readPickedImage(context, uri, 2 * 1024 * 1024, "image/png").fold({ pendingUpload = it }, { e -> uploadError = e.message ?: "Couldn't read that image." })
         }
     }
 
@@ -883,12 +933,25 @@ private fun EmojisPage(state: AppState, guildId: Long, actions: ShellActions) {
         )
     }
     deleteTarget?.let { e ->
+        var deleteError by remember(e.id) { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Delete emoji") },
-            text = { Text("“:${e.name}:” is removed. Existing messages and reactions that use it show its name as text instead.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("“:${e.name}:” is removed. Existing messages and reactions that use it show its name as text instead.")
+                    deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
             confirmButton = {
-                TextButton(modifier = Modifier.testTag("emoji-delete-confirm"), onClick = { scope.launch { actions.deleteEmoji(guildId, e.id); deleteTarget = null } }) { Text("Delete emoji") }
+                TextButton(
+                    modifier = Modifier.testTag("emoji-delete-confirm"),
+                    onClick = {
+                        scope.launch {
+                            actions.deleteEmoji(guildId, e.id).fold({ deleteTarget = null }, { ex -> deleteError = ex.message ?: "Couldn't delete the emoji." })
+                        }
+                    },
+                ) { Text("Delete emoji") }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
         )
@@ -908,7 +971,8 @@ private fun EmojiNameDialog(title: String, initial: String, onDismiss: () -> Uni
             Column {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it.filter { ch -> ch.isLetterOrDigit() || ch == '_' }.lowercase(); error = null },
+                    // Mirrors validate_emoji_name's `^[a-z0-9_]{2,32}$` (server/src/validation.rs): ascii only, not any Unicode letter/digit.
+                    onValueChange = { name = it.lowercase().filter { ch -> ch in 'a'..'z' || ch in '0'..'9' || ch == '_' }; error = null },
                     label = { Text("Name") },
                     singleLine = true,
                     modifier = Modifier.testTag("emoji-name-input"),

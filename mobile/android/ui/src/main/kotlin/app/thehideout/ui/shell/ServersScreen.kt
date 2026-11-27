@@ -1,5 +1,6 @@
 package app.thehideout.ui.shell
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,47 +71,57 @@ fun ServersScreen(state: AppState, actions: ShellActions, modifier: Modifier = M
     // profile's "Message" switched here - brings the detail pane forward on a phone, same as a tap
     // on a channel row does; nothing to open shows the list.
     LaunchedEffect(channel?.id) { if (channel != null) navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, channel.id) }
-    NavigableListDetailPaneScaffold(
-        navigator = navigator,
-        modifier = modifier,
-        listPane = {
-            AnimatedPane {
-                ChannelListPane(state, actions) { id ->
-                    actions.openChannel(id)
-                    if (state.channel(guild?.id ?: 0, id)?.kind != ChannelKind.Voice) scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, id) }
-                }
-            }
-        },
-        detailPane = {
-            AnimatedPane {
-                if (guild != null && channel != null) {
-                    var showMembers by remember { mutableStateOf(false) }
-                    val members = state.members[guild.id].orEmpty().mapNotNull { state.users[it] }
-                    TranscriptPane(
-                        state, channel.id, "# ${channel.name}", channel.topic.ifBlank { guild.name }, actions,
-                        onBack = if (navigator.canNavigateBack()) ({ scope.launch { navigator.navigateBack() } }) else null,
-                        members = members,
-                        serverEmojis = state.emojis[guild.id].orEmpty(),
-                        canManageMessages = Perm.has(state.perms(guild.id), Perm.MANAGE_MESSAGES),
-                        onOpenMembers = { showMembers = true },
-                    )
-                    if (showMembers) {
-                        MembersSheet(state, guild.id, onDismiss = { showMembers = false }, onMessage = { userId ->
-                            showMembers = false
-                            actions.startDm(userId)
-                            actions.navigateToDms()
-                        })
+    // Hoisted above the list/detail panes so it renders full-screen over both of them (not confined
+    // to the list pane's column on tablets); reset on a server switch, same as the other sheets below.
+    var showServerSettings by remember { mutableStateOf(false) }
+    LaunchedEffect(guild?.id) { showServerSettings = false }
+    Box(modifier.fillMaxSize()) {
+        NavigableListDetailPaneScaffold(
+            navigator = navigator,
+            modifier = Modifier.fillMaxSize(),
+            listPane = {
+                AnimatedPane {
+                    ChannelListPane(state, actions, onOpenServerSettings = { showServerSettings = true }) { id ->
+                        actions.openChannel(id)
+                        if (state.channel(guild?.id ?: 0, id)?.kind != ChannelKind.Voice) scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, id) }
                     }
-                } else {
-                    Box(Modifier.fillMaxSize().background(Hideout.colors.bg)) { EmptyState(Sym.Tag, "Pick a channel", "Its messages show up here.", Modifier.align(Alignment.Center)) }
                 }
-            }
-        },
-    )
+            },
+            detailPane = {
+                AnimatedPane {
+                    if (guild != null && channel != null) {
+                        var showMembers by remember { mutableStateOf(false) }
+                        val members = state.members[guild.id].orEmpty().mapNotNull { state.users[it] }
+                        TranscriptPane(
+                            state, channel.id, "# ${channel.name}", channel.topic.ifBlank { guild.name }, actions,
+                            onBack = if (navigator.canNavigateBack()) ({ scope.launch { navigator.navigateBack() } }) else null,
+                            members = members,
+                            serverEmojis = state.emojis[guild.id].orEmpty(),
+                            canManageMessages = Perm.has(state.perms(guild.id), Perm.MANAGE_MESSAGES),
+                            onOpenMembers = { showMembers = true },
+                        )
+                        if (showMembers) {
+                            MembersSheet(state, guild.id, onDismiss = { showMembers = false }, onMessage = { userId ->
+                                showMembers = false
+                                actions.startDm(userId)
+                                actions.navigateToDms()
+                            })
+                        }
+                    } else {
+                        Box(Modifier.fillMaxSize().background(Hideout.colors.bg)) { EmptyState(Sym.Tag, "Pick a channel", "Its messages show up here.", Modifier.align(Alignment.Center)) }
+                    }
+                }
+            },
+        )
+        if (guild != null && showServerSettings) {
+            BackHandler { showServerSettings = false }
+            ServerSettingsScreen(state, guild.id, actions, onDismiss = { showServerSettings = false }, modifier = Modifier.fillMaxSize())
+        }
+    }
 }
 
 @Composable
-private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (Long) -> Unit) {
+private fun ChannelListPane(state: AppState, actions: ShellActions, onOpenServerSettings: () -> Unit, onChannel: (Long) -> Unit) {
     val c = Hideout.colors
     val guild = state.currentGuild
     // Folded sections, per guild, kept across rotation.
@@ -122,7 +133,6 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
     var showCreateChannel by remember { mutableStateOf(false) }
     var showCreateSection by remember { mutableStateOf(false) }
     var showInvite by remember { mutableStateOf(false) }
-    var showServerSettings by remember { mutableStateOf(false) }
     var showLeaveServer by remember { mutableStateOf(false) }
     var sectionMenuFor by remember { mutableStateOf<Long?>(null) }
     var renameSectionFor by remember { mutableStateOf<app.thehideout.core.model.Section?>(null) }
@@ -138,7 +148,6 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
         showCreateChannel = false
         showCreateSection = false
         showInvite = false
-        showServerSettings = false
         showLeaveServer = false
         sectionMenuFor = null
         renameSectionFor = null
@@ -186,7 +195,7 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
                                     DropdownMenuItem(text = { Text("Create channel") }, onClick = { guildMenu = false; createChannelSectionId = null; showCreateChannel = true })
                                     DropdownMenuItem(text = { Text("Create section") }, onClick = { guildMenu = false; showCreateSection = true })
                                 }
-                                if (canOpenServerSettings) DropdownMenuItem(text = { Text("Server settings") }, onClick = { guildMenu = false; showServerSettings = true }, modifier = Modifier.testTag("server-menu-settings"))
+                                if (canOpenServerSettings) DropdownMenuItem(text = { Text("Server settings") }, onClick = { guildMenu = false; onOpenServerSettings() }, modifier = Modifier.testTag("server-menu-settings"))
                                 if (canLeaveGuild) DropdownMenuItem(text = { Text("Leave server") }, onClick = { guildMenu = false; showLeaveServer = true }, modifier = Modifier.testTag("server-menu-leave"))
                             }
                         }
@@ -284,9 +293,6 @@ private fun ChannelListPane(state: AppState, actions: ShellActions, onChannel: (
         if (showLeaveServer) {
             LeaveServerDialog(guild.name, onDismiss = { showLeaveServer = false }, onConfirm = { actions.leaveGuild(guild.id) })
         }
-    }
-    if (guild != null && showServerSettings) {
-        ServerSettingsScreen(state, guild.id, actions, onDismiss = { showServerSettings = false }, modifier = Modifier.fillMaxSize())
     }
     }
 }
