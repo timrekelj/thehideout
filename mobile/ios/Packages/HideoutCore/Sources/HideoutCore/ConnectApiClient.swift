@@ -33,6 +33,16 @@ final class HeaderInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked S
 /// decides a stale `Subscribe` stream is dead, not `URLSession`'s idle/total timeouts.
 enum GatewayHTTPTimeout { static let seconds: TimeInterval = 365 * 86_400 }
 
+/// Reports `URLSession`'s own upload progress to a plain closure; a fresh instance per call, passed as
+/// the per-task `delegate:` of `URLSession.upload(for:fromFile:delegate:)` (iOS 15+).
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let progress: @Sendable (UInt64) -> Void
+    init(progress: @escaping @Sendable (UInt64) -> Void) { self.progress = progress }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        progress(UInt64(max(0, totalBytesSent)))
+    }
+}
+
 /// The real `ApiClient`: connect-swift (Connect protocol, protobuf codec) over `URLSession`.
 public final class ConnectApiClient: ApiClient {
     let auth: Thehideout_V1_AuthServiceClient
@@ -43,9 +53,18 @@ public final class ConnectApiClient: ApiClient {
     private let roles: Thehideout_V1_RoleServiceClient
     private let emojis: Thehideout_V1_EmojiServiceClient
     private let gateway: Thehideout_V1_GatewayServiceClient
+    private let baseURL: URL
+    private let clientHeader: String
+    private let token: @Sendable () -> String?
+    /// A plain `URLSession` for `POST /attachments` (not Connect/protobuf): the default session is fine
+    /// here (an upload is a single bounded request/response, unlike the gateway's long-lived stream).
+    private let uploadSession = URLSession(configuration: .default)
 
     /// `token` is read for every call, so a new session takes effect without rebuilding the client.
     public init(baseURL: URL, clientHeader: String = ClientIdentity.value(), token: @escaping @Sendable () -> String?) {
+        self.baseURL = baseURL
+        self.clientHeader = clientHeader
+        self.token = token
         let config = ProtocolClientConfig(
             host: baseURL.absoluteString,
             networkProtocol: .connect,
@@ -171,6 +190,50 @@ public final class ConnectApiClient: ApiClient {
             return x
         }
         return Layout(try value(await guilds.updateLayout(request: req, headers: [:])).layout)
+    }
+
+    // MARK: attachments
+
+    public func uploadAttachment(channel: ID, filename: String, contentType: String, size: UInt64, fileURL: URL, progress: @escaping @Sendable (UInt64) -> Void) async throws -> PendingAttachment {
+        var components = URLComponents(url: baseURL.appendingPathComponent("attachments"), resolvingAgainstBaseURL: false)
+        components?.percentEncodedQuery = "channel_id=\(channel)&filename=\(Self.encodeUploadComponent(filename))"
+        guard let url = components?.url else { throw AppError.other("bad upload url") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(size), forHTTPHeaderField: "Content-Length")
+        request.setValue(clientHeader, forHTTPHeaderField: ClientIdentity.header)
+        if let t = token(), !t.isEmpty { request.setValue("Bearer \(t)", forHTTPHeaderField: "authorization") }
+        let delegate = UploadProgressDelegate(progress: progress)
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await uploadSession.upload(for: request, fromFile: fileURL, delegate: delegate)
+        } catch {
+            // A network failure here (including one that happens while the response body is still
+            // being read) throws straight out of this `await` rather than leaving anything waiting:
+            // Swift's structured concurrency has no callback step of its own to forget to resume, the
+            // failure mode a plain-callback HTTP client (Android's OkHttp) has to guard against by hand.
+            throw AppError.from(error)
+        }
+        guard let http = response as? HTTPURLResponse else { throw AppError.network("no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AppError(status: http.statusCode, body: String(decoding: data, as: UTF8.self))
+        }
+        return try parsePendingAttachment(data)
+    }
+
+    /// Percent-encodes everything except RFC 3986 unreserved characters (desktop's `upload.rs::encode_component`).
+    static func encodeUploadComponent(_ s: String) -> String {
+        var out = ""
+        for b in Array(s.utf8) {
+            let c = Character(UnicodeScalar(b))
+            if (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) || "-._~".contains(c) {
+                out.append(c)
+            } else {
+                out += String(format: "%%%02X", b)
+            }
+        }
+        return out
     }
 
     // MARK: gateway

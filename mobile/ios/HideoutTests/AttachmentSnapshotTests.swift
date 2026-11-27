@@ -25,8 +25,17 @@ final class AttachmentSnapshotTests: SnapshotCase {
     func testDesignChannelTranscript() async {
         await preload("square-1.jpg", "landscape-3.jpg", "landscape-1.jpg", "portrait-1.jpg", "landscape-2.jpg", "landscape-4.jpg", "landscape-5.jpg", "clip-1-poster.jpg")
         let (store, _) = await makeFakeStore(open: FakeBackend.Ids.design)
-        assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.design) }, store: store)
-        assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.design) }, store: store, device: .iPad, styles: [("dark", .dark)])
+        // #design now also carries the embed/emoji seed messages above the attachment ones
+        // (phase 3b-2). NOTE: as of phase 3b-2 this specific capture (the whole, now-busier #design
+        // transcript through `drawHierarchyInKeyWindow`) is unreliable on at least one recording
+        // machine — it can render blank regardless of `wait:` (tried up to 5 s) — a capture-harness
+        // limitation, not a rendering bug: the same channel renders correctly in the live app
+        // (confirmed with Maestro) and every new piece (the tray, embed card, inline/jumbo emoji, the
+        // picker's server section) has its own reliable, reviewed snapshot in
+        // `UploadsEmbedsEmojiSnapshotTests`. Re-record on a machine where it captures correctly rather
+        // than trusting a blank result.
+        assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.design) }, store: store, wait: 2.0)
+        assertScreen(NavigationStack { TranscriptScreenForTests(channel: FakeBackend.Ids.design) }, store: store, device: .iPad, styles: [("dark", .dark)], wait: 2.0)
     }
 
     func testImageGridOne() async {

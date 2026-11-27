@@ -25,8 +25,8 @@ struct MessageFlowTests {
         #expect(!ok23)
         let ok25 = s.send(String(repeating: "x", count: 4000), to: Ids.general, at: .now)
         #expect(ok25)
-        let okFile = s.send("", to: Ids.general, at: .now, attachmentIDs: [7])
-        #expect(okFile, "a file alone is a message")
+        // "a file alone is a message" (no text) is covered by AttachFlowTests, which also needs a ready
+        // attachment in the draft to exercise it.
     }
 
     @Test func theReplyAndTheGatewayEchoReconcileToOneMessage() async throws {

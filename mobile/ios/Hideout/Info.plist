@@ -48,6 +48,10 @@
 	<string>thehideout lets you attach photos and videos from your library to messages.</string>
 	<key>UIAppFonts</key>
 	<array/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

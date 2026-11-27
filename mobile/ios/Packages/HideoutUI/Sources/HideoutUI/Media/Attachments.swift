@@ -609,6 +609,39 @@ struct RemovedAttachmentPlaceholder: View {
     }
 }
 
+/// A pending message's local file previews (ATT-09/ATT-11): what was sent, shown until the server's own
+/// message replaces the pending row. An image loads straight from its own local file URL — never
+/// through `mediaSource`, which only trusts server media keys; anything else is a small chip with its
+/// type icon, name and size.
+struct PendingAttachmentPreviews: View {
+    @Environment(\.theme) private var theme
+    let previews: [PendingPreview]
+    init(_ previews: [PendingPreview]) { self.previews = previews }
+
+    var body: some View {
+        FlowWrap(spacing: 6) {
+            ForEach(previews) { p in
+                let kind = fileKind(contentType: p.contentType, filename: p.name)
+                if kind == .image, let preview = p.preview, let url = URL(string: preview), let uiImage = UIImage(contentsOfFile: url.path) {
+                    Image(uiImage: uiImage).resizable().aspectRatio(contentMode: .fill)
+                        .frame(width: 96, height: 96)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: fileKindSymbol(kind)).foregroundStyle(theme.colors.accentText)
+                        Text(p.name).typeStyle(\.label).lineLimit(1)
+                        Text(humanSize(p.size)).typeStyle(\.caption, color: \.textMuted)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .frame(maxWidth: 220, alignment: .leading)
+                    .background(theme.colors.hover, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+}
+
 /// What hangs under a message: its image grid, then its video, audio, file and removed attachments in
 /// order (desktop's `attachments()`, `ui/attach.rs`). `onOpenLightbox` receives every picture/video of
 /// the message and which one was tapped.

@@ -22,6 +22,16 @@ public struct MessageRow: View {
     let text: String
     let reactions: [Reaction]
     let attachments: [Attachment]
+    let embeds: [Embed]
+    /// So a folded embed's state key (`EmbedRef`) is stable across re-renders; 0 for a pending message,
+    /// whose embeds (if any) are only ever its local previews, never a real one to fold.
+    let messageID: ID
+    /// Local file previews of an outgoing message's own attachments, shown until the server's message
+    /// (with real `attachments`) replaces this pending row.
+    let attachmentPreviews: [PendingPreview]
+    /// This channel's custom emoji, keyed by id, for inline/jumbo pictures (MD-06/07) and reaction chips
+    /// (MSG-06); empty in a DM (Unicode-only scope, DM-06).
+    let customEmojis: [ID: Emoji]
     let me: String?
     let grouped: Bool
     let delivery: Delivery?
@@ -29,6 +39,7 @@ public struct MessageRow: View {
     let mentionsMe: Bool
     let isOwn: Bool
     let canModerate: Bool
+    let collapsedEmbeds: Set<EmbedRef>
     var onRetry: (() -> Void)?
     var onReact: ((ReactionEmoji, Bool) -> Void)?
     var onReply: (() -> Void)?
@@ -36,20 +47,25 @@ public struct MessageRow: View {
     var onDelete: (() -> Void)?
     var onMoreReactions: (() -> Void)?
     var onOpenLightbox: (([LightboxItem], Int) -> Void)?
+    var onToggleEmbedCollapsed: ((EmbedRef) -> Void)?
 
     @State private var dragX: CGFloat = 0
     @State private var confirmDelete = false
 
-    public init(author: String, authorID: String? = nil, roleColor: String? = nil, time: Date, text: String, reactions: [Reaction] = [], attachments: [Attachment] = [], me: String? = nil,
+    public init(author: String, authorID: String? = nil, roleColor: String? = nil, time: Date, text: String, reactions: [Reaction] = [], attachments: [Attachment] = [],
+                embeds: [Embed] = [], messageID: ID = 0, attachmentPreviews: [PendingPreview] = [], customEmojis: [ID: Emoji] = [:], me: String? = nil,
                 grouped: Bool = false, delivery: Delivery? = nil, edited: Bool = false, mentionsMe: Bool = false, isOwn: Bool = false, canModerate: Bool = false,
+                collapsedEmbeds: Set<EmbedRef> = [],
                 onRetry: (() -> Void)? = nil, onReact: ((ReactionEmoji, Bool) -> Void)? = nil, onReply: (() -> Void)? = nil,
                 onEdit: (() -> Void)? = nil, onDelete: (() -> Void)? = nil, onMoreReactions: (() -> Void)? = nil,
-                onOpenLightbox: (([LightboxItem], Int) -> Void)? = nil) {
+                onOpenLightbox: (([LightboxItem], Int) -> Void)? = nil, onToggleEmbedCollapsed: ((EmbedRef) -> Void)? = nil) {
         self.author = author; self.authorID = authorID ?? author; self.roleColor = roleColor; self.time = time; self.text = text
-        self.reactions = reactions; self.attachments = attachments; self.me = me; self.grouped = grouped; self.delivery = delivery; self.edited = edited
-        self.mentionsMe = mentionsMe; self.isOwn = isOwn; self.canModerate = canModerate
+        self.reactions = reactions; self.attachments = attachments; self.embeds = embeds; self.messageID = messageID
+        self.attachmentPreviews = attachmentPreviews; self.customEmojis = customEmojis
+        self.me = me; self.grouped = grouped; self.delivery = delivery; self.edited = edited
+        self.mentionsMe = mentionsMe; self.isOwn = isOwn; self.canModerate = canModerate; self.collapsedEmbeds = collapsedEmbeds
         self.onRetry = onRetry; self.onReact = onReact; self.onReply = onReply; self.onEdit = onEdit; self.onDelete = onDelete; self.onMoreReactions = onMoreReactions
-        self.onOpenLightbox = onOpenLightbox
+        self.onOpenLightbox = onOpenLightbox; self.onToggleEmbedCollapsed = onToggleEmbedCollapsed
     }
 
     private var clock: Date.FormatStyle { Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone) }
@@ -85,12 +101,18 @@ public struct MessageRow: View {
                             if edited { Text("edited").typeStyle(\.caption, color: \.textFaint) }
                         }
                     }
-                    if !text.isEmpty { MessageBody(text, me: me) }
+                    if !text.isEmpty { MessageBody(text, me: me, customEmojis: customEmojis) }
                     if !attachments.isEmpty {
                         MessageAttachmentsView(attachments: attachments, onOpenLightbox: { items, i in onOpenLightbox?(items, i) })
+                    } else if !attachmentPreviews.isEmpty {
+                        PendingAttachmentPreviews(attachmentPreviews)
+                    }
+                    ForEach(Array(embeds.enumerated()), id: \.offset) { index, embed in
+                        let ref = EmbedRef(messageID: messageID, index: index)
+                        EmbedCard(embed: embed, collapsed: collapsedEmbeds.contains(ref), onToggleCollapsed: { onToggleEmbedCollapsed?(ref) }, onOpenLightbox: { items, i in onOpenLightbox?(items, i) })
                     }
                     if !reactions.isEmpty {
-                        FlowReactions(reactions: reactions, onToggle: onReact, onMore: onMoreReactions)
+                        FlowReactions(reactions: reactions, customEmojis: customEmojis, onToggle: onReact, onMore: onMoreReactions)
                             .padding(.top, 4)
                     }
                     if delivery == .failed {
@@ -141,7 +163,7 @@ public struct MessageRow: View {
             if isOwn, let onEdit { Button("Edit", systemImage: "pencil", action: onEdit) }
             if (isOwn || canModerate), onDelete != nil { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
         } preview: {
-            MessageBody(text, me: me).padding(Space.s4).frame(maxWidth: 320, alignment: .leading)
+            MessageBody(text, me: me, customEmojis: customEmojis).padding(Space.s4).frame(maxWidth: 320, alignment: .leading)
         }
         .confirmationDialog(
             isOwn ? "Delete this message?" : "Delete \(author)'s message?",
@@ -158,6 +180,7 @@ public struct MessageRow: View {
 struct FlowReactions: View {
     @Environment(\.theme) private var theme
     let reactions: [Reaction]
+    var customEmojis: [ID: Emoji] = [:]
     var onToggle: ((ReactionEmoji, Bool) -> Void)?
     var onMore: (() -> Void)?
 
@@ -169,7 +192,12 @@ struct FlowReactions: View {
                 } label: {
                     switch r.emoji {
                     case .unicode(let e): ReactionChip(e, count: r.count, mine: r.me)
-                    case .custom: ReactionChip("🔸", count: r.count, mine: r.me) // image rendering is a later task
+                    case .custom(let id):
+                        if let emoji = customEmojis[id] {
+                            CustomEmojiReactionChip(emoji: emoji, count: r.count, mine: r.me)
+                        } else {
+                            ReactionChip("🔸", count: r.count, mine: r.me) // deleted or unresolved: no name to show either
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -187,6 +215,29 @@ struct FlowReactions: View {
                 .accessibilityLabel("Add a reaction")
             }
         }
+    }
+}
+
+/// A reaction chip for a custom emoji (MSG-06/09): the same layout as `ReactionChip`, a picture instead
+/// of a Unicode glyph.
+struct CustomEmojiReactionChip: View {
+    @Environment(\.theme) private var theme
+    let emoji: Emoji
+    let count: Int
+    let mine: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            CustomEmojiImage(emoji: emoji, size: 14)
+            Text("\(count)").font(DesignFont.ui(size: 13, weight: 530)).monospacedDigit()
+                .foregroundStyle(mine ? theme.colors.accentText : theme.colors.textMuted)
+        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: 26)
+        .background(mine ? theme.colors.accentWash : theme.colors.surfaceRaised, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous).strokeBorder(mine ? theme.colors.accent : theme.colors.borderSubtle, lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(":\(emoji.name):, \(count)\(mine ? ", you reacted" : "")")
     }
 }
 

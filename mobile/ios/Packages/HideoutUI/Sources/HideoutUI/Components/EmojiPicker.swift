@@ -80,12 +80,9 @@ public struct EmojiPickerSheet: View {
         switch entry {
         case .unicode(let emoji, _):
             Text(emoji).font(.system(size: 28)).frame(width: 40, height: 40)
-        case .custom(_, let name, _, _):
-            // Image rendering (animated-first-frame) is a later task; show the name so the cell is still usable.
-            Text(String(name.prefix(2)).uppercased())
-                .typeStyle(\.caption, color: \.accentText)
+        case .custom(let id, let name, let image, let animated):
+            CustomEmojiImage(emoji: Emoji(id: id, guildID: 0, name: name, animated: animated, image: image), size: 28)
                 .frame(width: 40, height: 40)
-                .background(theme.colors.accentWash, in: RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
         }
     }
 }

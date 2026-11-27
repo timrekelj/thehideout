@@ -70,6 +70,10 @@ public protocol ApiClient: GatewaySource {
     func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> Layout
     /// Opens a DM with `user`, or returns the existing one (idempotent).
     func startDm(user: ID) async throws -> DMChannel
+    /// `POST /attachments`: streams `fileURL`'s bytes (plain HTTP, not Connect) as a pending upload good
+    /// for `sendMessage(attachmentIDs:)` within the hour. `progress(sent)` runs as bytes are handed to the
+    /// connection.
+    func uploadAttachment(channel: ID, filename: String, contentType: String, size: UInt64, fileURL: URL, progress: @escaping @Sendable (UInt64) -> Void) async throws -> PendingAttachment
 }
 
 /// The `x-thehideout-client` header value: `ios/<version> (iOS <os version>)`.

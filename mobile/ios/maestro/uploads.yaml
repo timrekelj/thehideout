@@ -1,0 +1,79 @@
+# Composer attachment uploads, embeds and custom emoji against the bundled FakeBackend (#design, phase
+# 3b-2): attach a photo from the system Photos picker, watch it upload (simulated progress), send it and
+# see it appear in the transcript; fold a link embed; insert a custom emoji through `:` autocomplete and
+# send it. Needs at least one photo in the simulator's library first:
+#   xcrun simctl addmedia <udid> /path/to/a.jpg
+# Run with:
+#   maestro --device <udid> test mobile/ios/maestro/uploads.yaml
+appId: si.zabit.thehideout
+---
+- launchApp:
+    arguments:
+      --fake: true
+- assertVisible: "Servers"
+- tapOn: "The Hideout"
+- tapOn: "design"
+- assertVisible: "composer"
+- takeScreenshot: uploads/01-design-channel
+
+# --- attach -> progress -> send -> appears (ATT-09/ATT-11) ---
+- tapOn: "Attach"
+- tapOn: "Photo Library"
+- waitForAnimationToEnd:
+    timeout: 1500
+# The system Photos picker: the first (most recent) thumbnail in the grid.
+- tapOn:
+    point: "15%,20%"
+- tapOn: "Add"
+- waitForAnimationToEnd:
+    timeout: 800
+- assertVisible:
+    id: "attach-tray"
+- takeScreenshot: uploads/02-attach-tray-uploading
+- waitForAnimationToEnd:
+    timeout: 2500
+- takeScreenshot: uploads/03-attach-ready
+- tapOn:
+    id: "composer"
+- inputText: "testing an upload"
+- tapOn: "Send"
+- waitForAnimationToEnd:
+    timeout: 800
+- assertVisible: "testing an upload"
+- takeScreenshot: uploads/04-sent-with-attachment
+
+# --- fold an embed (ATT-07) ---
+- scrollUntilVisible:
+    element:
+      text: "example wiki"
+    direction: UP
+    visibilityPercentage: 60
+    centerElement: true
+- takeScreenshot: uploads/05-embed-open
+- tapOn: "example wiki"
+- waitForAnimationToEnd:
+    timeout: 500
+- assertNotVisible: "Release notes: v0.0.3"
+- takeScreenshot: uploads/06-embed-folded
+- tapOn: "example wiki"
+- waitForAnimationToEnd:
+    timeout: 500
+- assertVisible: "Release notes: v0.0.3"
+
+# --- custom emoji via autocomplete (MSG-09/MD-06) ---
+- scrollUntilVisible:
+    element:
+      id: "composer"
+    direction: DOWN
+- tapOn:
+    id: "composer"
+- inputText: ":wave"
+- waitForAnimationToEnd:
+    timeout: 500
+- takeScreenshot: uploads/07-emoji-autocomplete
+- tapOn: "wave"
+- assertVisible: "wave"
+- tapOn: "Send"
+- waitForAnimationToEnd:
+    timeout: 800
+- takeScreenshot: uploads/08-sent-custom-emoji

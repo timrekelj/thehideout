@@ -92,6 +92,9 @@ public final class SwitchingBackend: ApiClient, AuthApi, @unchecked Sendable {
     public func removeReaction(channel: ID, message: ID, emoji: ReactionEmoji) async throws { try await b.removeReaction(channel: channel, message: message, emoji: emoji) }
     public func updateLayout(guild: ID, expectedVersion: UInt64, sectionIDs: [ID], entries: [LayoutEntry]) async throws -> Layout { try await b.updateLayout(guild: guild, expectedVersion: expectedVersion, sectionIDs: sectionIDs, entries: entries) }
     public func startDm(user: ID) async throws -> DMChannel { try await b.startDm(user: user) }
+    public func uploadAttachment(channel: ID, filename: String, contentType: String, size: UInt64, fileURL: URL, progress: @escaping @Sendable (UInt64) -> Void) async throws -> PendingAttachment {
+        try await b.uploadAttachment(channel: channel, filename: filename, contentType: contentType, size: size, fileURL: fileURL, progress: progress)
+    }
     public func subscribe() -> AsyncThrowingStream<GatewayEvent, Error> { b.subscribe() }
 
     public func login(username: String, password: String, deviceName: String) async throws -> SignInResult { try await b.login(username: username, password: password, deviceName: deviceName) }

@@ -111,6 +111,13 @@ These tests are **not** run in CI (see `.github/workflows/ci.yml`, job `ios`): a
   ```sh
   maestro --device <udid> test mobile/ios/maestro/attachments.yaml
   ```
+- `uploads.yaml`: launches with `--fake`, opens #design, attaches a photo from the system Photos
+  picker (needs `xcrun simctl addmedia <udid> /path/to/a.jpg` first), watches it upload (simulated
+  progress) and sends it, folds and unfolds a seeded link embed, then inserts a seeded custom emoji
+  through `:` autocomplete and sends it.
+  ```sh
+  maestro --device <udid> test mobile/ios/maestro/uploads.yaml
+  ```
 - `invite-code.yaml`: launches with `--fake --signed-out`, opens "Join with a code", types a code into
   the 8-box field (the 8th character looks it up at once) and reaches the accept step, then opens an
   invite deep link (the same `AuthFlow.handle(url:)` path a pasted link's extracted code or a universal
@@ -140,6 +147,37 @@ These tests are **not** run in CI (see `.github/workflows/ci.yml`, job `ios`): a
      ```
 
 Screenshots land under the run's `takeScreenshot` artifact folder (pass `--test-output-dir` to control where); keep them out of version control.
+
+## Composer uploads (phase 3b-2)
+
+`AttachMenuButton` (`PhotosPicker`, `UIImagePickerController`'s camera, `.fileImporter`) hands picked
+files to `HideoutCore.AttachDraft`'s state machine (queued → uploading → ready/failed per file); the
+tray reads it straight off `AppState.attachDrafts[channel]`. A picked JPEG/PNG/HEIC is copied into the
+app's own tmp directory first and has its GPS EXIF stripped there (never touching the original picker
+item), so every upload always streams from a file on disk (`URLSession.upload(for:fromFile:)`), never
+from memory — the same shape a camera capture or a `.fileImporter` pick already has.
+
+Uploads run on a **foreground** `URLSession` task, not a background one. A background `URLSession`
+needs `application(_:handleEventsForBackgroundURLSession:completionHandler:)` on a `UIApplicationDelegate`
+to resume the app and re-attach to the session when the OS finishes it after the app was suspended —
+real plumbing this phase didn't add. Leaving the attachments screen mid-upload today behaves like
+Android's own composer upload (a plain coroutine on the process, not a foreground service): the upload
+keeps running as long as the app process is alive and not actually suspended by the OS, and stops if
+the app is force-quit or suspended for long enough to be terminated. A background `URLSession` is a
+reasonable follow-up once uploads need to survive the app being backgrounded for a while, not just
+navigated away from.
+
+The store gates concurrency at `maxConcurrentUploads` (3) with an `AsyncSemaphore` actor, and retries a
+transient failure (`AppError.isTransient`, e.g. a network error) up to 3 extra times with backoff
+before the file shows as failed with "Try again". Unlike Android's OkHttp callback client — where
+reading the response body inside the success callback can itself throw, and forgetting to resume the
+waiting coroutine there would hang it forever (the bug `ConnectApiClientUploadTest`'s
+"response body that fails mid-read" test guards against) — `ConnectApiClient.uploadAttachment` is a
+plain `async`/`await` call: any failure, including one while the body is still being read, throws
+straight out of the single `await` and is caught by the normal `do`/`catch`, with no separate callback
+step to forget to resume. `ConnectApiClientUploadTests.swift`'s own version of that test (a tiny
+loopback `NWListener` that closes the socket mid-body) is a regression guard on that shape, not a
+reproduction of a bug iOS could have the same way.
 
 ## Theming rules in code
 

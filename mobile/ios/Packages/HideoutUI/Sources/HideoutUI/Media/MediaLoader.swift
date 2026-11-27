@@ -11,8 +11,8 @@ public struct AttachmentIOError: Error, Equatable {
 
 /// Where the fake backend's bundled sample media lives (`Resources/FakeMedia`, copied from Android's
 /// `ui/src/main/assets/fake_media` so both apps' snapshots show the same pictures and clips).
-enum FakeMedia {
-    static func url(forAssetNamed name: String) -> URL? {
+public enum FakeMedia {
+    public static func url(forAssetNamed name: String) -> URL? {
         // Defensive even though every caller already gates this behind `allowFakeAssets` (only ever
         // true under `--fake`/`--gallery`, never from a real server's response): a name can't escape
         // the `FakeMedia` subdirectory it's looked up in.

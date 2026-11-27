@@ -49,20 +49,24 @@ struct TranscriptScreen: View {
                         }
                         MessageRow(
                             author: state.userName(m.authorID), authorID: String(m.authorID), time: m.createdAt, text: m.content,
-                            reactions: m.reactions, attachments: m.attachments, me: state.me?.username, grouped: isFollowUp(m, previous), edited: m.editedAt != nil,
+                            reactions: m.reactions, attachments: m.attachments, embeds: m.embeds, messageID: m.id,
+                            customEmojis: customEmojis(guild: guildChannel?.guildID), me: state.me?.username, grouped: isFollowUp(m, previous), edited: m.editedAt != nil,
                             mentionsMe: m.authorID != state.myID && state.mentionsMe(m.content),
                             isOwn: m.authorID == state.myID, canModerate: guildChannel != nil && state.perms(guildChannel!.guildID).allows(.manageMessages),
+                            collapsedEmbeds: Set(state.collapsedEmbeds),
                             onReact: { emoji, on in store.react(channel: channelID, message: m.id, emoji: emoji, on: on) },
                             onReply: { reply(to: state.userName(m.authorID)) },
                             onEdit: { beginEdit(m) },
                             onDelete: { store.deleteMessage(channel: channelID, message: m.id) },
                             onMoreReactions: { showEmojiPicker = true },
-                            onOpenLightbox: { items, i in lightboxRequest = LightboxRequest(items: items, startIndex: i) }
+                            onOpenLightbox: { items, i in lightboxRequest = LightboxRequest(items: items, startIndex: i) },
+                            onToggleEmbedCollapsed: { ref in store.toggleEmbedCollapsed(ref) }
                         )
                         .id(state.rowID(m))
                     }
                     ForEach(outgoing) { o in
-                        MessageRow(author: state.me?.username ?? "you", authorID: String(state.myID), time: o.at, text: o.content, me: state.me?.username,
+                        MessageRow(author: state.me?.username ?? "you", authorID: String(state.myID), time: o.at, text: o.content,
+                                   attachmentPreviews: o.attachments, customEmojis: customEmojis(guild: guildChannel?.guildID), me: state.me?.username,
                                    grouped: messages.last?.authorID == state.myID && o.id != outgoing.first?.id ? true : false, delivery: o.state,
                                    isOwn: true, onRetry: { store.retry(nonce: o.nonce) })
                             .id("n:\(o.nonce)")
@@ -140,6 +144,13 @@ struct TranscriptScreen: View {
 
     private func dmTitle(_ s: AppState) -> String {
         s.dm(channelID).flatMap { s.dmPeer($0)?.username } ?? "Channel"
+    }
+
+    /// This channel's custom emoji keyed by id (MD-06/07, MSG-06/09); empty in a DM, same Unicode-only
+    /// scope as the emoji picker and autocomplete (DM-06).
+    private func customEmojis(guild: ID?) -> [ID: Emoji] {
+        guard let guild else { return [:] }
+        return Dictionary(uniqueKeysWithValues: (store.state.emojis[guild] ?? []).map { ($0.id, $0) })
     }
 
     private func isFollowUp(_ m: Message, _ previous: Message?) -> Bool {
@@ -225,7 +236,11 @@ struct TranscriptScreen: View {
                         ForEach(matches) { entry in
                             Button { replaceTrigger(start, with: entry.insertion) } label: {
                                 HStack(spacing: 6) {
-                                    if case .unicode(let e, _) = entry { Text(e) } else { Text(":\(entry.name):") }
+                                    switch entry {
+                                    case .unicode(let e, _): Text(e)
+                                    case .custom(let id, let name, let image, let animated):
+                                        CustomEmojiImage(emoji: Emoji(id: id, guildID: guild ?? 0, name: name, animated: animated, image: image), size: 20)
+                                    }
                                     Text(entry.name).typeStyle(\.caption, color: \.textMuted)
                                 }
                                 .padding(.horizontal, 10).frame(minHeight: 32)
@@ -243,8 +258,16 @@ struct TranscriptScreen: View {
 
     private func composer(state: AppState, guild: ID?) -> some View {
         let count = draft.count
+        let attachDraft = state.attachDraft(channelID)
+        let canSend = editing != nil
+            ? !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && count <= AppState.maxMessageChars
+            : (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachDraft.readyCount > 0)
+                && count <= AppState.maxMessageChars && !attachDraft.uploading
         return VStack(spacing: Space.s2) {
             autocompleteStrip(guild: guild, state: state)
+            if editing == nil {
+                AttachTray(draft: attachDraft, onRemove: { store.removeAttachment($0) }, onRetry: { store.retryAttachment($0) })
+            }
             if editing != nil {
                 HStack {
                     Text("Editing message").typeStyle(\.caption, color: \.accentText)
@@ -261,6 +284,11 @@ struct TranscriptScreen: View {
             }
             GlassEffectContainer(spacing: Space.s2) {
                 HStack(alignment: .bottom, spacing: Space.s2) {
+                    if editing == nil {
+                        AttachMenuButton(onPicked: { files in store.attachFiles(channel: channelID, files: files) })
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                    }
                     Button { showEmojiPicker = true } label: { Image(systemName: "face.smiling") }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
@@ -285,7 +313,7 @@ struct TranscriptScreen: View {
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || count > AppState.maxMessageChars)
+                    .disabled(!canSend)
                     .accessibilityLabel(editing != nil ? "Save" : "Send")
                 }
                 .padding(.horizontal, Space.s3)

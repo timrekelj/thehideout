@@ -120,15 +120,27 @@ extension AppState {
 
     // MARK: sending
 
-    /// Queues `text` as a pending message in `channel` (optimistic). False (and nothing queued) when the text is
-    /// empty or over the limit.
+    /// Queues `text` as a pending message in `channel` (optimistic), with the channel's ready attached
+    /// files (ATT-09/ATT-11). False (and nothing queued) when the text is empty with no ready file, the
+    /// text is over the limit, or a file is still queued/uploading.
     @discardableResult
-    public mutating func send(_ text: String, to channel: ID, at now: Date, attachmentIDs: [ID] = []) -> Bool {
+    public mutating func send(_ text: String, to channel: ID, at now: Date) -> Bool {
         let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard content.count <= Self.maxMessageChars, !(content.isEmpty && attachmentIDs.isEmpty) else { return false }
+        guard content.count <= Self.maxMessageChars else { return false }
+        let draft = attachDrafts[channel]
+        if draft?.uploading == true { return false }
+        let ready = draft?.files.filter { $0.state.phase == .ready } ?? []
+        guard !(content.isEmpty && ready.isEmpty) else { return false }
+        let attachmentIDs = ready.compactMap(\.state.pendingID)
+        let previews = ready.map { PendingPreview(name: $0.name, contentType: $0.contentType, size: $0.size, preview: $0.preview) }
         nonceCounter += 1
         let nonce = "\(myID)-\(nonceCounter)"
-        outgoing.append(Outgoing(nonce: nonce, channel: channel, content: content, at: now, attachmentIDs: attachmentIDs))
+        outgoing.append(Outgoing(nonce: nonce, channel: channel, content: content, at: now, attachmentIDs: attachmentIDs, attachments: previews))
+        if var d = draft {
+            d.files.removeAll { $0.state.phase == .ready }
+            d.note = nil
+            attachDrafts[channel] = d
+        }
         outbox.append(.send(channel: channel, content: content, nonce: nonce, attachmentIDs: attachmentIDs))
         return true
     }
@@ -141,6 +153,103 @@ extension AppState {
     }
 
     public mutating func discard(nonce: String) { outgoing.removeAll { $0.nonce == nonce } }
+
+    // MARK: attachments (ATT-09)
+
+    /// Admits each file against `maxAttachments` and the channel's upload cap, then starts it uploading;
+    /// the note says what the last refused file broke.
+    public mutating func attachFiles(channel: ID, files: [PickedFile]) {
+        var draft = attachDraft(channel)
+        for f in files {
+            if draft.files.count >= maxAttachments {
+                draft.note = "You can attach up to \(maxAttachments) files to a message"
+            } else if f.size > maxUploadBytes {
+                draft.note = "\(f.name) is \(humanSize(f.size)), over the \(humanSize(maxUploadBytes)) limit"
+            } else {
+                uploadCounter += 1
+                let id = uploadCounter
+                draft.files.append(DraftFile(id: id, name: f.name, contentType: f.contentType, size: f.size, preview: f.preview, fileURL: f.fileURL, state: AttachUploadState(phase: .queued)))
+                draft.note = nil
+                outbox.append(.uploadAttachment(id: id, channel: channel, filename: f.name, contentType: f.contentType, size: f.size, fileURL: f.fileURL))
+            }
+        }
+        attachDrafts[channel] = draft
+    }
+
+    /// Applies `f` to the draft file `id`, wherever its channel is.
+    private mutating func updateDraftFile(_ id: ID, _ f: (DraftFile) -> DraftFile) {
+        for (channel, var draft) in attachDrafts {
+            guard let i = draft.files.firstIndex(where: { $0.id == id }) else { continue }
+            draft.files[i] = f(draft.files[i])
+            attachDrafts[channel] = draft
+            return
+        }
+    }
+
+    public mutating func attachStarted(_ id: ID) {
+        updateDraftFile(id) { f in var f = f; f.state = AttachUploadState(phase: .uploading, total: f.size); return f }
+    }
+
+    public mutating func attachProgress(_ id: ID, sent: UInt64, total: UInt64) {
+        updateDraftFile(id) { f in
+            guard f.state.phase == .uploading else { return f }
+            var f = f; f.state.sent = sent; f.state.total = total
+            return f
+        }
+    }
+
+    public mutating func attachUploaded(_ id: ID, result: Result<PendingAttachment, AppError>) {
+        switch result {
+        case .success(let p):
+            updateDraftFile(id) { f in
+                var f = f; f.size = p.size
+                f.state = AttachUploadState(phase: .ready, sent: p.size, total: p.size, pendingID: p.id)
+                return f
+            }
+        case .failure(let e):
+            updateDraftFile(id) { f in var f = f; f.state = AttachUploadState(phase: .failed, reason: uploadErrorMessage(e)); return f }
+        }
+    }
+
+    /// The tray's X: forgets the file in whichever channel holds it, cancelling it if it was still going
+    /// up. Returns whether a running upload needs `cancelUpload`.
+    @discardableResult
+    public mutating func removeAttachment(_ id: ID) -> Bool {
+        var wasRunning = false
+        for (channel, var draft) in attachDrafts {
+            guard let f = draft.files.first(where: { $0.id == id }) else { continue }
+            if f.state.phase == .queued || f.state.phase == .uploading { wasRunning = true }
+            draft.files.removeAll { $0.id == id }
+            draft.note = nil
+            attachDrafts[channel] = draft
+            break
+        }
+        if wasRunning { outbox.append(.cancelUpload(id: id)) }
+        return wasRunning
+    }
+
+    /// "Try again" on a file that failed: back to queued, with the same `fileURL` so it streams again.
+    public mutating func retryAttachment(_ id: ID) {
+        for (channel, draft) in attachDrafts {
+            guard let f = draft.files.first(where: { $0.id == id && $0.state.phase == .failed }) else { continue }
+            updateDraftFile(id) { df in var df = df; df.state = AttachUploadState(phase: .queued); return df }
+            outbox.append(.uploadAttachment(id: id, channel: channel, filename: f.name, contentType: f.contentType, size: f.size, fileURL: f.fileURL))
+            return
+        }
+    }
+
+    // MARK: embeds (ATT-07)
+
+    /// Flips `ref`'s folded state: unfolds it if it was folded, else folds it and remembers it last
+    /// (oldest dropped past `embedCollapseCap`), matching desktop's bounded, oldest-first `collapsed_embeds`.
+    public mutating func toggleEmbedCollapsed(_ ref: EmbedRef) {
+        if let i = collapsedEmbeds.firstIndex(of: ref) {
+            collapsedEmbeds.remove(at: i)
+        } else {
+            collapsedEmbeds.append(ref)
+            if collapsedEmbeds.count > embedCollapseCap { collapsedEmbeds.removeFirst(collapsedEmbeds.count - embedCollapseCap) }
+        }
+    }
 
     /// Edits an own message in place (optimistic; a refusal rolls back, see `applyEditReply`). False (and
     /// nothing queued) when the message isn't loaded, or the new text is empty or over the limit.

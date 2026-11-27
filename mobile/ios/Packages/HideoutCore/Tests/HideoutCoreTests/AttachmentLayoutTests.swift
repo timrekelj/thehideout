@@ -171,4 +171,16 @@ final class AttachmentLayoutTests: XCTestCase {
         XCTAssertFalse(encodedPath.contains("/../"), "a .. must never survive as a real path separator")
         XCTAssertTrue(encodedPath.contains("%2F"), "the key's own slashes must be encoded, not literal")
     }
+
+    /// Custom emoji images (MSG-09, MD-06/07) share the same `/media/{key}` URL building as every other
+    /// attachment: `Emoji.image` is just another media key, real or `fakeasset:`.
+    func testEmojiImageURLBuilding() throws {
+        let base = URL(string: "https://thehideout.zabit.si")!
+        let emoji = Emoji(id: 9001, guildID: 1, name: "wave", animated: false, image: "emojis/9001/abc.webp")
+        guard case .remote(let url) = try mediaSource(base: base, key: emoji.image) else { return XCTFail() }
+        XCTAssertEqual(url.absoluteString, "https://thehideout.zabit.si/media/emojis%2F9001%2Fabc%2Ewebp")
+        let fake = Emoji(id: 9003, guildID: 1, name: "party_parrot", animated: true, image: "fakeasset:party_parrot.gif")
+        guard case .fakeAsset(let name) = try mediaSource(base: base, key: fake.image, allowFakeAssets: true) else { return XCTFail() }
+        XCTAssertEqual(name, "party_parrot.gif")
+    }
 }

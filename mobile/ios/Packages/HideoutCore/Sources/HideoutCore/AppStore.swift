@@ -25,6 +25,9 @@ public final class AppStore {
     @ObservationIgnored private let gatewayConfig: GatewayConfig
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
+    /// Gates how many uploads run at once; the running job per file, so the tray's X can cancel one.
+    @ObservationIgnored private let uploadSlots = AsyncSemaphore(maxConcurrentUploads)
+    @ObservationIgnored private var uploadJobs: [ID: Task<Void, Never>] = [:]
     /// Whether a gateway task was started and not stopped since; guards against a second `start`.
     @ObservationIgnored private var gatewayRunning = false
     /// The pending debounced stop from `setActive(false)`; cancelled by a `setActive(true)` within the grace.
@@ -189,6 +192,10 @@ public final class AppStore {
     public func editLayout(guild: ID, _ layout: Layout) { mutate { _ = $0.editLayout(guild: guild, layout) } }
     public func setDraft(channel: ID, text: String) { mutate { $0.setDraft(channel: channel, text: text) } }
     public func startDm(user: ID) { mutate { $0.startDm(user: user) } }
+    public func attachFiles(channel: ID, files: [PickedFile]) { mutate { $0.attachFiles(channel: channel, files: files) } }
+    public func removeAttachment(_ id: ID) { mutate { _ = $0.removeAttachment(id) } }
+    public func retryAttachment(_ id: ID) { mutate { $0.retryAttachment(id) } }
+    public func toggleEmbedCollapsed(_ ref: EmbedRef) { mutate { $0.toggleEmbedCollapsed(ref) } }
 
     @discardableResult
     public func editMessage(channel: ID, message: ID, content: String) -> Bool {
@@ -198,9 +205,9 @@ public final class AppStore {
     }
 
     @discardableResult
-    public func send(_ text: String, to channel: ID, attachmentIDs: [ID] = []) -> Bool {
+    public func send(_ text: String, to channel: ID) -> Bool {
         var ok = false
-        mutate { ok = $0.send(text, to: channel, at: now(), attachmentIDs: attachmentIDs) }
+        mutate { ok = $0.send(text, to: channel, at: now()) }
         return ok
     }
 
@@ -374,7 +381,77 @@ public final class AppStore {
                     store.state.applyDmOpened(result: .failure(e))
                 }
             }
+        case .uploadAttachment(let id, let channel, let filename, let contentType, let size, let fileURL):
+            // Tracked in `tasks` too (not just `uploadJobs`), so `settle()` — every test's wait for
+            // "every call in flight" — covers uploads exactly like every other effect.
+            let taskID = UUID()
+            let job = Task { [weak self] in
+                guard let self else { return }
+                await self.uploadSlots.withPermit {
+                    self.mutate { $0.attachStarted(id) }
+                    let result = await self.uploadWithRetry(id: id, channel: channel, filename: filename, contentType: contentType, size: size, fileURL: fileURL)
+                    self.mutate { $0.attachUploaded(id, result: result) }
+                }
+                self.uploadJobs[id] = nil
+                self.tasks[taskID] = nil
+            }
+            tasks[taskID] = job
+            uploadJobs[id] = job
+        case .cancelUpload(let id):
+            uploadJobs.removeValue(forKey: id)?.cancel()
         }
+    }
+
+    /// Retries a transient failure ([AppError.isTransient]) with backoff, up to 3 extra attempts.
+    private func uploadWithRetry(id: ID, channel: ID, filename: String, contentType: String, size: UInt64, fileURL: URL) async -> Result<PendingAttachment, AppError> {
+        var attempt = 0
+        while true {
+            if Task.isCancelled { return .failure(.network("cancelled")) }
+            do {
+                let p = try await api.uploadAttachment(channel: channel, filename: filename, contentType: contentType, size: size, fileURL: fileURL) { [self] sent in
+                    Task { @MainActor in self.mutate { $0.attachProgress(id, sent: sent, total: size) } }
+                }
+                return .success(p)
+            } catch {
+                let e = handleFailure(error)
+                // A deliberate cancellation (the tray's X on a running upload) must not be retried even
+                // though `.network` is otherwise a transient, retryable failure.
+                if Task.isCancelled || !e.isTransient || attempt >= 3 { return .failure(e) }
+                attempt += 1
+                try? await Task.sleep(for: .seconds(min(8.0, pow(2, Double(attempt)))))
+            }
+        }
+    }
+}
+
+/// A counting semaphore for async code (`Swift Async Algorithms` doesn't ship one usable here without
+/// adding a dependency): at most `limit` callers run their `body` at a time, the rest wait in FIFO order.
+actor AsyncSemaphore {
+    private var available: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(_ limit: Int) { available = max(1, limit) }
+
+    private func acquire() async {
+        if available > 0 { available -= 1; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private func release() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            available += 1
+        }
+    }
+
+    /// `body` is `@MainActor`-isolated (not inferred) so a caller on the main actor — every caller here —
+    /// keeps running there inside it, with no ambiguity about which actor an escaping closure inherits.
+    func withPermit(_ body: @MainActor () async -> Void) async {
+        await acquire()
+        await body()
+        release()
     }
 }
 

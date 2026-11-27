@@ -14,6 +14,8 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
         public static let tim: ID = 1, ana: ID = 2, bruno: ID = 3, cvetka: ID = 4
         public static let dmAna: ID = 50, dmBruno: ID = 51
         public static let hideoutAdmins: ID = 1002
+        /// The Hideout's custom emoji (MSG-09): two static, one animated.
+        public static let emojiWave: ID = 9001, emojiThumbsUp: ID = 9002, emojiPartyParrot: ID = 9003
     }
 
     private let lock = NSLock()
@@ -31,6 +33,22 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
 
     /// Fails the next `n` sends with a network error (for the Failed + Retry flow).
     public func failNextSends(_ n: Int) { lock.withLock { world.failSends = n } }
+
+    /// The next `n` uploads fail with a network error, after their simulated progress (for the failed
+    /// chip + Try again flow).
+    public func failNextUploads(_ n: Int) { lock.withLock { world.failUploads = n } }
+
+    /// The fake's stand-in for the server's per-upload cap (ATT-09); a file over this throws `.tooLarge` at once.
+    public var maxUploadBytes: UInt64 {
+        get { lock.withLock { world.maxUploadBytes } }
+        set { lock.withLock { world.maxUploadBytes = newValue } }
+    }
+
+    /// How many `progress` calls a simulated upload makes on its way to 100%.
+    public var uploadTicks: Int {
+        get { lock.withLock { world.uploadTicks } }
+        set { lock.withLock { world.uploadTicks = newValue } }
+    }
 
     /// The next `updateLayout` answers `conflict`.
     public func conflictNextLayout() { lock.withLock { world.conflictLayout = true } }
@@ -119,7 +137,7 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
 
     public func listEmojis(guild: ID) async throws -> [Emoji] {
         try await delay()
-        return []
+        return lock.withLock { world.emojis[guild] ?? [] }
     }
 
     public func listMessages(channel: ID, before: ID?, limit: Int) async throws -> MessagePage {
@@ -139,7 +157,8 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
         let m: Message = try lock.withLock {
             if world.failSends > 0 { world.failSends -= 1; throw AppError.network("connection lost") }
             guard content.count <= AppState.maxMessageChars else { throw AppError.invalidArgument("message too long") }
-            var m = world.push(channel: channel, author: world.meID, at: Date(), content: content)
+            let attachments = attachmentIDs.compactMap { id in world.pendingUploads.removeValue(forKey: id).map(World.fakeAttachment) }
+            var m = world.push(channel: channel, author: world.meID, at: Date(), content: content, attachments: attachments)
             world.setNonce(channel: channel, id: m.id, nonce: nonce)
             m.nonce = nonce
             return m
@@ -147,6 +166,27 @@ public final class FakeBackend: ApiClient, @unchecked Sendable {
         // The gateway echo follows the reply, like the server's.
         emit(.messageCreated(m))
         return m
+    }
+
+    /// Simulates a streamed upload: reads `fileURL` whole (the fake has no real network to stream
+    /// over), reports `uploadTicks` progress steps paced by `latency`, then either fails
+    /// (`failUploads`) or answers a `PendingAttachment` good for `sendMessage` within the hour.
+    public func uploadAttachment(channel: ID, filename: String, contentType: String, size: UInt64, fileURL: URL, progress: @escaping @Sendable (UInt64) -> Void) async throws -> PendingAttachment {
+        if size > maxUploadBytes { throw AppError.tooLarge }
+        let bytes = (try? Data(contentsOf: fileURL))?.count ?? Int(size)
+        let ticks = max(1, uploadTicks)
+        let l = latency
+        for t in 1...ticks {
+            if l > 0 { try await Task.sleep(for: .seconds(l / Double(ticks))) }
+            progress(UInt64(bytes) * UInt64(t) / UInt64(ticks))
+        }
+        return try lock.withLock {
+            if world.failUploads > 0 { world.failUploads -= 1; throw AppError.network("connection reset") }
+            world.nextPendingID += 1
+            let pending = PendingAttachment(id: world.nextPendingID, filename: filename, contentType: contentType.isEmpty ? "application/octet-stream" : contentType, size: UInt64(bytes), expiresAt: Date().addingTimeInterval(3600))
+            world.pendingUploads[pending.id] = pending
+            return pending
+        }
     }
 
     public func editMessage(channel: ID, message: ID, content: String) async throws -> Message {
@@ -255,12 +295,35 @@ private struct World {
     var roles: [ID: [Role]] = [:]
     var memberRoles: [MemberKey: [ID]] = [:]
     var voiceStates: [VoiceState] = []
+    var emojis: [ID: [Emoji]] = [:]
     var nextID: ID = 10_000
     var latency: TimeInterval = 0
     var failSends = 0
     var failList = 0
+    var failUploads = 0
+    var maxUploadBytes: UInt64 = defaultMaxUploadBytes
+    var uploadTicks = 4
+    var pendingUploads: [ID: PendingAttachment] = [:]
+    var nextPendingID: ID = 90_000
     var conflictLayout = false
     let created: Date
+
+    /// A generated `Attachment` for a message that linked `pending`: a bundled asset standing in for the
+    /// real upload, by its kind (the fake has no real media pipeline to re-encode it through).
+    static func fakeAttachment(_ pending: PendingAttachment) -> Attachment {
+        let kind = fileKind(contentType: pending.contentType, filename: pending.filename)
+        let (asset, width, height, thumbnail): (String, Int?, Int?, String?)
+        switch kind {
+        case .image: (asset, width, height, thumbnail) = ("square-1.jpg", 1000, 1000, nil)
+        case .video: (asset, width, height, thumbnail) = ("clip-1.mp4", 960, 540, "clip-1-poster.jpg")
+        case .audio: (asset, width, height, thumbnail) = ("tone-1.m4a", nil, nil, nil)
+        default: (asset, width, height, thumbnail) = ("notes-1.txt", nil, nil, nil)
+        }
+        return Attachment(
+            id: pending.id, filename: pending.filename, contentType: pending.contentType, size: pending.size,
+            file: fakeAssetPrefix + asset, width: width, height: height, thumbnail: thumbnail.map { fakeAssetPrefix + $0 }
+        )
+    }
 
     func user(_ id: ID) -> User { users.first { $0.id == id } ?? User(id: id, username: "user\(id)") }
 
@@ -268,10 +331,10 @@ private struct World {
         Snapshot(me: user(meID), guilds: guilds, channels: channels, layouts: layouts, dms: dms)
     }
 
-    mutating func push(channel: ID, author: ID, at: Date, content: String, attachments: [Attachment] = []) -> Message {
+    mutating func push(channel: ID, author: ID, at: Date, content: String, attachments: [Attachment] = [], embeds: [Embed] = []) -> Message {
         nextID += 1
         let guild = channels.first { $0.id == channel }?.guildID
-        let m = Message(id: nextID, channelID: channel, guildID: guild, authorID: author, content: content, createdAt: at, attachments: attachments)
+        let m = Message(id: nextID, channelID: channel, guildID: guild, authorID: author, content: content, createdAt: at, attachments: attachments, embeds: embeds)
         messages[channel, default: []].append(m)
         return m
     }
@@ -348,6 +411,11 @@ private struct World {
             VoiceState(guildID: 1, channelID: Ids.lounge, userID: Ids.ana, joinedAt: now.addingTimeInterval(-1200)),
             VoiceState(guildID: 1, channelID: Ids.lounge, userID: Ids.bruno, selfMute: true, joinedAt: now.addingTimeInterval(-600)),
         ]
+        emojis[1] = [
+            Emoji(id: Ids.emojiWave, guildID: 1, name: "wave", animated: false, image: fakeAssetPrefix + "wave.webp", creatorID: Ids.tim, createdAt: now.addingTimeInterval(-60 * day)),
+            Emoji(id: Ids.emojiThumbsUp, guildID: 1, name: "thumbs_up", animated: false, image: fakeAssetPrefix + "thumbs_up.webp", creatorID: Ids.ana, createdAt: now.addingTimeInterval(-55 * day)),
+            Emoji(id: Ids.emojiPartyParrot, guildID: 1, name: "party_parrot", animated: true, image: fakeAssetPrefix + "party_parrot.gif", creatorID: Ids.cvetka, createdAt: now.addingTimeInterval(-40 * day)),
+        ]
         seedMessages(now: now)
     }
 
@@ -395,7 +463,70 @@ private struct World {
         }
         _ = push(channel: 20, author: Ids.ana, at: now.addingTimeInterval(-6 * 86_400), content: "rehearsal moved to Thursday")
         _ = push(channel: 30, author: Ids.bruno, at: now.addingTimeInterval(-7 * 86_400), content: "sourdough starter is alive")
+        // Oldest seeds first: the transcript orders by message id, and the attachment UI tests scroll
+        // to the attachment rows, so those must stay the newest messages in #design.
+        seedEmbeds(now: now)
+        seedEmoji(now: now)
         seedAttachments(now: now)
+    }
+
+    /// Custom emoji inline in a sentence, and a jumbo-only message (MD-06/07), into #design. Seeded
+    /// older than the attachment messages so they stay before them (see `seedAttachments`'s comment).
+    private mutating func seedEmoji(now: Date) {
+        var t = now.addingTimeInterval(-4 * 86_400 - 2 * 3600)
+        _ = push(channel: Ids.design, author: Ids.bruno, at: t, content: "nice work team <:thumbs_up:\(Ids.emojiThumbsUp)> see you at standup <:wave:\(Ids.emojiWave)>")
+        t = t.addingTimeInterval(300)
+        _ = push(channel: Ids.design, author: Ids.ana, at: t, content: "<a:party_parrot:\(Ids.emojiPartyParrot)> <a:party_parrot:\(Ids.emojiPartyParrot)> <a:party_parrot:\(Ids.emojiPartyParrot)>")
+    }
+
+    /// A link, image and video embed, then one rich post per provider (X, TikTok, Instagram, Reddit) —
+    /// desktop's `fake_files.rs::seed_embeds` (ATT-06), into #design. `message_updated` is simulated by
+    /// attaching the embed directly rather than delaying it (the gateway path is exercised by the
+    /// reducer and UI tests, not the fake's timing). Seeded older than the attachment messages so those
+    /// stay the newest in #design (see `seedEmoji`).
+    private mutating func seedEmbeds(now: Date) {
+        var t = now.addingTimeInterval(-4 * 86_400 - 6 * 3600)
+        _ = push(channel: Ids.design, author: Ids.tim, at: t, content: "the release notes are up", embeds: [
+            Embed(url: "https://example.com/wiki/release", title: "Release notes: v0.0.3",
+                  description: "Adds a live gateway, drops polling in favor of push updates, and tightens the reconnect backoff so flaky networks recover faster without hammering the server.",
+                  siteName: "example wiki", thumbnail: fakeAssetPrefix + "landscape-3.jpg", thumbnailWidth: 1200, thumbnailHeight: 800, kind: .link),
+        ])
+        t = t.addingTimeInterval(240)
+        _ = push(channel: Ids.design, author: Ids.ana, at: t, content: "found the old mockup", embeds: [
+            Embed(url: "https://example.com/gallery/mockup", title: "Early dashboard mockup", description: "Before the warm palette landed.",
+                  siteName: "example gallery", thumbnail: fakeAssetPrefix + "square-1.jpg", thumbnailWidth: 1000, thumbnailHeight: 1000, kind: .image),
+        ])
+        t = t.addingTimeInterval(240)
+        _ = push(channel: Ids.design, author: Ids.bruno, at: t, content: "clip from the demo", embeds: [
+            Embed(url: "https://example.com/clips/demo", title: "Screen recording of the bug", siteName: "example clips", kind: .video,
+                  media: [EmbedMedia(kind: .video, file: fakeAssetPrefix + "clip-1.mp4", poster: fakeAssetPrefix + "clip-1-poster.jpg", width: 960, height: 540, durationMs: 6_000, size: 590_746)]),
+        ])
+        t = t.addingTimeInterval(240)
+        _ = push(channel: Ids.design, author: Ids.cvetka, at: t, content: "", embeds: [
+            Embed(url: "https://x.example.com/cvetka/status/1",
+                  description: "Shipped the new icon set today. Been a long couple of weeks but it's finally in the wiki.",
+                  kind: .rich, provider: "x", authorName: "cvetka", authorIcon: fakeAssetPrefix + "square-1.jpg",
+                  media: [EmbedMedia(kind: .image, file: fakeAssetPrefix + "landscape-4.jpg", width: 1200, height: 800)], publishedAt: t),
+        ])
+        t = t.addingTimeInterval(240)
+        _ = push(channel: Ids.design, author: Ids.ana, at: t, content: "", embeds: [
+            Embed(url: "https://tiktok.example.com/@ana/video/1", description: "weekend hike recap #trail", kind: .rich, provider: "tiktok", authorName: "ana",
+                  media: [EmbedMedia(kind: .video, file: fakeAssetPrefix + "clip-1.mp4", poster: fakeAssetPrefix + "clip-1-poster.jpg", width: 960, height: 540, durationMs: 6_000, size: 590_746)], publishedAt: t),
+        ])
+        t = t.addingTimeInterval(240)
+        _ = push(channel: Ids.design, author: Ids.bruno, at: t, content: "", embeds: [
+            Embed(url: "https://instagram.example.com/p/1", description: "Saturday's moodboard.", kind: .rich, provider: "instagram", authorName: "bruno.cooks", authorIcon: fakeAssetPrefix + "square-1.jpg",
+                  media: [
+                    EmbedMedia(kind: .image, file: fakeAssetPrefix + "landscape-1.jpg", width: 1200, height: 800),
+                    EmbedMedia(kind: .image, file: fakeAssetPrefix + "portrait-1.jpg", width: 900, height: 1200),
+                  ], publishedAt: t),
+        ])
+        t = t.addingTimeInterval(240)
+        _ = push(channel: Ids.design, author: Ids.tim, at: t, content: "", embeds: [
+            Embed(url: "https://reddit.example.com/r/thehideout/comments/1", title: "Found this at the flea market, 5 euros", description: "Still works. Mechanical, loud, perfect.",
+                  kind: .rich, provider: "reddit", authorName: "u/tim",
+                  media: [EmbedMedia(kind: .image, file: fakeAssetPrefix + "landscape-5.jpg", width: 1200, height: 800)], publishedAt: t),
+        ])
     }
 
     private var nextAttachmentID: ID = 1
@@ -412,8 +543,8 @@ private struct World {
     }
 
     /// Pictures (1, 2, 3 and 4+ up, for every grid layout), a video, an audio note, a file and one an admin
-    /// removed — desktop's `fake_files.rs::seed_attachments`, into #design. iOS ATT-01..04 phase: uploads,
-    /// link embeds and custom emoji images are separate later tasks, so this channel is left with only attachments.
+    /// removed — desktop's `fake_files.rs::seed_attachments`, into #design. Seeded newest, after `seedEmbeds`
+    /// and `seedEmoji`, so the attachment UI tests' scroll-to-the-attachment-rows keeps working unchanged.
     private mutating func seedAttachments(now: Date) {
         var t = now.addingTimeInterval(-3 * 86_400)
         _ = push(channel: Ids.design, author: Ids.bruno, at: t, content: "the new dashboard, before the polish pass",

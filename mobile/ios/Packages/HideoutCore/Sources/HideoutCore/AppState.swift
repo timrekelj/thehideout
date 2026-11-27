@@ -77,10 +77,12 @@ public struct Outgoing: Sendable, Equatable, Identifiable {
     public var at: Date
     public var state: Delivery
     public var attachmentIDs: [ID]
+    /// Local previews of `attachmentIDs`, shown until the server's own message replaces this pending row.
+    public var attachments: [PendingPreview]
     public var id: String { nonce }
-    public init(nonce: String, channel: ID, content: String, at: Date, state: Delivery = .pending, attachmentIDs: [ID] = []) {
+    public init(nonce: String, channel: ID, content: String, at: Date, state: Delivery = .pending, attachmentIDs: [ID] = [], attachments: [PendingPreview] = []) {
         self.nonce = nonce; self.channel = channel; self.content = content; self.at = at
-        self.state = state; self.attachmentIDs = attachmentIDs
+        self.state = state; self.attachmentIDs = attachmentIDs; self.attachments = attachments
     }
 }
 
@@ -152,6 +154,11 @@ public enum Effect: Sendable, Equatable {
     case editMessage(channel: ID, message: ID, content: String, previous: String)
     /// Opens (or asks the server to open) a DM with a user.
     case startDm(user: ID)
+    /// Streams `fileURL`'s bytes as a pending attachment (ATT-09); the store gates concurrency and retries
+    /// transient failures.
+    case uploadAttachment(id: ID, channel: ID, filename: String, contentType: String, size: UInt64, fileURL: URL)
+    /// The tray's X on a file still uploading: cancels its running task.
+    case cancelUpload(id: ID)
 }
 
 /// The whole mirror of the server a signed-in session shows. Plain data and pure transitions (see
@@ -212,11 +219,18 @@ public struct AppState: Sendable {
     public var collapsed: Set<SectionKey> = []
     /// The composer's unsent text per channel, kept while switching channels (COMP-03).
     public var drafts: [ID: String] = [:]
+    /// Each channel's attached files, from picked to sent or removed (ATT-09).
+    public var attachDrafts: [ID: AttachDraft] = [:]
+    /// The server's per-upload cap (ATT-09); a file over this is refused locally before it ever uploads.
+    public var maxUploadBytes: UInt64 = defaultMaxUploadBytes
+    /// Folded embeds (ATT-07), bounded and oldest-first like desktop's `collapsed_embeds`.
+    public var collapsedEmbeds: [EmbedRef] = []
 
     public var outbox: [Effect] = []
     var nonceCounter = 0
     var noticeCounter = 0
     var routeCounter = 0
+    var uploadCounter: ID = 0
 
     public struct SectionKey: Sendable, Hashable {
         public var guild: ID
@@ -297,6 +311,10 @@ public struct AppState: Sendable {
     public mutating func setDraft(channel: ID, text: String) {
         if text.isEmpty { drafts.removeValue(forKey: channel) } else { drafts[channel] = text }
     }
+
+    public func attachDraft(_ channel: ID) -> AttachDraft { attachDrafts[channel] ?? AttachDraft() }
+
+    public func isEmbedCollapsed(_ ref: EmbedRef) -> Bool { collapsedEmbeds.contains(ref) }
 
     /// Loaded messages that mention the signed-in user, newest first, across every channel whose history is
     /// in memory (a local feed: the server has no mentions index, MOB follow-up).
